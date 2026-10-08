@@ -1,0 +1,7 @@
+# Prettier also skips everything listed in .gitignore.
+
+# Generated or tool-managed files
+pnpm-lock.yaml
+
+# Tauri shell: its Rust code is formatted by rustfmt (`cargo fmt`), its JSON files are left as is
+src-tauri/

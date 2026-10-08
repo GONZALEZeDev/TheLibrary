@@ -1,0 +1,6 @@
+{
+  // Solution file: `pnpm typecheck` runs `tsc -b`, which checks the projects below.
+  // Note: a plain `tsc --noEmit` checks nothing here, because this file lists no files itself.
+  "files": [],
+  "references": [{ "path": "./tsconfig.app.json" }]
+}

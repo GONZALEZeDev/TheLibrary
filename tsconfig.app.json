@@ -1,0 +1,34 @@
+{
+  // Type-checking of the application code (src/), which runs in the webview: DOM APIs, no Node.js.
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    // `tsc -b` reuses its cache only with `incremental`. Nothing is emitted: Vite builds the app.
+    "incremental": true,
+    "noEmit": true,
+    "target": "es2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    // `types` defaults to [] since TypeScript 6: list the ambient types explicitly.
+    "types": ["vite/client"],
+    "jsx": "react-jsx",
+    "resolveJsonModule": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    // Required while the Vitest typings of @testing-library/jest-dom 7 lag behind Vitest 5
+    // (testing-library/jest-dom#738).
+    "skipLibCheck": true,
+
+    // Strictness.
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    // Only syntax that type stripping can erase: no enums, namespaces or parameter properties.
+    "erasableSyntaxOnly": true
+  },
+  "include": ["src"]
+}

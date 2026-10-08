@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output (the Tauri shell compiles into src-tauri/target; src-tauri/gen holds generated schemas)
+dist/
+src-tauri/target/
+src-tauri/gen/
+
+# Test and tool caches
+coverage/
+.vitest/
+*.tsbuildinfo
+
+# Local environment files
+.env
+.env.*
+*.local
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Local planning documents and agent workspaces (Claude Code "superpowers" plugin), never committed
+docs/superpowers/
+.superpowers/
+
+# Local AI agent helping for the development
+CLAUDE.md

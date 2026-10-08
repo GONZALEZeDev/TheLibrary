@@ -1,0 +1,40 @@
+# pnpm settings (pnpm >= 11 reads its settings only from this file: .npmrc is for registry/auth and
+# the "pnpm" field of package.json is ignored). Because package.json pins `packageManager`, pnpm 12
+# rejects unknown keys here: a misspelled setting fails the install instead of being ignored.
+# These settings harden the npm supply chain.
+
+# --- Dependency lifecycle scripts ----------------------------------------------------------------
+# Install scripts of dependencies never run unless the package is listed in `allowBuilds`
+# (`<package>: true`); with `strictDepBuilds` an unlisted package with scripts makes the install fail
+# (ERR_PNPM_IGNORED_BUILDS) instead of silently skipping it. No dependency needs one today.
+strictDepBuilds: true
+allowBuilds: {}
+
+# --- Release cooldown ----------------------------------------------------------------------------
+# Versions published less than 1 day (1440 minutes) ago are never installed: most malicious
+# releases are detected and pulled within hours. A too-young pick fails with
+# ERR_PNPM_NO_MATURE_MATCHING_VERSION — wait instead of bypassing the policy.
+# 1440 is also pnpm's built-in value, but the built-in value is not strict: a too-young version
+# would be installed and silently added to `minimumReleaseAgeExclude`. Keep both lines explicit.
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
+
+# --- Provenance and sources ----------------------------------------------------------------------
+# Only direct dependencies may come from git or tarball URLs.
+blockExoticSubdeps: true
+# Refuse a version published with weaker provenance than earlier ones of the same package. Releases
+# older than 30 days (43200 minutes) are exempt: they may predate the package's move to provenance,
+# and their age has given the community time to vet them.
+trustPolicy: no-downgrade
+trustPolicyIgnoreAfter: 43200
+
+# --- Saved versions ------------------------------------------------------------------------------
+# `pnpm add` saves exact versions, like every dependency of package.json; upgrades come through
+# Renovate pull requests.
+saveExact: true
+
+# --- Peer dependencies ---------------------------------------------------------------------------
+# eslint-plugin-jsx-a11y@6.10.2 works with ESLint 10 (verified) but its declared peer range stops at 9.
+peerDependencyRules:
+  allowedVersions:
+    eslint-plugin-jsx-a11y>eslint: '10'

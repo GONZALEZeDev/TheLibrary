@@ -1,5 +1,6 @@
+/// <reference types="vitest/config" />
 /**
- * Vite (dev server and production build) configuration.
+ * Vite (dev server and production build) and Vitest configuration.
  *
  * Tuned for Tauri (https://v2.tauri.app/start/frontend/vite/): fixed port 1420 matching
  * `build.devUrl` in src-tauri/tauri.conf.json, no screen clearing so Rust errors stay visible,
@@ -36,5 +37,12 @@ export default defineConfig({
     // Debug builds (`tauri build --debug`) keep readable code and source maps.
     minify: !isDebugBuild,
     sourcemap: isDebugBuild,
+  },
+  test: {
+    environment: 'jsdom',
+    // Explicit imports (`import { describe } from 'vitest'`) instead of injected globals.
+    globals: false,
+    include: ['src/**/*.test.{ts,tsx}'],
+    setupFiles: ['./src/test/setup.ts'],
   },
 });

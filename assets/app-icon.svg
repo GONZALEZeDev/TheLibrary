@@ -1,0 +1,17 @@
+<!--
+  Source of every application icon. Regenerate the platform icons after any change:
+    pnpm tauri icon assets/app-icon.svg -o src-tauri/icons
+  (XML comments cannot contain two consecutive hyphens, hence the short option.)
+  Colours: Paige's style colour #258F63 (game data) on the app background #0B1210.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Background: dark rounded square -->
+  <rect width="1024" height="1024" rx="224" ry="224" fill="#0B1210"/>
+  <!-- Cover: thin outline under the pages -->
+  <path d="M176 300 V752 C304 740 424 758 512 810 C600 758 720 740 848 752 V300"
+        fill="none" stroke="#258F63" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" opacity="0.55"/>
+  <!-- Left page -->
+  <path d="M494 330 C420 280 318 262 216 272 V714 C318 704 420 722 494 772 Z" fill="#258F63"/>
+  <!-- Right page -->
+  <path d="M530 330 C604 280 706 262 808 272 V714 C706 704 604 722 530 772 Z" fill="#258F63"/>
+</svg>

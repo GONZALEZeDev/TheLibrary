@@ -1,0 +1,35 @@
+# Rust manifest of the Tauri shell. The shell only registers plugins and hardens the webview:
+# all application logic lives in TypeScript.
+[package]
+name = "the-library"
+version = "0.1.0"
+description = "Desktop companion for Deadlock players who main Paige"
+authors = ["GONZALEZeDev"]
+license = "MIT"
+edition = "2024"
+# Edition 2024 enables cargo's MSRV-aware resolver: with an older `rust-version`, cargo silently
+# locks older Tauri crates that no longer match @tauri-apps/api 2.12. Keep it at 1.90 (the MSRV
+# of tauri 2.12 and its plugins) and keep the explicit minimum versions below, which also keep
+# the Tauri 3 pre-releases out.
+rust-version = "1.90"
+publish = false
+
+[lib]
+# The `_lib` suffix keeps the lib target name distinct from the bin target (`the-library`),
+# which otherwise collide on Windows. See https://github.com/rust-lang/cargo/issues/8519
+name = "the_library_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.0", features = [] }
+tauri-plugin-log = "2.10.0"
+tauri-plugin-store = "2.5.0"
+log = "0.4"
+
+# Desktop-only plugins (they have no Android/iOS implementation).
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2.5.0"
+tauri-plugin-window-state = "2.5.0"

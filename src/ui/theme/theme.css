@@ -1,0 +1,64 @@
+/*
+ * Design tokens and global styles.
+ *
+ * Every colour and font of the UI is defined once here as a Tailwind v4 theme variable:
+ * `--color-surface` generates the utilities `bg-surface`, `text-surface`, `border-surface`…
+ * Components use those utilities and never hard-code a colour. Dark theme only for now: a light
+ * theme will redefine these variables without touching the components.
+ * Contrast of text colours on --color-bg (WCAG AA needs 4.5:1): fg ≈ 16:1, fg-muted ≈ 7.4:1,
+ * accent-bright ≈ 8:1, secondary ≈ 11:1, loss ≈ 6:1.
+ */
+@import 'tailwindcss';
+/* Inter is bundled with the app (no font CDN at runtime). */
+@import '@fontsource-variable/inter';
+
+@theme {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+
+  /* Backgrounds, from the deepest to the most raised: green-tinted near-blacks. */
+  --color-bg: #0b1210;
+  --color-surface: #111b17;
+  --color-surface-raised: #17231e;
+  --color-border: #23332c;
+
+  /* Text. */
+  --color-fg: #e4ede8;
+  --color-fg-muted: #93a79c;
+
+  /* Paige's colours, taken from the game data. */
+  --color-accent: #258f63;
+  /* Brighter accent for text, focus rings and chart lines on dark backgrounds. */
+  --color-accent-bright: #3fbf86;
+  --color-secondary: #9ccdec;
+
+  /* Match results. Always paired with a W/L label: never conveyed by colour alone. */
+  --color-win: #3fbf86;
+  --color-loss: #e0707a;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-bg font-sans text-fg antialiased;
+  }
+
+  /* One visible focus style for every keyboard-focusable element. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent-bright);
+    outline-offset: 2px;
+  }
+}
+
+/* Respect the operating system setting "reduce animations". */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

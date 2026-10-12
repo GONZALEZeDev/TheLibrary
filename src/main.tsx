@@ -6,6 +6,7 @@
  */
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import './ui/theme/theme.css';
 
 const rootElement = document.getElementById('root');
 if (rootElement === null) {
@@ -14,6 +15,6 @@ if (rootElement === null) {
 
 createRoot(rootElement).render(
   <StrictMode>
-    <p>TheLibrary — foundation in progress.</p>
+    <p className="p-8 text-fg-muted">TheLibrary — foundation in progress.</p>
   </StrictMode>,
 );

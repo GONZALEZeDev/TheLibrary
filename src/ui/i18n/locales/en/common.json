@@ -1,0 +1,65 @@
+{
+  "app": {
+    "name": "TheLibrary"
+  },
+  "nav": {
+    "label": "Main navigation",
+    "dashboard": "Dashboard",
+    "matches": "Matches",
+    "settings": "Settings"
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "empty": {
+      "title": "No data yet",
+      "description": "Link your Steam account in Settings to start tracking your Paige matches."
+    }
+  },
+  "matches": {
+    "title": "Matches",
+    "empty": {
+      "title": "No matches yet",
+      "description": "Your match history will appear here after the first synchronisation."
+    }
+  },
+  "matchDetail": {
+    "title": "Match {{matchId}}",
+    "empty": {
+      "title": "Match details coming soon",
+      "description": "The detailed analysis of this match will be available in a future version."
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "language": {
+      "title": "Language",
+      "description": "Choose the language of the interface.",
+      "saving": "Saving…"
+    }
+  },
+  "language": {
+    "fr": "Français",
+    "en": "English"
+  },
+  "notFound": {
+    "title": "Page not found",
+    "description": "This page does not exist.",
+    "back": "Back to the dashboard"
+  },
+  "errors": {
+    "title": "Something went wrong",
+    "retry": "Try again",
+    "copyDetails": "Copy details",
+    "copied": "Details copied",
+    "kind": {
+      "network": "The server could not be reached. Check your internet connection.",
+      "timeout": "The server took too long to respond.",
+      "rate_limited": "Too many requests for now. Please try again in a moment.",
+      "not_found": "This data is not available (yet).",
+      "forbidden": "Access was denied by the data service.",
+      "invalid_payload": "The data service returned unexpected data.",
+      "storage": "Local data could not be read or saved.",
+      "unexpected": "An unexpected error occurred."
+    }
+  }
+}

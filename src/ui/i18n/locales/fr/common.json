@@ -1,0 +1,65 @@
+{
+  "app": {
+    "name": "TheLibrary"
+  },
+  "nav": {
+    "label": "Navigation principale",
+    "dashboard": "Tableau de bord",
+    "matches": "Parties",
+    "settings": "Réglages"
+  },
+  "dashboard": {
+    "title": "Tableau de bord",
+    "empty": {
+      "title": "Pas encore de données",
+      "description": "Lie ton compte Steam dans les Réglages pour commencer à suivre tes parties Paige."
+    }
+  },
+  "matches": {
+    "title": "Parties",
+    "empty": {
+      "title": "Aucune partie pour l'instant",
+      "description": "Ton historique apparaîtra ici après la première synchronisation."
+    }
+  },
+  "matchDetail": {
+    "title": "Partie {{matchId}}",
+    "empty": {
+      "title": "Détail bientôt disponible",
+      "description": "L'analyse détaillée de cette partie arrivera dans une prochaine version."
+    }
+  },
+  "settings": {
+    "title": "Réglages",
+    "language": {
+      "title": "Langue",
+      "description": "Choisis la langue de l'interface.",
+      "saving": "Enregistrement…"
+    }
+  },
+  "language": {
+    "fr": "Français",
+    "en": "English"
+  },
+  "notFound": {
+    "title": "Page introuvable",
+    "description": "Cette page n'existe pas.",
+    "back": "Retour au tableau de bord"
+  },
+  "errors": {
+    "title": "Un problème est survenu",
+    "retry": "Réessayer",
+    "copyDetails": "Copier les détails",
+    "copied": "Détails copiés",
+    "kind": {
+      "network": "Impossible de joindre le serveur. Vérifie ta connexion internet.",
+      "timeout": "Le serveur a mis trop de temps à répondre.",
+      "rate_limited": "Trop de requêtes pour le moment. Réessaie dans un instant.",
+      "not_found": "Ces données ne sont pas (encore) disponibles.",
+      "forbidden": "Le service de données a refusé l'accès.",
+      "invalid_payload": "Le service de données a renvoyé des données inattendues.",
+      "storage": "Impossible de lire ou d'enregistrer les données locales.",
+      "unexpected": "Une erreur inattendue est survenue."
+    }
+  }
+}

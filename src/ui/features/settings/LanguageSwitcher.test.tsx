@@ -43,13 +43,14 @@ describe('LanguageSwitcher', () => {
   it('can be operated with the keyboard', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn<(language: Language) => void>();
-    await renderInEnglish(<LanguageSwitcher value="fr" onChange={onChange} />);
+    // English is the second option: if Tab landed on the first one, the focus check would fail.
+    await renderInEnglish(<LanguageSwitcher value="en" onChange={onChange} />);
 
-    // Tab enters the group on the checked option; an arrow key picks the next one.
+    // Tab enters the group on the checked option; an arrow key picks the previous one.
     await user.tab();
-    expect(screen.getByRole('radio', { name: 'Français' })).toHaveFocus();
-    await user.keyboard('{ArrowRight}');
+    expect(screen.getByRole('radio', { name: 'English' })).toHaveFocus();
+    await user.keyboard('{ArrowLeft}');
 
-    expect(onChange).toHaveBeenCalledWith('en');
+    expect(onChange).toHaveBeenCalledWith('fr');
   });
 });

@@ -26,6 +26,9 @@
   --color-fg-muted: #93a79c;
 
   /* Paige's colours, taken from the game data. */
+  /* For fills only (buttons, badges, bars): its contrast on the dark backgrounds is about
+     4.0-4.7:1, below the 4.5:1 minimum for text on some surfaces. Text and focus rings use
+     --color-accent-bright. */
   --color-accent: #258f63;
   /* Brighter accent for text, focus rings and chart lines on dark backgrounds. */
   --color-accent-bright: #3fbf86;

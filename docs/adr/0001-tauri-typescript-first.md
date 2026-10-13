@@ -10,13 +10,13 @@ TheLibrary is a public, open-source desktop app, maintained by one TypeScript/Re
 
 ## Decision
 
-Use **Tauri 2** with all application logic in **TypeScript** running in the webview. The Rust side is limited to plugin registration, the navigation guard, window behaviour and, from M2 on, the SQL migration list. Official Tauri plugins provide the native capabilities (HTTP, SQLite, files, store, logs, updater…); a community plugin is an exception, justified in the ADR that needs it. The domain logic (`src/core`) and the use cases (`src/services`) are independent of Tauri and only reach native features through ports and adapters.
+Use **Tauri 2** with all application logic in **TypeScript** running in the webview. The Rust side is limited to plugin registration, the navigation guard, window behaviour, opening the settings store at startup (so the webview never needs the store plugin's `load` command, which accepts any file path) and, from M2 on, the SQL migration list. Official Tauri plugins provide the native capabilities (HTTP, SQLite, files, store, logs, updater…); a community plugin is an exception, justified in the ADR that needs it. The domain logic (`src/core`) and the use cases (`src/services`) are independent of Tauri and only reach native features through ports and adapters.
 
 ## Consequences
 
 - A small installer (Tauri apps typically weigh a few MB) and a webview (WebView2) patched by Microsoft, not by us.
 - Capability-based security: the webview only gets the plugin commands and scopes it is granted.
-- Little Rust to maintain (plugin wiring, navigation guard, window behaviour), but every contributor and every CI run needs the Rust toolchain to build the desktop app.
+- Little Rust to maintain (plugin wiring, navigation guard, window behaviour, opening the settings store), but every contributor and every CI run needs the Rust toolchain to build the desktop app.
 - Plugin limitations must be designed around (e.g. no SQL transaction spanning several calls).
 - Switching to another shell (e.g. Electron) would replace the adapters and the shell configuration (capabilities, CSP, navigation guard), not the domain logic or the use cases.
 

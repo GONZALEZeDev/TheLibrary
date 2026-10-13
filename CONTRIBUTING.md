@@ -4,7 +4,7 @@ Thanks for your interest! This guide explains how the code is organised and the 
 
 ## Architecture in one picture
 
-```
+```text
 ui/  ──►  services/  ──►  core/
                │
                ▼
@@ -22,7 +22,7 @@ ui/  ──►  services/  ──►  core/
 | `src/test/`     | Shared test helpers (services on the development adapters…)                      | everything               |
 | `src/main.tsx`  | Composition root: picks the adapters and builds the services                     | everything               |
 
-These rules are enforced by ESLint: a forbidden import fails `pnpm lint` and CI. Test files follow the rules of their folder, and may additionally use `src/adapters/dev/` and `src/test/`. Only `src/adapters/tauri/` and `src/main.tsx` may import `@tauri-apps/*`. Each folder has a short `README.md` with its own rules.
+These rules are enforced by ESLint: a forbidden import fails `pnpm lint` and CI. Test files follow the rules of their folder, and may additionally use `src/adapters/dev/` and `src/test/`. Only `src/adapters/tauri/` and `src/main.tsx` may import `@tauri-apps/*`. Every file of `src/` must belong to a folder declared in `eslint.config.js` (rule `boundaries/no-unknown-files`): a new top-level folder of `src/` is declared there first. Each layer folder (`core`, `ports`, `services`, `adapters`, `ui`) has a short `README.md` with its own rules.
 
 ## Conventions
 
@@ -44,7 +44,7 @@ These rules are enforced by ESLint: a forbidden import fails `pnpm lint` and CI.
 
 1. Create a branch from `main`.
 2. Write the test first, then the code.
-3. Run `pnpm check` (and, if you touched `src-tauri/`, `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` from `src-tauri/`).
+3. Run `pnpm check` and `pnpm build` (and, if you touched `src-tauri/`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` from `src-tauri/`; the Rust code embeds the `dist/` folder that `pnpm build` produces, so build the frontend first). CI runs the same checks, plus the dependency audits (`pnpm audit`, `cargo audit`).
 4. Open a pull request describing the change and how you tested it. CI must be green.
 
 ## Useful commands

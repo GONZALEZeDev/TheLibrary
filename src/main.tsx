@@ -3,7 +3,8 @@
  *
  * It picks the adapters for the current environment — Tauri plugins in the desktop app, memory and
  * Web Storage in the browser dev mode (`pnpm dev`) — builds the services, initialises i18n with the
- * saved (or system) language, then renders the application.
+ * saved (or system) language, then renders the application. It also logs every error nothing else
+ * reports: errors outside a route, unhandled promise rejections, uncaught render errors.
  *
  * @packageDocumentation
  */
@@ -16,8 +17,9 @@ import { LocalStorageSettingsStore } from './adapters/dev/local-storage-settings
 import { MemoryLogger } from './adapters/dev/memory-logger.adapter';
 import { TauriLogger } from './adapters/tauri/tauri-logger.adapter';
 import { TauriSettingsStore } from './adapters/tauri/tauri-settings-store.adapter';
-import { toAppError, type AppErrorKind } from './core/errors/app-error';
+import { errorLogContext, toAppError, type AppErrorKind } from './core/errors/app-error';
 import { resolveInitialLanguage, type Language } from './core/settings/language';
+import type { LogLevel } from './ports/logger.port';
 import type { AppServices } from './services/app-services';
 import { SettingsService } from './services/settings.service';
 import { AppProviders } from './ui/app/AppProviders';
@@ -77,27 +79,86 @@ async function loadSavedLanguage(services: AppServices): Promise<Language | null
   try {
     return (await services.settings.get()).language;
   } catch (error) {
-    const appError = toAppError(error);
-    services.logger.log('error', 'app', 'Could not read the settings, using the defaults', {
-      kind: appError.kind,
-    });
+    services.logger.log(
+      'error',
+      'app',
+      'Could not read the settings, using the defaults',
+      errorLogContext(toAppError(error)),
+    );
     return null;
   }
 }
 
 /**
- * Replace the page with a static message when the application cannot start. Neither React nor
- * i18next is used, since either may be what failed; the text still comes from the catalogues.
+ * Replace the page with a static message when the application cannot run: it failed to start, or
+ * React gave up rendering it. Neither React nor i18next is used, since either may be what failed;
+ * the text still comes from the catalogues.
  *
  * @param rootElement - The element the application renders into.
  */
-function showStartupFailure(rootElement: HTMLElement): void {
-  const { errors } = RESOURCES[resolveInitialLanguage(null, navigator.languages)].common;
+function showFatalError(rootElement: HTMLElement): void {
+  const language = resolveInitialLanguage(null, navigator.languages);
+  const { errors } = RESOURCES[language].common;
+  // i18next normally keeps the `lang` attribute in sync, but it may be what failed: set it here so
+  // that screen readers pronounce the message in the language it is written in.
+  document.documentElement.lang = language;
   const message = document.createElement('p');
   message.setAttribute('role', 'alert');
   message.className = 'p-8 text-fg';
   message.textContent = `${errors.title}. ${errors.kind.unexpected}`;
   rootElement.replaceChildren(message);
+}
+
+/** What React tells about an error: the components that were rendering when it happened. */
+interface ReactErrorInfo {
+  readonly componentStack?: string | null | undefined;
+}
+
+/**
+ * Log an error reported by React through the `onUncaughtError` and `onRecoverableError` root
+ * options, with the component stack that only React knows.
+ *
+ * @param services - The application services.
+ * @param level - Severity of the line.
+ * @param scope - Area of the app emitting the line.
+ * @param error - The error reported by React, which can be any thrown value.
+ * @param errorInfo - Details given by React.
+ */
+function logReactError(
+  services: AppServices,
+  level: LogLevel,
+  scope: string,
+  error: unknown,
+  errorInfo: ReactErrorInfo,
+): void {
+  const appError = toAppError(error);
+  const { componentStack } = errorInfo;
+  services.logger.log(level, scope, appError.message, {
+    ...errorLogContext(appError),
+    ...(typeof componentStack === 'string' ? { componentStack } : {}),
+  });
+}
+
+/**
+ * Log the errors that no error boundary and no `catch` handled, so that they leave a trace in the
+ * log file. The listeners only log: such an error does not necessarily break the screen, so the UI
+ * is left alone.
+ *
+ * @param services - The application services.
+ */
+function logUnhandledErrors(services: AppServices): void {
+  // Errors thrown outside React's rendering, e.g. in an event handler or a timer callback.
+  window.addEventListener('error', (event) => {
+    // `event.error` is empty when the browser hides the error (script from another origin) or
+    // reports a plain message (ResizeObserver loop): the message is then all that is known.
+    const appError = toAppError((event.error as unknown) ?? event.message);
+    services.logger.log('error', 'app.window', appError.message, errorLogContext(appError));
+  });
+  // Promises rejected with nobody to handle them; Tauri plugins reject with plain strings.
+  window.addEventListener('unhandledrejection', (event) => {
+    const appError = toAppError(event.reason);
+    services.logger.log('error', 'app.promise', appError.message, errorLogContext(appError));
+  });
 }
 
 /**
@@ -124,7 +185,22 @@ async function bootstrap(
     language,
   });
 
-  createRoot(rootElement).render(
+  createRoot(rootElement, {
+    // An error that no boundary caught: React has unmounted the whole tree, which would leave an
+    // empty window, so the user is told that the application cannot continue.
+    onUncaughtError: (error, errorInfo) => {
+      logReactError(services, 'error', 'ui.uncaught', error, errorInfo);
+      showFatalError(rootElement);
+    },
+    // An error React recovered from by itself (e.g. a render that succeeded when retried): nothing
+    // is broken, but it deserves a line in the log.
+    onRecoverableError: (error, errorInfo) => {
+      logReactError(services, 'warn', 'ui.recoverable', error, errorInfo);
+    },
+    // `onCaughtError` is deliberately left to React's default (a console line): the errors that the
+    // router's boundary catches are already logged, once, by `RouteErrorFallback`, so logging them
+    // here too would write each of them twice.
+  }).render(
     <StrictMode>
       <AppProviders services={services} queryClient={queryClient} i18n={i18n}>
         <RouterProvider router={router} />
@@ -140,16 +216,16 @@ if (rootElement === null) {
 // Built before `bootstrap()`, so that a failed startup can still be logged.
 const desktop = isTauri();
 const services = createServices(desktop);
+// Registered right away, so that nothing happening after this point goes unlogged.
+logUnhandledErrors(services);
 
 bootstrap(rootElement, services, desktop).catch((error: unknown) => {
   // Every expected failure is handled inside `bootstrap()`, so this is a bug: keep its trace in the
   // logs, and tell the user instead of leaving an empty window.
   const appError = toAppError(error);
-  const stack = appError.cause instanceof Error ? appError.cause.stack : undefined;
   services.logger.log('error', 'app', 'TheLibrary could not start', {
-    kind: appError.kind,
     reason: appError.message,
-    ...(stack === undefined ? {} : { stack }),
+    ...errorLogContext(appError),
   });
-  showStartupFailure(rootElement);
+  showFatalError(rootElement);
 });

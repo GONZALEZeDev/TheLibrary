@@ -4,7 +4,8 @@
  * Every failure that crosses a layer boundary (API, storage, services) is normalised into an
  * {@link AppError} carrying a machine-readable {@link AppErrorKind}. The UI maps each kind to a
  * translated message (`errors.kind.<kind>` in the i18n catalogues) instead of showing raw
- * messages, while the logs keep the technical details (`message`, `cause`, `context`).
+ * messages, while the logs keep the technical details (`message`, `cause`, `context`, stack):
+ * {@link errorLogContext} is the single place that turns an error into log context.
  *
  * @packageDocumentation
  */
@@ -92,9 +93,41 @@ export function toAppError(value: unknown): AppError {
 }
 
 /**
+ * Turn an error into the structured context of a log line, keeping every technical detail.
+ *
+ * This is the single place that does it: the logs must keep what the user never sees. Plugin
+ * errors of Tauri reach JavaScript as plain strings, not `Error`s, so the cause is described with
+ * the same rules as `toAppError` instead of being kept only when it is an `Error`.
+ *
+ * The result is the error's own `context`, completed with:
+ * - `kind`, written after the context so that a context key cannot override it;
+ * - `cause`, when the error has one: the message of an `Error`, or the description of any other value;
+ * - `stack`, when one exists: the stack of the cause if it is an `Error` (where the failure
+ *   actually happened), otherwise the stack of the error itself.
+ *
+ * A key without a value is left out.
+ *
+ * @param error - The error to log.
+ * @returns The context to pass to `Logger.log` (the logger port accepts this exact type).
+ */
+export function errorLogContext(error: AppError): AppErrorContext {
+  const { cause } = error;
+  // The stack of the original failure is the useful one; the error's own stack only tells where it
+  // was wrapped.
+  const stack = cause instanceof Error && cause.stack !== undefined ? cause.stack : error.stack;
+  return {
+    ...error.context,
+    kind: error.kind,
+    ...(cause === undefined ? {} : { cause: describeThrownValue(cause) }),
+    ...(stack === undefined ? {} : { stack }),
+  };
+}
+
+/**
  * Message for a thrown value that is not an {@link AppError}.
  *
- * `String()` throws on an object without a prototype (`Object.create(null)`) or with a throwing
+ * An `Error` is described by its message, or by its name when the message is empty. `String()`
+ * throws on an object without a prototype (`Object.create(null)`) or with a throwing
  * `toString()`; `Object.prototype.toString` works on such objects, so it is the fallback.
  *
  * @param value - Anything thrown.
@@ -102,7 +135,7 @@ export function toAppError(value: unknown): AppError {
  */
 function describeThrownValue(value: unknown): string {
   if (value instanceof Error) {
-    return value.message;
+    return value.message === '' ? value.name : value.message;
   }
   try {
     return String(value);

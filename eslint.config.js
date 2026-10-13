@@ -4,11 +4,14 @@
  * Besides the usual correctness rules, this file enforces the project conventions:
  * - layer boundaries between src/ folders (block "project/architecture");
  * - `@tauri-apps/*` only in src/adapters/tauri/** and src/main.tsx; src/core only imports `zod`;
+ * - relative imports, static or dynamic, without a script extension (`./x`, never `./x.js`), which
+ *   the import resolver used by the boundaries rules cannot follow (block
+ *   "project/extensionless-imports");
  * - TSDoc on every exported symbol (the `jsdoc(...)` block);
  * - kebab-case folders and files, PascalCase React component files (block "project/naming");
  * - `console` only in src/adapters/dev/** — everything else logs through the Logger port;
- * - TypeScript only in src/ (block "project/typescript-only").
- * Every rule was verified with deliberate violations.
+ * - only `.ts`/`.tsx` files in src/ (block "project/typescript-only"; `.mts` and `.cts` are rejected too).
+ * The layer, import and file-type rules were checked with deliberate violations.
  */
 import js from '@eslint/js';
 import { defineConfig, globalIgnores } from 'eslint/config';
@@ -22,6 +25,20 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 const TEST_FILES = ['src/**/*.test.{ts,tsx}'];
+
+/** Script files that may not exist in src/: only `.ts` and `.tsx` files are allowed there. */
+const NON_TYPESCRIPT_FILES = 'src/**/*.{js,jsx,mjs,cjs,mts,cts}';
+
+/**
+ * Relative import specifiers that end in a script extension (`./x.js`, `../y.mjs`…). The slash is
+ * written `\x2F` because the same pattern is embedded in an ESLint selector below, where a
+ * literal `/` would end the regular expression.
+ */
+const RELATIVE_SCRIPT_IMPORT = String.raw`^\.{1,2}\x2F.*\.(m|c)?jsx?$`;
+
+/** Message of the two rules that forbid `RELATIVE_SCRIPT_IMPORT`. */
+const EXTENSIONLESS_IMPORT_MESSAGE =
+  'Import the TypeScript module without an extension (./x, not ./x.js): the boundaries rules cannot resolve a .js specifier.';
 
 export default defineConfig([
   globalIgnores(['dist/', 'coverage/', '.vitest/', 'src-tauri/', 'node_modules/']),
@@ -79,12 +96,32 @@ export default defineConfig([
     name: 'project/typescript-only',
     // The blocks of this file target .ts/.tsx files: any other script file in src/ would escape
     // them (layers, @tauri-apps/* ban, console, TSDoc, naming), so none is allowed there.
-    files: ['src/**/*.{js,jsx,mjs,cjs,mts,cts}'],
+    files: [NON_TYPESCRIPT_FILES],
     plugins: { 'check-file': checkFile },
     rules: {
-      'check-file/filename-blocklist': [
+      'check-file/filename-blocklist': ['error', { [NON_TYPESCRIPT_FILES]: '*.{ts,tsx}' }],
+    },
+  },
+
+  {
+    name: 'project/extensionless-imports',
+    files: ['src/**/*.{ts,tsx}'],
+    rules: {
+      // `moduleResolution: bundler` and Vite accept `import './x.js'` for `x.ts`, but the resolver
+      // behind the boundaries rules does not: such an import would silently escape every layer
+      // rule. Relative imports therefore name the TypeScript module without an extension.
+      'no-restricted-imports': [
         'error',
-        { 'src/**/*.{js,jsx,mjs,cjs,mts,cts}': '*.{ts,tsx}' },
+        { patterns: [{ regex: RELATIVE_SCRIPT_IMPORT, message: EXTENSIONLESS_IMPORT_MESSAGE }] },
+      ],
+      // `no-restricted-imports` does not look at dynamic imports (`import('./x.js')`), which the
+      // boundaries rules do check; the same ban is expressed on their syntax node.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: `ImportExpression[source.value=/${RELATIVE_SCRIPT_IMPORT}/]`,
+          message: EXTENSIONLESS_IMPORT_MESSAGE,
+        },
       ],
     },
   },

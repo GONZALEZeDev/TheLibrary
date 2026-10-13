@@ -123,18 +123,30 @@ fn navigation_guard<R: Runtime>() -> TauriPlugin<R> {
         .on_navigation(|webview, url| {
             let allowed = is_bundled_frontend_url(url) || is_dev_server_url(webview, url);
             if !allowed {
-                // Only the origin and the path are logged: the query string and the fragment can
-                // carry tokens (e.g. the parameters of an OpenID sign-in).
                 log::warn!(
-                    "blocked navigation of webview '{}' to {}{}",
+                    "blocked navigation of webview '{}' to {}",
                     webview.label(),
-                    url.origin().ascii_serialization(),
-                    url.path()
+                    loggable_url(url)
                 );
             }
             allowed
         })
         .build()
+}
+
+/// The part of a blocked URL that is safe to write to the log file.
+///
+/// Only the origin and the path are kept: the query string and the fragment can carry tokens
+/// (e.g. the parameters of an OpenID sign-in). A URL with an opaque origin (`data:`,
+/// `javascript:`, `file:`…) has no host, and its "path" is the payload itself: only its scheme is
+/// kept, as `data:`.
+fn loggable_url(url: &Url) -> String {
+    let origin = url.origin();
+    if origin.is_tuple() {
+        format!("{}{}", origin.ascii_serialization(), url.path())
+    } else {
+        format!("{}:", url.scheme())
+    }
 }
 
 /// Whether `url` points to the frontend embedded in the binary (production builds).
@@ -225,5 +237,37 @@ mod tests {
     #[test]
     fn bundled_frontend_url_rejects_another_host() {
         assert!(!is_bundled_frontend_url(&parse("https://example.com/")));
+    }
+
+    #[test]
+    fn loggable_url_keeps_the_origin_and_the_path() {
+        assert_eq!(
+            loggable_url(&parse("https://example.com/a?b=c")),
+            "https://example.com/a"
+        );
+    }
+
+    #[test]
+    fn loggable_url_drops_the_query_and_the_fragment() {
+        assert_eq!(
+            loggable_url(&parse(
+                "https://example.com/callback?code=secret#access_token=secret"
+            )),
+            "https://example.com/callback"
+        );
+    }
+
+    #[test]
+    fn loggable_url_keeps_only_the_scheme_of_an_opaque_origin() {
+        // The payload of a `data:` URL is its path: it must not reach the log file.
+        assert_eq!(
+            loggable_url(&parse("data:text/html,<p>secret</p>")),
+            "data:"
+        );
+        assert_eq!(loggable_url(&parse("javascript:alert(1)")), "javascript:");
+        assert_eq!(
+            loggable_url(&parse("file:///C:/Users/me/page.html")),
+            "file:"
+        );
     }
 }

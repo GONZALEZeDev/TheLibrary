@@ -13,6 +13,12 @@
       "rangeStrategy": "pin"
     },
     {
+      "description": "engines.node is the range of Node.js versions contributors may use, not a dependency: never pin or bump it (CI chooses its own Node.js version in ci.yml).",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["engines"],
+      "enabled": false
+    },
+    {
       "matchManagers": ["npm"],
       "matchUpdateTypes": ["minor", "patch"],
       "groupName": "npm minor and patch updates"

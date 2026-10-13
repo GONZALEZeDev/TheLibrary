@@ -38,3 +38,21 @@ saveExact: true
 peerDependencyRules:
   allowedVersions:
     eslint-plugin-jsx-a11y>eslint: '10'
+
+# --- Security fixes and audit exceptions ---------------------------------------------------------
+# Forced versions of transitive dependencies, for security fixes their dependents have not shipped
+# yet. Each entry only matches the vulnerable versions, so it becomes a no-op once they do.
+overrides:
+  # eslint-plugin-boundaries 7.2.0 pins handlebars 4.7.9 (GHSA-8r5x-fm3f-whwj, GHSA-p8wg-vrv2-v86f,
+  # GHSA-xw65-4hp5-5hc7), fixed in 4.7.10.
+  'handlebars@<4.7.10': 4.7.10
+
+# Advisories `pnpm audit` ignores. Each one is reviewed and justified: keep the list short.
+auditConfig:
+  ignoreGhsas:
+    # braces <= 3.0.3: stack exhaustion on deeply nested brace patterns, no fixed release yet. Only
+    # reached through micromatch in ESLint plugins, which expand the patterns of our own
+    # eslint.config.js: never untrusted input, never shipped in the app. Reviewed on 2026-10-13.
+    # Remove this entry once braces ships a fix (`npm view braces version` above 3.0.3): the weekly
+    # lock file maintenance then picks it up, and this line would hide a future real exposure.
+    - GHSA-vfj7-8cjw-p6xm

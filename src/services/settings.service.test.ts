@@ -69,4 +69,24 @@ describe('SettingsService.update', () => {
     const service = new SettingsService(brokenStore, new MemoryLogger());
     await expect(service.update({ language: 'fr' })).rejects.toMatchObject({ kind: 'storage' });
   });
+
+  it('reports a failed save as a storage AppError that keeps the cause, and does not log a change', async () => {
+    // The store reads fine, so the failure comes from the write itself.
+    const diskFull = new Error('disk full');
+    const store: SettingsStore = {
+      read: () => Promise.resolve(undefined),
+      write: () => Promise.reject(diskFull),
+    };
+    const logger = new MemoryLogger();
+    const service = new SettingsService(store, logger);
+
+    const error: unknown = await service
+      .update({ language: 'fr' })
+      .catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(AppError);
+    expect(error).toMatchObject({ kind: 'storage', message: 'Could not save the settings' });
+    expect((error as AppError).cause).toBe(diskFull);
+    expect(logger.entries.map((entry) => entry.message)).not.toContain('Settings updated');
+  });
 });

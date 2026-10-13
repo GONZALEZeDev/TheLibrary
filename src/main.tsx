@@ -8,7 +8,6 @@
  *
  * @packageDocumentation
  */
-import { QueryClient } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
 import { isTauri } from '@tauri-apps/api/core';
 import { StrictMode } from 'react';
@@ -17,18 +16,16 @@ import { LocalStorageSettingsStore } from './adapters/dev/local-storage-settings
 import { MemoryLogger } from './adapters/dev/memory-logger.adapter';
 import { TauriLogger } from './adapters/tauri/tauri-logger.adapter';
 import { TauriSettingsStore } from './adapters/tauri/tauri-settings-store.adapter';
-import { errorLogContext, toAppError, type AppErrorKind } from './core/errors/app-error';
+import { errorLogContext, toAppError } from './core/errors/app-error';
 import { resolveInitialLanguage, type Language } from './core/settings/language';
 import type { LogLevel } from './ports/logger.port';
 import type { AppServices } from './services/app-services';
 import { SettingsService } from './services/settings.service';
 import { AppProviders } from './ui/app/AppProviders';
+import { createQueryClient } from './ui/app/query-client';
 import { createAppRouter } from './ui/app/router';
 import { createI18n, RESOURCES } from './ui/i18n/i18n';
 import './ui/theme/theme.css';
-
-/** Error kinds worth retrying: a new attempt may succeed. */
-const TRANSIENT_KINDS = new Set<AppErrorKind>(['network', 'timeout', 'rate_limited']);
 
 /**
  * Build the services with the adapters of the current environment.
@@ -42,30 +39,6 @@ function createServices(desktop: boolean): AppServices {
     ? new TauriSettingsStore()
     : new LocalStorageSettingsStore(window.localStorage);
   return { logger, settings: new SettingsService(settingsStore, logger) };
-}
-
-/**
- * Create the TanStack Query client of the application.
- *
- * Milestone M1 only reads and writes local data (the settings): it is available offline and only
- * changes through the app. So queries and mutations run whatever the network state, are not
- * refetched when the window regains focus, and are retried only when a new attempt may succeed.
- * Remote queries (M2) opt back into `networkMode: 'online'` where they are declared.
- *
- * @returns A new query client.
- */
-function createQueryClient(): QueryClient {
-  return new QueryClient({
-    defaultOptions: {
-      queries: {
-        networkMode: 'always',
-        refetchOnWindowFocus: false,
-        retry: (failureCount, error) =>
-          failureCount < 2 && TRANSIENT_KINDS.has(toAppError(error).kind),
-      },
-      mutations: { networkMode: 'always' },
-    },
-  });
 }
 
 /**
@@ -177,7 +150,7 @@ async function bootstrap(
   // The saved language wins over the system ones; i18n is ready before the first render.
   const language = resolveInitialLanguage(await loadSavedLanguage(services), navigator.languages);
   const i18n = await createI18n(language);
-  const queryClient = createQueryClient();
+  const queryClient = createQueryClient(services);
   const router = createAppRouter();
 
   services.logger.log('info', 'app', 'TheLibrary started', {

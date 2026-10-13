@@ -4,11 +4,13 @@
  *
  * @packageDocumentation
  */
-import { QueryClient } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
 import { LocalStorageSettingsStore } from '../adapters/dev/local-storage-settings-store.adapter';
 import { MemoryLogger } from '../adapters/dev/memory-logger.adapter';
+import type { Logger } from '../ports/logger.port';
 import type { AppServices } from '../services/app-services';
 import { SettingsService } from '../services/settings.service';
+import { createQueryClient } from '../ui/app/query-client';
 
 /** Services for a test, plus direct access to the in-memory logger to inspect what was logged. */
 export interface TestServices {
@@ -17,8 +19,9 @@ export interface TestServices {
 }
 
 /**
- * Build the application services on in-memory adapters. jsdom's `localStorage` is cleared after
- * each test (see `setup.ts`), so every test starts from a first launch.
+ * Build the application services on the development adapters (Web Storage settings store, memory
+ * logger). jsdom's `localStorage` is cleared after each test (see `setup.ts`), so every test starts
+ * from a first launch.
  *
  * @returns The services and their logger.
  */
@@ -29,12 +32,21 @@ export function createTestServices(): TestServices {
 }
 
 /**
- * Create a TanStack Query client that never retries, so a failing query fails immediately.
+ * Create the TanStack Query client of the application, except that it never retries, so a failing
+ * query fails immediately. It has the same defaults and logs failures like the one of the app, so
+ * the tests exercise the real configuration.
  *
+ * @param logger - Where failed queries and mutations are logged; a fresh memory logger by default.
  * @returns A fresh query client.
  */
-export function createTestQueryClient(): QueryClient {
-  return new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+export function createTestQueryClient(logger: Logger = new MemoryLogger()): QueryClient {
+  const queryClient = createQueryClient({ logger });
+  // `setDefaultOptions` replaces all the defaults: merge them with the existing ones to only
+  // switch the retries off.
+  const defaults = queryClient.getDefaultOptions();
+  queryClient.setDefaultOptions({
+    queries: { ...defaults.queries, retry: false },
+    mutations: { ...defaults.mutations, retry: false },
   });
+  return queryClient;
 }

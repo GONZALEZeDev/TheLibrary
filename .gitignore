@@ -16,6 +16,15 @@ coverage/
 .env.*
 *.local
 
+# Local data: the app keeps its database and its logs in its data folder, outside the repository;
+# these patterns keep any copy of them out of git
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.log
+
 # Operating system files
 .DS_Store
 Thumbs.db

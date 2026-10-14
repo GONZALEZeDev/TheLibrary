@@ -7,10 +7,10 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryLogger } from '../../adapters/dev/memory-logger.adapter';
 import { AppError } from '../../core/errors/app-error';
-import { createQueryClient, shouldRetry } from './query-client';
+import { createQueryClient, keyName, shouldRetry } from './query-client';
 
 describe('shouldRetry', () => {
-  it.each(['network', 'timeout', 'rate_limited'] as const)(
+  it.each(['network', 'timeout', 'rate_limited', 'service_unavailable'] as const)(
     'retries a %s error twice, then gives up',
     (kind) => {
       const error = new AppError(kind, 'transient failure');
@@ -32,6 +32,16 @@ describe('shouldRetry', () => {
   it('counts a value that is not an AppError as unexpected', () => {
     expect(shouldRetry(0, new TypeError('x is undefined'))).toBe(false);
     expect(shouldRetry(0, 'plugin string rejection')).toBe(false);
+  });
+});
+
+describe('keyName', () => {
+  it('keeps the leading string segments of a key and drops its parameters', () => {
+    expect(keyName(['settings'])).toBe('settings');
+    expect(keyName(['matches', 'recent'])).toBe('matches.recent');
+    expect(keyName(['matches', { hero: 67 }, 'page'])).toBe('matches');
+    expect(keyName(['match', 108501737])).toBe('match');
+    expect(keyName([])).toBe('');
   });
 });
 
@@ -75,7 +85,7 @@ describe('createQueryClient failure logging', () => {
           kind: 'storage',
           cause: 'store is locked',
           stack: expect.stringContaining('Could not read the settings') as unknown,
-          queryKey: '["settings"]',
+          query: 'settings',
         },
       },
     ]);
@@ -103,7 +113,7 @@ describe('createQueryClient failure logging', () => {
     expect(logger.entries).toHaveLength(1);
     expect(logger.entries[0]).toMatchObject({
       scope: 'query',
-      context: { kind: 'network', queryKey: '["matches",{"hero":67}]' },
+      context: { kind: 'network', query: 'matches' },
     });
   });
 
@@ -125,7 +135,7 @@ describe('createQueryClient failure logging', () => {
         context: {
           kind: 'storage',
           stack: expect.stringContaining('Could not save the settings') as unknown,
-          mutationKey: '["settings","language"]',
+          mutation: 'settings.language',
         },
       },
     ]);
@@ -146,6 +156,6 @@ describe('createQueryClient failure logging', () => {
       message: 'disk full',
       context: { kind: 'unexpected', cause: 'disk full' },
     });
-    expect(logger.entries[0]?.context).not.toHaveProperty('mutationKey');
+    expect(logger.entries[0]?.context).not.toHaveProperty('mutation');
   });
 });

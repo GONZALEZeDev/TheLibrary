@@ -11,7 +11,12 @@ import { errorLogContext, toAppError, type AppErrorKind } from '../../core/error
 import type { AppServices } from '../../services/app-services';
 
 /** Error kinds worth retrying: a new attempt may succeed. */
-const TRANSIENT_KINDS = new Set<AppErrorKind>(['network', 'timeout', 'rate_limited']);
+const TRANSIENT_KINDS = new Set<AppErrorKind>([
+  'network',
+  'timeout',
+  'rate_limited',
+  'service_unavailable',
+]);
 
 /** Retries after the first attempt of a query that fails with a transient error. */
 const MAX_RETRIES = 2;
@@ -30,12 +35,26 @@ export function shouldRetry(failureCount: number, error: unknown): boolean {
 }
 
 /**
+ * Name of a query or mutation key, for the logs: its leading string segments, joined with dots
+ * (`['matches', 'recent']` → `matches.recent`). The first segment that is not a string, and
+ * everything after it, is a parameter and is left out: parameters can identify a player.
+ *
+ * @param key - A query or mutation key.
+ * @returns The name of the key.
+ */
+export function keyName(key: readonly unknown[]): string {
+  const firstParameter = key.findIndex((segment) => typeof segment !== 'string');
+  return (firstParameter === -1 ? key : key.slice(0, firstParameter)).join('.');
+}
+
+/**
  * Create the TanStack Query client of the application.
  *
- * Milestone M1 only reads and writes local data (the settings): it is available offline and only
- * changes through the app. So queries and mutations run whatever the network state, are not
- * refetched when the window regains focus, and are retried only when a new attempt may succeed.
- * Remote queries (M2) opt back into `networkMode: 'online'` where they are declared.
+ * Every query goes through a service: the settings, the matches the synchronisation saved, and the
+ * hero names, read from their weekly cache and downloaded only when it is stale (the services
+ * apply the budgets and pauses of deadlock-api and handle being offline). So queries and mutations
+ * run whatever the network state, are not refetched when the window regains focus, and are
+ * retried only when a new attempt may succeed.
  *
  * Every query and mutation that fails is logged, once, by the caches below: the UI only shows the
  * translated message of the error kind, and the log file is the only place where the technical
@@ -54,8 +73,8 @@ export function createQueryClient(services: Pick<AppServices, 'logger'>): QueryC
         const appError = toAppError(error);
         logger.log('error', 'query', appError.message, {
           ...errorLogContext(appError),
-          // Log context values must be primitives: the key is logged as JSON.
-          queryKey: JSON.stringify(query.queryKey),
+          // The name of the key only: its parameters stay out of the logs.
+          query: keyName(query.queryKey),
         });
       },
     }),
@@ -66,7 +85,7 @@ export function createQueryClient(services: Pick<AppServices, 'logger'>): QueryC
         logger.log('error', 'mutation', appError.message, {
           ...errorLogContext(appError),
           // Unlike a query, a mutation does not have to be given a key.
-          ...(mutationKey === undefined ? {} : { mutationKey: JSON.stringify(mutationKey) }),
+          ...(mutationKey === undefined ? {} : { mutation: keyName(mutationKey) }),
         });
       },
     }),

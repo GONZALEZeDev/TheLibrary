@@ -1,12 +1,13 @@
 //! Tauri shell of TheLibrary: plugin registration and webview hardening.
 //!
 //! The application logic is written in TypeScript and runs in the webview. This file
-//! only wires the native plugins, opens the settings store and adds a navigation guard so the
-//! window can never leave the bundled app.
+//! only wires the native plugins, opens the settings store, lists the database migrations and
+//! adds a navigation guard so the window can never leave the bundled app.
 
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
 use tauri::{Manager, Runtime, Url, Webview};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
+use tauri_plugin_sql::{Migration, MigrationKind, PluginConfig as SqlPluginConfig};
 use tauri_plugin_store::StoreExt;
 
 /// Label of the only application window (`app.windows[0].label` in `tauri.conf.json`).
@@ -25,6 +26,14 @@ const LOG_ROTATED_FILES_KEPT: usize = 5;
 /// Must stay equal to `SETTINGS_FILE_NAME` in `src/adapters/tauri/tauri-settings-store.adapter.ts`:
 /// the webview finds the store opened here by this name.
 const SETTINGS_STORE_FILE: &str = "settings.json";
+
+/// Connection string of the application database: `thelibrary.db` in the app config folder,
+/// i.e. `%APPDATA%\io.github.gonzalezedev.thelibrary\thelibrary.db` on Windows.
+///
+/// Must stay equal to `plugins.sql.preload` in `tauri.conf.json` (checked by a test below) and to
+/// `DATABASE_URL` in `src/adapters/tauri/tauri-database.adapter.ts`: the plugin finds the
+/// migrations and the open connection by this exact string.
+const DATABASE_URL: &str = "sqlite:thelibrary.db";
 
 /// Scheme and host serving the bundled frontend (`build.frontendDist`) in production builds.
 ///
@@ -63,7 +72,11 @@ pub fn run() {
         // Must come after the store plugin, whose state it needs. Plugin setup hooks run in
         // registration order, before the windows declared in `tauri.conf.json` are created: the
         // settings store is therefore open before the webview can ask for it.
-        .plugin(settings_store_plugin());
+        .plugin(settings_store_plugin())
+        // HTTP requests of the webview, limited to the hosts allowed in `capabilities/default.json`.
+        .plugin(tauri_plugin_http::init())
+        // Opens the database and applies its pending migrations, also before any window exists.
+        .plugin(sql_plugin());
 
     // Restores the size/position/maximized state of the windows on startup and saves it on exit.
     #[cfg(desktop)]
@@ -112,6 +125,35 @@ fn settings_store_plugin<R: Runtime>() -> TauriPlugin<R> {
             Ok(())
         })
         .build()
+}
+
+/// The SQL plugin, with the migrations of the application database.
+///
+/// The database listed in `plugins.sql.preload` (`tauri.conf.json`) is opened at startup, which
+/// applies its pending migrations, each in its own transaction; a failure stops the startup. The
+/// webview is not granted the plugin's `load` command, whose path is not restricted (an absolute
+/// path would escape the app folder), so it cannot open another connection. The plugin has no
+/// finer permission than `execute`, though: SQL such as `ATTACH` could still reach another file,
+/// which is one more reason why no foreign code may run in the webview (CSP `script-src 'self'`).
+fn sql_plugin<R: Runtime>() -> TauriPlugin<R, Option<SqlPluginConfig>> {
+    tauri_plugin_sql::Builder::new()
+        .add_migrations(DATABASE_URL, migrations())
+        .build()
+}
+
+/// The migrations of the application database, oldest first (`migrations/*.sql` at the root of
+/// the repository).
+///
+/// The plugin stores a checksum of every applied migration and refuses to open a database whose
+/// applied migration changed, even by a whitespace. A released migration is therefore never
+/// edited: a change always goes in a new file, with the next version number.
+fn migrations() -> Vec<Migration> {
+    vec![Migration {
+        version: 1,
+        description: "matches, api cache and sync state",
+        sql: include_str!("../../migrations/0001_init.sql"),
+        kind: MigrationKind::Up,
+    }]
 }
 
 /// Cancels every top-level navigation that would leave the app (clicked external links,
@@ -199,6 +241,35 @@ mod tests {
     fn bundled_url(suffix: &str) -> Url {
         let (scheme, host) = BUNDLED_FRONTEND_ORIGIN;
         parse(&format!("{scheme}://{host}{suffix}"))
+    }
+
+    #[test]
+    fn migrations_are_numbered_from_one_without_gaps() {
+        let versions: Vec<i64> = migrations()
+            .iter()
+            .map(|migration| migration.version)
+            .collect();
+        let expected: Vec<i64> = (1..).take(versions.len()).collect();
+        assert_eq!(versions, expected);
+    }
+
+    #[test]
+    fn migrations_are_up_migrations_with_sql() {
+        for migration in migrations() {
+            assert!(matches!(migration.kind, MigrationKind::Up));
+            assert!(!migration.sql.trim().is_empty());
+        }
+    }
+
+    #[test]
+    fn database_url_is_the_preloaded_database() {
+        // A preload entry that differs from DATABASE_URL would open another, unmigrated database.
+        let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json"))
+            .expect("tauri.conf.json must be valid JSON");
+        assert_eq!(
+            config["plugins"]["sql"]["preload"],
+            serde_json::json!([DATABASE_URL])
+        );
     }
 
     #[test]

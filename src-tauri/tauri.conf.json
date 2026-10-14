@@ -25,6 +25,10 @@
       "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self'; img-src 'self' data: https://assets-bucket.deadlock-api.com; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     }
   },
+  "plugins": {
+    "http": { "scopeRedirects": true },
+    "sql": { "preload": ["sqlite:thelibrary.db"] }
+  },
   "bundle": {
     "active": true,
     "targets": ["nsis"],

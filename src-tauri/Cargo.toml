@@ -27,7 +27,22 @@ tauri-build = { version = "2.7.0", features = [] }
 tauri = { version = "2.12.0", features = [] }
 tauri-plugin-log = "2.10.0"
 tauri-plugin-store = "2.5.0"
+# HTTP client of the webview (deadlock-api). Default features minus `cookies`: the API needs no
+# cookie, so none is ever kept. `gzip` lets the server compress its responses (the hero catalogue
+# weighs about 1.4 MB uncompressed).
+tauri-plugin-http = { version = "2.8.2", default-features = false, features = [
+  "rustls-tls",
+  "http2",
+  "charset",
+  "system-proxy",
+  "gzip",
+] }
+# SQLite database of the app; the only database driver compiled in.
+tauri-plugin-sql = { version = "2.5.0", features = ["sqlite"] }
 log = "0.4"
+# Needed by `tauri::generate_context!()` as soon as tauri.conf.json has a `plugins` section (each
+# plugin configuration is embedded as a JSON value); the tests of lib.rs read that file with it too.
+serde_json = "1"
 
 # Desktop-only plugins (they have no Android/iOS implementation).
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]

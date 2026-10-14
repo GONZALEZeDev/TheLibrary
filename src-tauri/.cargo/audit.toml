@@ -1,0 +1,13 @@
+# Configuration of `cargo audit` for the Tauri shell. Every ignored advisory is reviewed and
+# justified here: keep this list short.
+
+[advisories]
+ignore = [
+  # RUSTSEC-2023-0071, `rsa` (Marvin attack, timing side channel; no fixed release exists).
+  # `rsa` is only listed in Cargo.lock: the SQL plugin depends on `sqlx`, whose macros declare the
+  # MySQL driver, which depends on `rsa`. The app enables the SQLite driver only, so `rsa` is
+  # never compiled (`cargo tree --invert rsa --target all` prints nothing; CI checks it on every
+  # push) and the app performs no RSA operation. Reviewed on 2026-10-14.
+  # Remove this entry once `rsa` leaves Cargo.lock or a fixed release exists.
+  "RUSTSEC-2023-0071",
+]

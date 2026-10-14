@@ -55,6 +55,7 @@
       "network": "The server could not be reached. Check your internet connection.",
       "timeout": "The server took too long to respond.",
       "rate_limited": "Too many requests for now. Please try again in a moment.",
+      "service_unavailable": "The data service is temporarily unavailable. Please try again later.",
       "not_found": "This data is not available (yet).",
       "forbidden": "Access was denied by the data service.",
       "invalid_payload": "The data service returned unexpected data.",

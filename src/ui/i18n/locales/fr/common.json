@@ -55,6 +55,7 @@
       "network": "Impossible de joindre le serveur. Vérifie ta connexion internet.",
       "timeout": "Le serveur a mis trop de temps à répondre.",
       "rate_limited": "Trop de requêtes pour le moment. Réessaie dans un instant.",
+      "service_unavailable": "Le service de données est momentanément indisponible. Réessaie plus tard.",
       "not_found": "Ces données ne sont pas (encore) disponibles.",
       "forbidden": "Le service de données a refusé l'accès.",
       "invalid_payload": "Le service de données a renvoyé des données inattendues.",

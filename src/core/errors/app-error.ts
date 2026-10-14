@@ -15,6 +15,7 @@ export const APP_ERROR_KINDS = [
   'network',
   'timeout',
   'rate_limited',
+  'service_unavailable',
   'not_found',
   'forbidden',
   'invalid_payload',

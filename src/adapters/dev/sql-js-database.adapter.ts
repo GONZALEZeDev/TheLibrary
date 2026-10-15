@@ -44,9 +44,11 @@ export class SqlJsDatabase implements Database {
    * @param sql - One SQL statement.
    * @param params - Values of `$1`, `$2`…
    * @returns The number of rows the statement changed.
+   * @throws Error when `sql` does not hold exactly one statement (a programming error).
    */
   async execute(sql: string, params: readonly SqlValue[] = []): Promise<number> {
     const handle = await this.#open();
+    assertSingleStatement(handle, sql);
     handle.run(sql, toBindings(sql, params));
     return handle.getRowsModified();
   }
@@ -57,9 +59,11 @@ export class SqlJsDatabase implements Database {
    * @param sql - One `SELECT` statement.
    * @param params - Values of `$1`, `$2`…
    * @returns The rows, keyed by column name.
+   * @throws Error when `sql` does not hold exactly one statement (a programming error).
    */
   async select(sql: string, params: readonly SqlValue[] = []): Promise<readonly SqlRow[]> {
     const handle = await this.#open();
+    assertSingleStatement(handle, sql);
     const statement = handle.prepare(sql, toBindings(sql, params));
     try {
       const rows: SqlRow[] = [];
@@ -99,6 +103,57 @@ export class SqlJsDatabase implements Database {
       handle.exec(migration);
     }
     return handle;
+  }
+}
+
+/**
+ * Refuse an SQL string that does not hold exactly one statement.
+ *
+ * The desktop driver (sqlx behind the Tauri SQL plugin) runs every statement of the string, while
+ * `run` and `prepare` of sql.js silently run only the first one and drop the rest: a second
+ * statement would work in the app and be ignored by the tests. This check makes the tests fail on
+ * it instead. Migrations are not concerned: they go through `exec`, which runs every statement.
+ *
+ * sql.js counts the statements itself, by preparing them without running them, so a `;` inside a
+ * literal or a comment is not taken for a separator, and a trailing `;`, whitespace or comment is
+ * not a statement.
+ *
+ * @param handle - The sql.js database that is about to run the statement.
+ * @param sql - The statement given to the port.
+ * @throws Error when `sql` holds no statement (empty, or only whitespace and comments) or more
+ *   than one (a programming error). When the text after the first statement cannot be prepared
+ *   (e.g. a table that does not exist yet), the SQLite error is the `cause`. An invalid first
+ *   statement throws its own SQL error, as it would when it runs.
+ */
+function assertSingleStatement(handle: SqlJsHandle, sql: string): void {
+  const statements = handle.iterateStatements(sql);
+  let count = 0;
+  let tailError: unknown;
+  try {
+    // `next()` frees the statement it returned before, and the iterator frees its copy of `sql`
+    // once it is exhausted or fails: reading it to the end (or until it throws) releases the
+    // WebAssembly memory it holds.
+    while (!statements.next().done) {
+      count += 1;
+    }
+  } catch (error) {
+    if (count === 0) {
+      throw error;
+    }
+    // Text follows the first statement and it is neither a statement that can be prepared nor
+    // whitespace or a comment: it counts as one more statement, and SQLite's complaint about it
+    // is kept as the cause.
+    count += 1;
+    tailError = error;
+  }
+  if (count === 0) {
+    throw new Error('The SQL holds no statement, but a call runs exactly one');
+  }
+  if (count > 1) {
+    throw new Error(
+      'The SQL holds more than one statement, but a call runs exactly one (the desktop driver would run all of them, sql.js only the first)',
+      tailError === undefined ? undefined : { cause: tailError },
+    );
   }
 }
 

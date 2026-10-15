@@ -2,8 +2,8 @@
 
 Each file `NNNN_description.sql` changes the schema of the app database. The files are applied in order, by version:
 
-- in the desktop app, by the Tauri SQL plugin when the app starts: every file is listed, with its version, in `migrations()` of `src-tauri/src/lib.rs` (a Rust test checks that the versions follow each other from 1);
-- in the tests and the browser dev mode, by the sql.js adapter (`src/adapters/dev/sql-js-database.adapter.ts`), which applies every file of this folder to a new in-memory database.
+- in the desktop app, by the Tauri SQL plugin when the app starts: every file is listed, with its version, in `migrations()` of `src-tauri/src/lib.rs` (a Rust test checks that every `.sql` file of this folder is listed there, in order, with the version of its name and its exact text, and that the versions follow each other from 1);
+- in the tests and the browser dev mode, by the sql.js adapter (`src/adapters/dev/sql-js-database.adapter.ts`), which applies every `.sql` file of this folder to a new in-memory database.
 
 Both run the same SQLite engine, so plain SQLite works everywhere.
 

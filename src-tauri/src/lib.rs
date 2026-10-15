@@ -261,14 +261,261 @@ mod tests {
         }
     }
 
+    /// The `migrations/` folder at the root of the repository.
+    const MIGRATIONS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../migrations");
+
+    /// The `capabilities/` folder of the Tauri project.
+    const CAPABILITIES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/capabilities");
+
+    /// Names of the entries of a folder, sorted (the order of zero-padded migration names).
+    fn entry_names(folder: &str) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(folder)
+            .unwrap_or_else(|error| panic!("cannot read the folder {folder}: {error}"))
+            .map(|entry| {
+                let entry = entry.expect("a folder entry must be readable");
+                entry.file_name().to_string_lossy().into_owned()
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// The version of a migration file: the number before the first `_` of its name
+    /// (`0001_init.sql` is version 1).
+    fn migration_version(file_name: &str) -> i64 {
+        let digits = file_name
+            .split_once('_')
+            .map(|(prefix, _)| prefix)
+            .filter(|prefix| prefix.bytes().all(|byte| byte.is_ascii_digit()));
+        let version = digits.and_then(|prefix| prefix.parse().ok());
+        version.unwrap_or_else(|| {
+            panic!(
+                "migrations/{file_name} must be named NNNN_description.sql, \
+                 e.g. 0002_add_notes.sql"
+            )
+        })
+    }
+
+    #[test]
+    fn migrations_list_every_file_of_the_migrations_folder() {
+        // The sql.js tests apply every file of the folder, the desktop app only the entries of
+        // `migrations()`: a file without an entry would pass the tests and never reach a user.
+        let files: Vec<String> = entry_names(MIGRATIONS_DIR)
+            .into_iter()
+            .filter(|name| name.ends_with(".sql"))
+            .collect();
+        // Checked first: a badly named file has no version, so no entry could ever match it.
+        let versions: Vec<i64> = files.iter().map(|name| migration_version(name)).collect();
+        let listed = migrations();
+
+        // The files whose version no entry has, wherever they sit in the folder (the missing
+        // entry is not always the last one).
+        let unlisted: Vec<&String> = files
+            .iter()
+            .zip(&versions)
+            .filter(|(_, version)| {
+                !listed
+                    .iter()
+                    .any(|migration| migration.version == **version)
+            })
+            .map(|(file_name, _)| file_name)
+            .collect();
+        assert!(
+            unlisted.is_empty(),
+            "migrations() has no entry for {unlisted:?}: add one per file, in file name order, \
+             with the version of the file name and the text of the file (`include_str!`)"
+        );
+        assert_eq!(
+            listed.len(),
+            files.len(),
+            "migrations() lists {} entries but migrations/ holds only {} .sql files ({files:?}): \
+             remove the entry that has no .sql file in migrations/",
+            listed.len(),
+            files.len()
+        );
+        for (position, ((file_name, version), migration)) in
+            files.iter().zip(&versions).zip(&listed).enumerate()
+        {
+            let position = position + 1;
+            assert_eq!(
+                migration.version, *version,
+                "entry {position} of migrations() is for {file_name}: \
+                 its version must be the number of the file name"
+            );
+            let text = std::fs::read_to_string(format!("{MIGRATIONS_DIR}/{file_name}"))
+                .unwrap_or_else(|error| panic!("cannot read migrations/{file_name}: {error}"));
+            assert!(
+                migration.sql == text,
+                "entry {position} of migrations() is for {file_name}: \
+                 its sql must be `include_str!` of that file (the text differs)"
+            );
+        }
+    }
+
+    /// Parses a configuration file embedded by a test; a malformed file fails loudly.
+    fn parse_json(source: &str, file_name: &str) -> serde_json::Value {
+        serde_json::from_str(source)
+            .unwrap_or_else(|error| panic!("{file_name} must be valid JSON: {error}"))
+    }
+
+    /// `tauri.conf.json`, the release configuration.
+    fn release_config() -> serde_json::Value {
+        parse_json(include_str!("../tauri.conf.json"), "tauri.conf.json")
+    }
+
+    /// `capabilities/default.json`, the permissions of the main window.
+    fn default_capability() -> serde_json::Value {
+        parse_json(
+            include_str!("../capabilities/default.json"),
+            "capabilities/default.json",
+        )
+    }
+
     #[test]
     fn database_url_is_the_preloaded_database() {
         // A preload entry that differs from DATABASE_URL would open another, unmigrated database.
-        let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json"))
-            .expect("tauri.conf.json must be valid JSON");
         assert_eq!(
-            config["plugins"]["sql"]["preload"],
+            release_config()["plugins"]["sql"]["preload"],
             serde_json::json!([DATABASE_URL])
+        );
+    }
+
+    #[test]
+    fn main_window_is_the_only_window_granted_permissions() {
+        // Another window label would hand the webview permissions to a window nobody reviewed.
+        assert_eq!(default_capability()["windows"], serde_json::json!(["main"]));
+    }
+
+    #[test]
+    fn default_capability_has_only_the_reviewed_keys() {
+        // A new key (`webviews`, `remote`, `local`, `platforms`…) changes who gets the
+        // permissions, which the pins on `windows` and `permissions` alone would not show.
+        let capability = default_capability();
+        let mut keys: Vec<&str> = capability
+            .as_object()
+            .expect("capabilities/default.json must be an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "$schema",
+                "description",
+                "identifier",
+                "permissions",
+                "windows"
+            ]
+        );
+    }
+
+    #[test]
+    fn main_window_permissions_are_the_reviewed_ones() {
+        // Any added permission, or a wider `allow` URL, gives the webview a power that was never
+        // reviewed: review it, then update this list on purpose.
+        assert_eq!(
+            default_capability()["permissions"],
+            serde_json::json!([
+                "log:default",
+                "store:allow-get-store",
+                "store:allow-get",
+                "store:allow-set",
+                "store:allow-save",
+                {
+                    "identifier": "http:default",
+                    "allow": [{ "url": "https://api.deadlock-api.com/*" }]
+                },
+                "sql:allow-select",
+                "sql:allow-execute"
+            ])
+        );
+    }
+
+    #[test]
+    fn main_window_cannot_open_another_database() {
+        // `sql:allow-load` (also part of `sql:default`) lets the webview open any path, an
+        // absolute one included: the database is opened by the shell only (see `sql_plugin`).
+        let capability = default_capability();
+        let permissions = capability["permissions"]
+            .as_array()
+            .expect("permissions must be a list");
+        for permission in permissions {
+            let identifier = permission
+                .as_str()
+                .or_else(|| permission["identifier"].as_str())
+                .expect("a permission must be a string or an object with an identifier");
+            if identifier.starts_with("sql:") {
+                assert!(
+                    ["sql:allow-select", "sql:allow-execute"].contains(&identifier),
+                    "{identifier} must not be granted: `sql:allow-load` and `sql:default` (which \
+                     includes load) would let the webview open any database file"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn capabilities_folder_holds_only_default_json() {
+        // Tauri grants every capability file of the folder to the windows it names: a new file
+        // would add permissions without touching `default.json`.
+        assert_eq!(entry_names(CAPABILITIES_DIR), ["default.json"]);
+    }
+
+    #[test]
+    fn http_redirects_stay_inside_the_allowed_scope() {
+        // Without `scopeRedirects`, an allowed host could redirect a request to a host that is not.
+        assert_eq!(
+            release_config()["plugins"]["http"]["scopeRedirects"],
+            serde_json::json!(true)
+        );
+    }
+
+    #[test]
+    fn webview_security_is_the_reviewed_one() {
+        // A looser policy (`unsafe-inline`, another script or connect host…) lets foreign code run
+        // in the webview; any other key (an inline `capabilities` list, `assetProtocol`,
+        // `devCsp`, `pattern`…) changes what the webview may do or load without touching the files
+        // above, so it must be reviewed too.
+        assert_eq!(
+            release_config()["app"]["security"],
+            serde_json::json!({
+                "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; \
+                        worker-src 'self'; style-src 'self'; \
+                        img-src 'self' data: https://assets-bucket.deadlock-api.com; \
+                        font-src 'self'; connect-src 'self' ipc: http://ipc.localhost; \
+                        object-src 'none'; base-uri 'none'; form-action 'none'; \
+                        frame-ancestors 'none'"
+            })
+        );
+    }
+
+    #[test]
+    fn dev_app_never_shares_the_data_folders_of_the_release() {
+        // Same identifier or product name: the dev build would read and migrate the database
+        // and the settings of an installed release.
+        let release = release_config();
+        let dev = parse_json(
+            include_str!("../tauri.dev.conf.json"),
+            "tauri.dev.conf.json",
+        );
+        let release_identifier = release["identifier"]
+            .as_str()
+            .expect("tauri.conf.json must have an identifier");
+        assert_eq!(
+            dev["identifier"],
+            serde_json::json!(format!("{release_identifier}.dev"))
+        );
+        // Read as strings: a dev file without `productName` would inherit the release one.
+        let release_name = release["productName"]
+            .as_str()
+            .expect("tauri.conf.json must set productName");
+        let dev_name = dev["productName"].as_str().expect(
+            "tauri.dev.conf.json must set its own productName, or it inherits the release one",
+        );
+        assert_ne!(
+            dev_name, release_name,
+            "the dev app must not use the product name of the release"
         );
     }
 

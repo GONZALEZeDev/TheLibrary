@@ -66,6 +66,70 @@ describe('SqlJsDatabase', () => {
     expect(rows).toEqual([{ doubled: 42, other: 'x' }]);
   });
 
+  it('refuses to execute two statements in one call, and runs none of them', async () => {
+    const database = createDatabase();
+
+    await expect(
+      database.execute(
+        "INSERT INTO sync_state (key, value_json, updated_at) VALUES ('a', '1', 10); " +
+          "INSERT INTO sync_state (key, value_json, updated_at) VALUES ('b', '2', 20)",
+      ),
+    ).rejects.toThrow('The SQL holds more than one statement');
+    // sql.js alone would have run the first INSERT and dropped the second one.
+    await expect(database.select('SELECT key FROM sync_state')).resolves.toEqual([]);
+  });
+
+  it('refuses a query followed by another statement', async () => {
+    await expect(createDatabase().select('SELECT 1 AS one; SELECT 2 AS two')).rejects.toThrow(
+      'The SQL holds more than one statement',
+    );
+  });
+
+  it('refuses a second statement that cannot be prepared yet, and keeps the SQLite error as its cause', async () => {
+    // The second statement fails to prepare (no such table): it is still reported as a second one.
+    await expect(
+      createDatabase().execute("DELETE FROM sync_state; DELETE FROM missing_table WHERE key = 'a'"),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('The SQL holds more than one statement') as unknown,
+      cause: expect.objectContaining({
+        message: expect.stringContaining('no such table: missing_table') as unknown,
+      }) as unknown,
+    });
+  });
+
+  it.each(['', '   ', '-- just a comment', ';'])(
+    'refuses SQL that holds no statement: %j',
+    async (sql) => {
+      const database = createDatabase();
+
+      await expect(database.execute(sql)).rejects.toThrow('The SQL holds no statement');
+      await expect(database.select(sql)).rejects.toThrow('The SQL holds no statement');
+    },
+  );
+
+  it('accepts one statement followed by a semicolon, whitespace and a comment', async () => {
+    const database = createDatabase();
+
+    const changed = await database.execute(
+      "INSERT INTO sync_state (key, value_json, updated_at) VALUES ('a', '1', 10); -- the only one\n",
+    );
+    const rows = await database.select('SELECT key FROM sync_state; /* done */ ');
+
+    expect(changed).toBe(1);
+    expect(rows).toEqual([{ key: 'a' }]);
+  });
+
+  it('does not take a semicolon inside a literal or a comment for a second statement', async () => {
+    const database = createDatabase();
+
+    await database.execute(
+      "INSERT INTO sync_state (key, value_json, updated_at) VALUES ('a;b', 'x; y', 10) -- not; two",
+    );
+    const rows = await database.select("SELECT key, value_json FROM sync_state WHERE key = 'a;b'");
+
+    expect(rows).toEqual([{ key: 'a;b', value_json: 'x; y' }]);
+  });
+
   it('propagates SQL errors as they are', async () => {
     await expect(createDatabase().select('SELECT * FROM missing_table')).rejects.toThrow(
       'no such table: missing_table',

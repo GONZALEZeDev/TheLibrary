@@ -60,7 +60,9 @@ export class HeroCatalogService {
   async getHeroes(): Promise<readonly Hero[]> {
     const now = this.#now();
     const cached = await this.#readCache();
-    if (cached !== null && cached.expiresAt > now) {
+    // A catalogue downloaded after `now` means that the system clock moved backwards since: it
+    // would stay fresh until the clock catches up, so it is downloaded again instead.
+    if (cached !== null && cached.fetchedAt <= now && cached.expiresAt > now) {
       return cached.heroes;
     }
     let heroes: Hero[];
@@ -99,9 +101,10 @@ export class HeroCatalogService {
   /**
    * Read the cached catalogue.
    *
-   * @returns The heroes and the end of their freshness, or `null` when nothing valid is cached.
+   * @returns The heroes and the times of their download and of the end of their freshness, or
+   *   `null` when nothing valid is cached.
    */
-  async #readCache(): Promise<{ heroes: Hero[]; expiresAt: number } | null> {
+  async #readCache(): Promise<{ heroes: Hero[]; fetchedAt: number; expiresAt: number } | null> {
     const entry = await this.#cache.get(CACHE_KEY);
     if (entry === null) {
       return null;
@@ -113,6 +116,8 @@ export class HeroCatalogService {
       return null;
     }
     const heroes = cachedHeroesSchema.safeParse(payload);
-    return heroes.success ? { heroes: heroes.data, expiresAt: entry.expiresAt } : null;
+    return heroes.success
+      ? { heroes: heroes.data, fetchedAt: entry.fetchedAt, expiresAt: entry.expiresAt }
+      : null;
   }
 }

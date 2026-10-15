@@ -63,6 +63,38 @@ describe('HeroCatalogService', () => {
     expect(http.requests).toHaveLength(2);
   });
 
+  it('still serves a catalogue downloaded at this very moment from the cache', async () => {
+    const { catalog, http } = setUp();
+
+    await catalog.getHeroes();
+    await catalog.getHeroes();
+
+    expect(http.requests).toHaveLength(1);
+  });
+
+  it('downloads it again when the system clock moved backwards since it was cached', async () => {
+    const { catalog, http, clock, answer } = setUp();
+    await catalog.getHeroes();
+    clock.now -= 60 * 60_000;
+    answer.handler = () => jsonResponse([{ id: 99, name: 'Newcomer' }]);
+
+    const heroes = await catalog.getHeroes();
+
+    expect(http.requests).toHaveLength(2);
+    expect(heroes).toEqual([{ id: 99, name: 'Newcomer' }]);
+  });
+
+  it('uses a catalogue dated in the future when it cannot be downloaded again', async () => {
+    const { catalog, clock, answer } = setUp();
+    const heroes = await catalog.getHeroes();
+    clock.now -= 60 * 60_000;
+    answer.handler = () => {
+      throw new AppError('network', 'The request failed');
+    };
+
+    await expect(catalog.getHeroes()).resolves.toEqual(heroes);
+  });
+
   it('keeps using the old catalogue when it cannot be refreshed, and logs it', async () => {
     const { catalog, clock, logger, answer } = setUp();
     const heroes = await catalog.getHeroes();

@@ -218,7 +218,7 @@ async function bootstrap(
   );
 
   // Started once the first render is scheduled, so that it never delays the window: the first
-  // synchronisation runs right away, the next ones every 10 minutes.
+  // synchronisation runs right away, the next ones on the timer of `SyncService.start`.
   setTimeout(() => {
     services.sync.start();
   }, 0);

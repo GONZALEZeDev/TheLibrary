@@ -1,0 +1,20 @@
+/**
+ * Tests of the politeness budgets towards deadlock-api.
+ *
+ * @packageDocumentation
+ */
+import { describe, expect, it } from 'vitest';
+import { AUTOMATIC_HISTORY_RATE_LIMIT, HISTORY_RATE_LIMIT } from './budgets';
+
+describe('history budgets', () => {
+  it('counts the automatic synchronisations over the same window as every history request', () => {
+    // Both budgets read and prune the same saved request times (each check keeps only the times
+    // inside its own window), so with different windows one budget would erase times the other
+    // still counts.
+    expect(AUTOMATIC_HISTORY_RATE_LIMIT.windowMs).toBe(HISTORY_RATE_LIMIT.windowMs);
+  });
+
+  it('keeps at least 2 requests of the window for the "Sync" button', () => {
+    expect(HISTORY_RATE_LIMIT.limit - AUTOMATIC_HISTORY_RATE_LIMIT.limit).toBeGreaterThanOrEqual(2);
+  });
+});

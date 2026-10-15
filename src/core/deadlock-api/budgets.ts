@@ -19,8 +19,9 @@ const HOUR_MS = 60 * 60_000;
 export const HISTORY_RATE_LIMIT: RateLimit = { limit: 8, windowMs: HOUR_MS };
 
 /**
- * Part of {@link HISTORY_RATE_LIMIT} that automatic synchronisations (at startup and every
- * 10 minutes) may use: the last 2 requests of the hour are kept for the "Sync" button.
+ * Part of {@link HISTORY_RATE_LIMIT} that automatic synchronisations (at startup and on their
+ * timer) may use: the last 2 requests of the hour are kept for the "Sync" button. It counts every
+ * history request of the window, manual ones included, so the timer must leave room for them.
  */
 export const AUTOMATIC_HISTORY_RATE_LIMIT: RateLimit = { limit: 6, windowMs: HOUR_MS };
 

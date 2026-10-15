@@ -1,6 +1,6 @@
 /**
  * Synchronisation of the match history: downloads the history of the linked account from
- * deadlock-api and saves it, at startup, every 10 minutes and when the user asks for it.
+ * deadlock-api and saves it, at startup, every 13 minutes and when the user asks for it.
  *
  * Only one synchronisation runs at a time: a trigger arriving while one runs joins it. A
  * synchronisation never throws: its outcome is saved per account (shown by the interface) and
@@ -25,8 +25,13 @@ import type { SyncStateRepository } from './sync-state.repository';
 /** What started a synchronisation. Only `manual` is the user's own request. */
 export type SyncTrigger = 'startup' | 'schedule' | 'manual';
 
-/** Time between two automatic synchronisations: 10 minutes. */
-export const SYNC_INTERVAL_MS = 10 * 60_000;
+/**
+ * Time between two automatic synchronisations: 13 minutes. 13 does not divide the hour, so a
+ * synchronisation finds at most 4 earlier ones in the hour before it (the budget window), none at
+ * its very edge where milliseconds decide: the timer plus one manual synchronisation stay below
+ * `AUTOMATIC_HISTORY_RATE_LIMIT`. Timers never fire early, so two ticks are never closer than this.
+ */
+export const SYNC_INTERVAL_MS = 13 * 60_000;
 
 /** How a synchronisation ended, as logged. */
 type RunOutcome = LastSync['outcome'] | 'no_account' | 'protected_account';
@@ -86,8 +91,8 @@ export class SyncService {
   }
 
   /**
-   * Start the automatic synchronisations: one right away, then one every 10 minutes. Calling it
-   * again has no effect.
+   * Start the automatic synchronisations: one right away, then one every
+   * {@link SYNC_INTERVAL_MS}. Calling it again has no effect.
    */
   start(): void {
     if (this.#timer !== undefined) {
@@ -171,8 +176,8 @@ export class SyncService {
       });
     } finally {
       // Without an account, or with a protected one, no request was sent: kept out of the log
-      // files (the desktop app writes `info` and above), which would otherwise get a line every
-      // 10 minutes.
+      // files (the desktop app writes `info` and above), which would otherwise get a line at every
+      // automatic synchronisation.
       this.#logger.log(
         outcome === 'no_account' || outcome === 'protected_account' ? 'debug' : 'info',
         'sync',

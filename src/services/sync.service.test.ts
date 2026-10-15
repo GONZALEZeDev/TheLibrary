@@ -13,6 +13,7 @@ import {
 } from '../adapters/dev/fixture-http-client.adapter';
 import { FIXTURE_ACCOUNT_ID } from '../adapters/dev/fixtures/match-history.fixture';
 import { MemoryLogger } from '../adapters/dev/memory-logger.adapter';
+import { AUTOMATIC_HISTORY_RATE_LIMIT } from '../core/deadlock-api/budgets';
 import type { AccountId } from '../core/domain/account';
 import { AppError } from '../core/errors/app-error';
 import type { Database } from '../ports/database.port';
@@ -32,6 +33,11 @@ interface SetUpOptions {
   readonly database?: Database;
   /** The linked account; the fixture account by default. */
   readonly accountId?: AccountId | null;
+  /**
+   * Current time (Unix ms) read by every service; the controllable `clock` by default. When given,
+   * the returned `clock` has no effect.
+   */
+  readonly now?: () => number;
 }
 
 /**
@@ -42,7 +48,7 @@ interface SetUpOptions {
  */
 function setUp(options: SetUpOptions = {}) {
   const clock = { now: START };
-  const now = () => clock.now;
+  const now = options.now ?? (() => clock.now);
   const answer = { handler: options.handler ?? createFixtureApi({ now: START }) };
   const http = new FixtureHttpClient((request) => answer.handler(request));
   const logger = new MemoryLogger();
@@ -62,6 +68,24 @@ function setUp(options: SetUpOptions = {}) {
     now,
   });
   return { sync, http, logger, clock, answer, matches, database };
+}
+
+/**
+ * A clock for fake timers that is a few milliseconds late, like the time a service reads after a
+ * database round trip. The delay is not cumulative: it depends on the current fake minute, so it
+ * differs from one synchronisation to the next, and the startup reading (minute 0) is the slowest,
+ * as a cold database access is. So the startup request is dated 8 ms after its schedule, more than
+ * a tick made exactly one hour later (with an interval that divides the hour) is after its own, and
+ * it stays inside that tick's window: the failure to reproduce.
+ *
+ * @returns A function reading the fake `Date.now()`, 1 to 8 ms late.
+ */
+function createLateClock(): () => number {
+  return () => {
+    const fakeNow = Date.now();
+    const minute = Math.floor((fakeNow - START) / 60_000);
+    return fakeNow + (minute === 0 ? 8 : 1 + (minute % 7));
+  };
 }
 
 afterEach(() => {
@@ -273,7 +297,7 @@ describe('SyncService', () => {
     );
   });
 
-  it('synchronises at start, then every 10 minutes until stopped', async () => {
+  it('synchronises at start, then on its timer until stopped', async () => {
     vi.useFakeTimers();
     const { sync, http, clock } = setUp();
 
@@ -291,5 +315,54 @@ describe('SyncService', () => {
     await vi.advanceTimersByTimeAsync(3 * SYNC_INTERVAL_MS);
 
     expect(http.requests).toHaveLength(2);
+  });
+
+  it('leaves room in the automatic budget for its timer and one manual synchronisation', () => {
+    // The floor counts the earlier automatic synchronisations a tick finds in its window, including
+    // one that timing noise may keep at the edge of the window; the + 1 is one manual
+    // synchronisation, which the automatic budget counts too.
+    const earlierAutomaticInWindow = Math.floor(
+      AUTOMATIC_HISTORY_RATE_LIMIT.windowMs / SYNC_INTERVAL_MS,
+    );
+
+    expect(earlierAutomaticInWindow + 1).toBeLessThan(AUTOMATIC_HISTORY_RATE_LIMIT.limit);
+  });
+
+  it('never refuses an automatic synchronisation over a day, with timing noise and one manual synchronisation per hour', async () => {
+    const hours = 24;
+    const { sync, http, logger, matches } = setUp({
+      now: createLateClock(),
+      // A one-match history: the budget does not depend on its size, and a day of synchronisations
+      // of the default 240 matches would take seconds.
+      handler: createFixtureApi({ now: START, matchCount: 1 }),
+    });
+    // Open the database before faking the timers: sql.js loads its WebAssembly file with real I/O,
+    // which fake timers do not wait for, so the first ticks would join a startup synchronisation
+    // still waiting for it. `count` does not read the clock.
+    await matches.count(FIXTURE_ACCOUNT_ID);
+    vi.useFakeTimers({ now: START });
+
+    sync.start();
+    // The startup synchronisation ended at START, before the first tick.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sync.isRunning()).toBe(false);
+    for (let hour = 0; hour < hours; hour += 1) {
+      // The manual synchronisation falls half a minute after the half hour: whole-minute ticks
+      // never coincide with it, so it always falls between two ticks.
+      await vi.advanceTimersByTimeAsync(30 * 60_000 + 30_000);
+      await sync.syncNow('manual');
+      await vi.advanceTimersByTimeAsync(29 * 60_000 + 30_000);
+    }
+    sync.stop();
+
+    // Every synchronisation logs how it ended; a refusal by the budget is one of the outcomes.
+    const outcomes = logger.entries
+      .filter((entry) => entry.message === 'Synchronisation ended')
+      .map((entry) => entry.context.outcome);
+    expect(outcomes.filter((outcome) => outcome === 'budget_exhausted')).toHaveLength(0);
+    // And each of them sent its request: the startup one, one manual one per hour and every tick.
+    expect(http.requests).toHaveLength(
+      1 + hours + Math.floor((hours * 60 * 60_000) / SYNC_INTERVAL_MS),
+    );
   });
 });

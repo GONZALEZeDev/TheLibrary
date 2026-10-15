@@ -19,6 +19,12 @@
       "enabled": false
     },
     {
+      "description": "TypeScript stays below 6.1 until typescript-eslint supports newer versions (its peer range stops at <6.1.0 as of 2026-10-14). Remove this rule once it does.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<6.1"
+    },
+    {
       "matchManagers": ["npm"],
       "matchUpdateTypes": ["minor", "patch"],
       "groupName": "npm minor and patch updates"

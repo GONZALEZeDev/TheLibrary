@@ -73,7 +73,8 @@ export default defineConfig([
 
   {
     name: 'project/node-config-files',
-    files: ['*.{js,ts}'],
+    // Tooling that runs in Node.js: the configuration files and the scripts of scripts/.
+    files: ['*.{js,ts}', 'scripts/**/*.ts'],
     languageOptions: { globals: globals.node },
   },
 

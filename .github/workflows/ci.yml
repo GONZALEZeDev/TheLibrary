@@ -1,6 +1,8 @@
 # Continuous integration.
 # Every push to main and every pull request must pass the same checks as `pnpm check`, the
-# production build, the Rust shell checks and the dependency audits.
+# production build (which must contain no development-only code), the Rust shell checks and the
+# dependency audits. The same checks also run every Monday, so that a vulnerability published
+# for an unchanged dependency is reported even when nobody pushes.
 # Third-party actions are pinned by commit SHA (supply-chain hardening); Renovate
 # keeps the SHAs up to date.
 name: CI
@@ -9,6 +11,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Mondays at 06:00 UTC, after Renovate's weekly run.
+    - cron: '0 6 * * 1'
+  # Lets the owner run the checks by hand from the Actions tab.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -42,6 +49,8 @@ jobs:
       - run: pnpm format:check
       - run: pnpm test
       - run: pnpm build
+      # Fails if the production build contains development-only code (see scripts/check-dev-code.ts).
+      - run: pnpm check:dev-code
       - run: pnpm audit --audit-level high
 
   tauri:
@@ -74,6 +83,27 @@ jobs:
       # The Rust unit tests of the shell (e.g. the navigation guard).
       - run: cargo test
         working-directory: src-tauri
+      # src-tauri/.cargo/audit.toml ignores RUSTSEC-2023-0071 because the `rsa` crate is listed in
+      # Cargo.lock but never compiled. Prove it: this step fails as soon as it is compiled, and also
+      # when cargo cannot tell (a check that cannot run proves nothing).
+      - name: Check that the rsa crate is not compiled
+        shell: bash
+        working-directory: src-tauri
+        run: |
+          if ! tree=$(cargo tree --locked --invert rsa --edges normal,build --target all 2>&1); then
+            case "$tree" in
+              # rsa left Cargo.lock: nothing can compile it (the audit exception can go too).
+              *"did not match any packages"*) exit 0 ;;
+            esac
+            echo "$tree"
+            echo "cargo tree failed: cannot prove that the rsa crate is not compiled"
+            exit 1
+          fi
+          if grep -q '^rsa v' <<< "$tree"; then
+            echo "$tree"
+            echo "The rsa crate is now compiled: review RUSTSEC-2023-0071 and src-tauri/.cargo/audit.toml"
+            exit 1
+          fi
       - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
         with:
           tool: cargo-audit

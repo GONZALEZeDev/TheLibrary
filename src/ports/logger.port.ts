@@ -21,7 +21,8 @@ export type LogContext = AppErrorContext;
 /** Destination-agnostic structured logger. */
 export interface Logger {
   /**
-   * Write one log line.
+   * Write one log line. Never throws: a line that cannot be written is dropped, as there is
+   * nowhere left to report it, so any code path (error handlers included) may log without a guard.
    *
    * @param level - Severity.
    * @param scope - Dotted area of the app emitting the line, e.g. `settings` or `sync.history`.

@@ -5,7 +5,7 @@
  * replaces the page inside the shell, so the sidebar stays usable; when the root layout itself
  * fails, there is no shell left and it replaces the whole window. The screen shows a translated
  * message for the error kind, logs the technical details once, and lets the user retry or copy the
- * kind and message for a bug report.
+ * kind, message and context of the error for a bug report.
  *
  * @packageDocumentation
  */

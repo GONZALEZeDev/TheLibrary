@@ -1,44 +1,75 @@
 /**
  * Composition root: the only production module that knows every layer.
  *
- * It picks the adapters for the current environment — Tauri plugins in the desktop app, memory and
- * Web Storage in the browser dev mode (`pnpm dev`) — builds the services, initialises i18n with the
- * saved (or system) language, then renders the application. It also logs every error nothing else
- * reports: errors outside a route, unhandled promise rejections, uncaught render errors.
+ * It picks the adapters for the current environment — Tauri plugins in the desktop app, the
+ * development adapters (synthetic data, in-memory database) in the browser dev mode (`pnpm dev`) —
+ * builds the services, initialises i18n with the saved (or system) language, renders the
+ * application, then starts the synchronisation. It also logs every error nothing else reports:
+ * errors outside a route, unhandled promise rejections, uncaught render errors.
+ *
+ * Development-only code (the browser adapters, the development account of the desktop build, the
+ * TanStack devtools) is only reached through dynamic `import()`s guarded by
+ * `import.meta.env.DEV`. Vite replaces that flag with `false` in production builds and leaves
+ * those modules out; `scripts/check-dev-code.ts` proves it in CI.
  *
  * @packageDocumentation
  */
 import { RouterProvider } from '@tanstack/react-router';
 import { isTauri } from '@tauri-apps/api/core';
-import { StrictMode } from 'react';
+import { lazy, StrictMode, Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
-import { LocalStorageSettingsStore } from './adapters/dev/local-storage-settings-store.adapter';
-import { MemoryLogger } from './adapters/dev/memory-logger.adapter';
+import { TauriDatabase } from './adapters/tauri/tauri-database.adapter';
+import { TauriHttpClient } from './adapters/tauri/tauri-http-client.adapter';
 import { TauriLogger } from './adapters/tauri/tauri-logger.adapter';
 import { TauriSettingsStore } from './adapters/tauri/tauri-settings-store.adapter';
+import { UnlinkedAccountSource } from './adapters/tauri/unlinked-account-source.adapter';
 import { errorLogContext, toAppError } from './core/errors/app-error';
 import { resolveInitialLanguage, type Language } from './core/settings/language';
 import type { LogLevel } from './ports/logger.port';
 import type { AppServices } from './services/app-services';
-import { SettingsService } from './services/settings.service';
+import { createAppServices, type AppAdapters } from './services/create-app-services';
 import { AppProviders } from './ui/app/AppProviders';
 import { createQueryClient } from './ui/app/query-client';
 import { createAppRouter } from './ui/app/router';
+import { createUnhandledErrorReporter } from './ui/app/unhandled-errors';
 import { createI18n, RESOURCES } from './ui/i18n/i18n';
 import './ui/theme/theme.css';
 
+/** Version of the app (package.json), written into the bundle by Vite: see `define` in vite.config.ts. */
+declare const __APP_VERSION__: string;
+
+/** TanStack devtools, in development builds only (see the header of this file). */
+const DevTools = import.meta.env.DEV
+  ? lazy(() => import('./ui/app/DevTools').then((module) => ({ default: module.DevTools })))
+  : null;
+
 /**
- * Build the services with the adapters of the current environment.
+ * Create the adapters of the current environment.
  *
- * @param desktop - `true` inside the Tauri desktop app, `false` in the browser dev mode.
- * @returns The application services.
+ * @param desktop - `true` inside the Tauri desktop app, `false` in the browser.
+ * @returns One adapter per port.
+ * @throws Error in a production build opened outside the desktop app, which has no adapters for
+ *   the browser.
  */
-function createServices(desktop: boolean): AppServices {
-  const logger = desktop ? new TauriLogger() : new MemoryLogger({ mirrorToConsole: true });
-  const settingsStore = desktop
-    ? new TauriSettingsStore()
-    : new LocalStorageSettingsStore(window.localStorage);
-  return { logger, settings: new SettingsService(settingsStore, logger) };
+async function createAdapters(desktop: boolean): Promise<AppAdapters> {
+  if (desktop) {
+    const logger = new TauriLogger();
+    return {
+      logger,
+      settingsStore: new TauriSettingsStore(),
+      http: new TauriHttpClient(),
+      database: new TauriDatabase(),
+      // Release builds link no account until the Steam sign-in exists; development builds read
+      // the developer's own account from the git-ignored .env.development.local file.
+      accountSource: import.meta.env.DEV
+        ? (await import('./adapters/dev/dev-environment')).createDesktopDevAccountSource(logger)
+        : new UnlinkedAccountSource(),
+    };
+  }
+  if (import.meta.env.DEV) {
+    return (await import('./adapters/dev/dev-environment')).createBrowserDevAdapters();
+  }
+  throw new Error('Outside development, TheLibrary only runs in its desktop app');
 }
 
 /**
@@ -120,17 +151,17 @@ function logReactError(
  * @param services - The application services.
  */
 function logUnhandledErrors(services: AppServices): void {
+  // At most 20 lines a minute: an error repeated in a loop must not fill the log files.
+  const report = createUnhandledErrorReporter(services);
   // Errors thrown outside React's rendering, e.g. in an event handler or a timer callback.
   window.addEventListener('error', (event) => {
     // `event.error` is empty when the browser hides the error (script from another origin) or
     // reports a plain message (ResizeObserver loop): the message is then all that is known.
-    const appError = toAppError((event.error as unknown) ?? event.message);
-    services.logger.log('error', 'app.window', appError.message, errorLogContext(appError));
+    report('app.window', (event.error as unknown) ?? event.message);
   });
   // Promises rejected with nobody to handle them; Tauri plugins reject with plain strings.
   window.addEventListener('unhandledrejection', (event) => {
-    const appError = toAppError(event.reason);
-    services.logger.log('error', 'app.promise', appError.message, errorLogContext(appError));
+    report('app.promise', event.reason);
   });
 }
 
@@ -177,28 +208,61 @@ async function bootstrap(
     <StrictMode>
       <AppProviders services={services} queryClient={queryClient} i18n={i18n}>
         <RouterProvider router={router} />
+        {DevTools !== null && (
+          <Suspense fallback={null}>
+            <DevTools router={router} />
+          </Suspense>
+        )}
       </AppProviders>
     </StrictMode>,
   );
+
+  // Started once the first render is scheduled, so that it never delays the window: the first
+  // synchronisation runs right away, the next ones every 10 minutes.
+  setTimeout(() => {
+    services.sync.start();
+  }, 0);
+}
+
+/**
+ * Create the adapters and the services, then start the application.
+ *
+ * @param rootElement - The element the application renders into.
+ */
+async function start(rootElement: HTMLElement): Promise<void> {
+  const desktop = isTauri();
+  // Built before `bootstrap()`, so that a failed startup can still be logged.
+  const services = createAppServices(await createAdapters(desktop), {
+    appVersion: __APP_VERSION__,
+  });
+  // Registered right away, so that nothing happening after this point goes unlogged.
+  logUnhandledErrors(services);
+  // Development only (`import.meta.hot` is undefined in a build): a module replaced by Vite must
+  // not leave its synchronisation timer running next to the new one.
+  import.meta.hot?.dispose(() => {
+    services.sync.stop();
+  });
+  try {
+    await bootstrap(rootElement, services, desktop);
+  } catch (error) {
+    // Every expected failure is handled inside `bootstrap()`, so this is a bug: keep its trace in
+    // the logs, and tell the user instead of leaving an empty window.
+    const appError = toAppError(error);
+    services.logger.log('error', 'app', 'TheLibrary could not start', {
+      reason: appError.message,
+      ...errorLogContext(appError),
+    });
+    showFatalError(rootElement);
+  }
 }
 
 const rootElement = document.getElementById('root');
 if (rootElement === null) {
   throw new Error('index.html must contain <div id="root">');
 }
-// Built before `bootstrap()`, so that a failed startup can still be logged.
-const desktop = isTauri();
-const services = createServices(desktop);
-// Registered right away, so that nothing happening after this point goes unlogged.
-logUnhandledErrors(services);
-
-bootstrap(rootElement, services, desktop).catch((error: unknown) => {
-  // Every expected failure is handled inside `bootstrap()`, so this is a bug: keep its trace in the
-  // logs, and tell the user instead of leaving an empty window.
-  const appError = toAppError(error);
-  services.logger.log('error', 'app', 'TheLibrary could not start', {
-    reason: appError.message,
-    ...errorLogContext(appError),
-  });
+start(rootElement).catch((error: unknown) => {
+  // The adapters could not be created, so there is no logger yet: the user is told, and the error
+  // is rethrown so that it still reaches the console of the webview (useful in development).
   showFatalError(rootElement);
+  throw error;
 });

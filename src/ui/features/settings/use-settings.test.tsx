@@ -8,10 +8,8 @@ import type { i18n as I18n } from 'i18next';
 import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { LocalStorageSettingsStore } from '../../../adapters/dev/local-storage-settings-store.adapter';
-import { MemoryLogger } from '../../../adapters/dev/memory-logger.adapter';
 import { parseSettings } from '../../../core/settings/settings.schema';
 import type { AppServices } from '../../../services/app-services';
-import { SettingsService } from '../../../services/settings.service';
 import { createTestQueryClient, createTestServices } from '../../../test/create-test-services';
 import { AppProviders } from '../../app/AppProviders';
 import { createI18n } from '../../i18n/i18n';
@@ -126,11 +124,7 @@ describe('settings hooks', () => {
   });
 
   it('ignore a read that was already in flight when a language is saved', async () => {
-    const logger = new MemoryLogger();
-    const services: AppServices = {
-      logger,
-      settings: new SettingsService(createSlowFirstReadStore(), logger),
-    };
+    const { services } = createTestServices({ settingsStore: createSlowFirstReadStore() });
     const i18n = await createI18n('en');
     // Mounting starts the first, slow, read of the settings (still without any language).
     const { result } = renderSettingsHooks(services, i18n);
@@ -148,11 +142,7 @@ describe('settings hooks', () => {
   });
 
   it('end on the last pick everywhere when picks follow each other quickly', async () => {
-    const logger = new MemoryLogger();
-    const services: AppServices = {
-      logger,
-      settings: new SettingsService(createSlowFrenchStore(), logger),
-    };
+    const { services } = createTestServices({ settingsStore: createSlowFrenchStore() });
     const i18n = await createI18n('en');
     const { result, queryClient } = renderSettingsHooks(services, i18n);
     await waitFor(() => {

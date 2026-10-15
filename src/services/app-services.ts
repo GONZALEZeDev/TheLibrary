@@ -1,14 +1,17 @@
 /**
  * The set of services available to the UI.
  *
- * The composition root (`src/main.tsx`) builds this object with the adapters of the current
- * environment; the UI receives it through React context (`ui/app/ServicesContext.tsx`) and never
- * builds services or adapters itself. It grows milestone by milestone (sync, matches, analysis…).
+ * `create-app-services.ts` builds this object from the adapters of the current environment; the UI
+ * receives it through React context (`ui/app/ServicesContext.tsx`) and never builds services or
+ * adapters itself. It grows milestone by milestone (analysis…).
  *
  * @packageDocumentation
  */
 import type { Logger } from '../ports/logger.port';
+import type { HeroCatalogService } from './hero-catalog.service';
+import type { MatchesService } from './matches.service';
 import type { SettingsService } from './settings.service';
+import type { SyncService } from './sync.service';
 
 /** Services available to the UI. */
 export interface AppServices {
@@ -16,4 +19,10 @@ export interface AppServices {
   readonly settings: SettingsService;
   /** Structured logger. */
   readonly logger: Logger;
+  /** Match history of the linked account. */
+  readonly matches: MatchesService;
+  /** Hero names. */
+  readonly heroes: HeroCatalogService;
+  /** Synchronisation of the match history with deadlock-api. */
+  readonly sync: SyncService;
 }

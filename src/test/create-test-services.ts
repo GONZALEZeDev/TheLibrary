@@ -13,9 +13,9 @@ import {
 import { FIXTURE_ACCOUNT_ID } from '../adapters/dev/fixtures/match-history.fixture';
 import { LocalStorageSettingsStore } from '../adapters/dev/local-storage-settings-store.adapter';
 import { MemoryLogger } from '../adapters/dev/memory-logger.adapter';
-import type { SqlJsDatabase } from '../adapters/dev/sql-js-database.adapter';
 import { StaticAccountSource } from '../adapters/dev/static-account-source.adapter';
 import type { AccountId } from '../core/domain/account';
+import type { Database } from '../ports/database.port';
 import type { Logger } from '../ports/logger.port';
 import type { SettingsStore } from '../ports/settings-store.port';
 import type { AppServices } from '../services/app-services';
@@ -31,6 +31,13 @@ export interface TestServicesOptions {
   readonly handler?: FixtureHandler;
   /** The linked account; the account of the fixtures by default, `null` for none. */
   readonly accountId?: AccountId | null;
+  /** Shown instead of an account when none is linked; none by default. */
+  readonly missingAccountHint?: string;
+  /**
+   * The database; a fresh in-memory one by default. Pass the database of an earlier call to simulate
+   * a restart of the app, or one of your own to make the storage fail.
+   */
+  readonly database?: Database;
   /** Current time (Unix ms); `Date.now` by default. */
   readonly now?: () => number;
 }
@@ -40,14 +47,15 @@ export interface TestServices {
   readonly services: AppServices;
   readonly logger: MemoryLogger;
   readonly http: FixtureHttpClient;
-  readonly database: SqlJsDatabase;
+  /** The database the services use: the one given in the options, or the fresh one. */
+  readonly database: Database;
 }
 
 /**
  * Build the application services on the development adapters: Web Storage settings, synthetic
  * deadlock-api, in-memory database, memory logger. jsdom's `localStorage` is cleared after each
- * test (see `setup.ts`) and each call gets a fresh database, so every test starts from a first
- * launch.
+ * test (see `setup.ts`) and each call gets a fresh database unless one is given, so every test
+ * starts from a first launch.
  *
  * @param options - See {@link TestServicesOptions}.
  * @returns The services and their adapters.
@@ -56,7 +64,7 @@ export function createTestServices(options: TestServicesOptions = {}): TestServi
   const now = options.now ?? Date.now;
   const logger = new MemoryLogger();
   const http = new FixtureHttpClient(options.handler ?? createFixtureApi({ now: now() }));
-  const database = createTestDatabase();
+  const database = options.database ?? createTestDatabase();
   const services = createAppServices(
     {
       logger,
@@ -65,6 +73,7 @@ export function createTestServices(options: TestServicesOptions = {}): TestServi
       database,
       accountSource: new StaticAccountSource(
         options.accountId === undefined ? FIXTURE_ACCOUNT_ID : options.accountId,
+        options.missingAccountHint,
       ),
     },
     { appVersion: '0.0.0-test', now },

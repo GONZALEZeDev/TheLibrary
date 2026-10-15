@@ -71,8 +71,6 @@ export const accountSyncStateSchema = z.object({
 
 /** Everything the interface shows about the synchronisation. */
 export interface SyncStatus {
-  /** A synchronisation is running right now. */
-  readonly running: boolean;
   /** An account is available to synchronise. */
   readonly accountLinked: boolean;
   /**

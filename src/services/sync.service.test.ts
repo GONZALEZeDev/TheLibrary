@@ -1,73 +1,53 @@
 /**
  * Tests of the synchronisation, end to end on the development adapters: synthetic deadlock-api,
- * in-memory database, memory logger.
+ * in-memory database, memory logger. The services are wired by `createAppServices`, like in the
+ * app, through `createTestServices`.
  *
  * @packageDocumentation
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  createFixtureApi,
-  FixtureHttpClient,
-  jsonResponse,
-  type FixtureHandler,
-} from '../adapters/dev/fixture-http-client.adapter';
+import { createFixtureApi, jsonResponse } from '../adapters/dev/fixture-http-client.adapter';
 import { FIXTURE_ACCOUNT_ID } from '../adapters/dev/fixtures/match-history.fixture';
-import { MemoryLogger } from '../adapters/dev/memory-logger.adapter';
 import { AUTOMATIC_HISTORY_RATE_LIMIT } from '../core/deadlock-api/budgets';
-import type { AccountId } from '../core/domain/account';
 import { AppError } from '../core/errors/app-error';
 import type { Database } from '../ports/database.port';
+import { createTestServices, type TestServicesOptions } from '../test/create-test-services';
 import { createTestDatabase } from '../test/test-data';
-import { DeadlockApiService } from './deadlock-api.service';
-import { MatchesRepository } from './matches.repository';
-import { SYNC_INTERVAL_MS, SyncService } from './sync.service';
-import { SyncStateRepository } from './sync-state.repository';
+import { SYNC_INTERVAL_MS } from './sync.service';
 
 const START = Date.UTC(2026, 9, 14, 12, 0, 0);
 
-/** Options of {@link setUp}. */
-interface SetUpOptions {
-  /** Answers the requests; the fixture API (240 matches) by default. */
-  readonly handler?: FixtureHandler;
-  /** The database; a fresh one by default. Pass the same one to simulate a restart. */
-  readonly database?: Database;
-  /** The linked account; the fixture account by default. */
-  readonly accountId?: AccountId | null;
-  /**
-   * Current time (Unix ms) read by every service; the controllable `clock` by default. When given,
-   * the returned `clock` has no effect.
-   */
-  readonly now?: () => number;
-}
+/**
+ * Options of {@link setUp}: those of `createTestServices`, except the settings, which the
+ * synchronisation does not use, and the missing-account hint, which `setUp` fixes. `handler` gives
+ * the first answers of the returned `answer.handler` (the fixture API of 240 matches by default);
+ * `now`, when given, replaces the controllable `clock` for every service, which then has no effect.
+ */
+type SetUpOptions = Omit<TestServicesOptions, 'settingsStore' | 'missingAccountHint'>;
 
 /**
- * Build the synchronisation on the development adapters, with a controllable clock and handler.
+ * Build the synchronisation exactly like the app (through `createTestServices`), with a
+ * controllable clock and handler.
  *
  * @param options - See {@link SetUpOptions}.
  * @returns The service and everything a test may inspect or change.
  */
 function setUp(options: SetUpOptions = {}) {
   const clock = { now: START };
-  const now = options.now ?? (() => clock.now);
   const answer = { handler: options.handler ?? createFixtureApi({ now: START }) };
-  const http = new FixtureHttpClient((request) => answer.handler(request));
-  const logger = new MemoryLogger();
-  const database = options.database ?? createTestDatabase();
-  const syncState = new SyncStateRepository(database, logger, now);
-  const matches = new MatchesRepository(database, now);
-  const accountId = options.accountId === undefined ? FIXTURE_ACCOUNT_ID : options.accountId;
-  const sync = new SyncService({
-    accountSource: {
-      currentAccountId: () => Promise.resolve(accountId),
-      missingAccountHint: accountId === null ? 'Set the development account' : null,
-    },
-    api: new DeadlockApiService(http, syncState, logger, { appVersion: '0.1.0', now }),
-    matches,
-    syncState,
-    logger,
-    now,
+  const { services, http, logger } = createTestServices({
+    ...options,
+    handler: (request) => answer.handler(request),
+    // What the development build shows when no account is set: only reported without an account.
+    missingAccountHint: 'Set the development account',
+    now: options.now ?? (() => clock.now),
   });
-  return { sync, http, logger, clock, answer, matches, database };
+  /**
+   * Number of matches stored for the linked account. Read through the matches service, whose total
+   * counts them whatever the limit, so no repository is built by hand; no clock is read.
+   */
+  const countMatches = async () => (await services.matches.listRecent(0)).total;
+  return { sync: services.sync, http, logger, clock, answer, countMatches };
 }
 
 /**
@@ -94,7 +74,7 @@ afterEach(() => {
 
 describe('SyncService', () => {
   it('saves the whole history at the first synchronisation, then only adds new matches', async () => {
-    const { sync, matches, clock } = setUp();
+    const { sync, countMatches, clock } = setUp();
 
     await sync.syncNow('startup');
     const first = await sync.getStatus();
@@ -109,7 +89,7 @@ describe('SyncService', () => {
       historyFetchedAt: START,
       historyFromSteam: true,
     });
-    await expect(matches.count(FIXTURE_ACCOUNT_ID)).resolves.toBe(240);
+    await expect(countMatches()).resolves.toBe(240);
     await expect(sync.getStatus()).resolves.toMatchObject({
       lastSync: { outcome: 'synced', newMatches: 0, historyFetchedAt: START + SYNC_INTERVAL_MS },
     });
@@ -168,7 +148,6 @@ describe('SyncService', () => {
     expect(http.requests).toHaveLength(0);
     expect(logger.entries.filter((entry) => entry.level !== 'debug')).toEqual([]);
     await expect(sync.getStatus()).resolves.toEqual({
-      running: false,
       accountLinked: false,
       missingAccountHint: 'Set the development account',
       lastSync: null,
@@ -245,7 +224,7 @@ describe('SyncService', () => {
   });
 
   it('records a failure, logs it once with the id of the synchronisation, and keeps the data', async () => {
-    const { sync, logger, matches, clock, answer } = setUp();
+    const { sync, logger, countMatches, clock, answer } = setUp();
     await sync.syncNow('startup');
     answer.handler = () => jsonResponse({}, 500);
     clock.now += SYNC_INTERVAL_MS;
@@ -262,7 +241,7 @@ describe('SyncService', () => {
     await expect(sync.getStatus()).resolves.toMatchObject({
       lastSync: { outcome: 'failed', errorKind: 'service_unavailable', historyFetchedAt: START },
     });
-    await expect(matches.count(FIXTURE_ACCOUNT_ID)).resolves.toBe(240);
+    await expect(countMatches()).resolves.toBe(240);
   });
 
   it('never writes the account id in the logs, even when the network error quotes the URL', async () => {
@@ -330,7 +309,7 @@ describe('SyncService', () => {
 
   it('never refuses an automatic synchronisation over a day, with timing noise and one manual synchronisation per hour', async () => {
     const hours = 24;
-    const { sync, http, logger, matches } = setUp({
+    const { sync, http, logger, countMatches } = setUp({
       now: createLateClock(),
       // A one-match history: the budget does not depend on its size, and a day of synchronisations
       // of the default 240 matches would take seconds.
@@ -338,8 +317,8 @@ describe('SyncService', () => {
     });
     // Open the database before faking the timers: sql.js loads its WebAssembly file with real I/O,
     // which fake timers do not wait for, so the first ticks would join a startup synchronisation
-    // still waiting for it. `count` does not read the clock.
-    await matches.count(FIXTURE_ACCOUNT_ID);
+    // still waiting for it. `countMatches` does not read the clock.
+    await countMatches();
     vi.useFakeTimers({ now: START });
 
     sync.start();

@@ -147,7 +147,6 @@ export class SyncService {
         : this.#syncState.getAccountState(accountId),
     ]);
     return {
-      running: this.isRunning(),
       accountLinked: accountId !== null,
       missingAccountHint: accountId === null ? this.#accountSource.missingAccountHint : null,
       lastSync: state.lastSync,

@@ -20,6 +20,38 @@
     "empty": {
       "title": "Aucune partie pour l'instant",
       "description": "Ton historique apparaîtra ici après la première synchronisation."
+    },
+    "noAccount": {
+      "title": "Aucun compte lié",
+      "description": "L'historique de tes parties apparaîtra ici dès qu'un compte Steam sera lié."
+    },
+    "loading": "Chargement des parties…",
+    "count": "Les {{shown}} plus récentes de tes {{total}} parties.",
+    "table": {
+      "caption": "Parties les plus récentes",
+      "date": "Date",
+      "hero": "Héros",
+      "result": "Résultat",
+      "kda": "K / D / A",
+      "duration": "Durée",
+      "win": "Victoire",
+      "loss": "Défaite",
+      "unknownHero": "Héros n°{{id}}"
+    },
+    "sync": {
+      "now": "Synchroniser",
+      "running": "Synchronisation…",
+      "noAccount": "Aucun compte Steam n'est lié.",
+      "never": "Pas encore synchronisé.",
+      "lastSync": "Dernière synchronisation : {{time}}.",
+      "newMatches": "Nouvelles parties : {{number}}.",
+      "upToDate": "Historique actualisé depuis Steam.",
+      "partial": "Historique peut-être incomplet : deadlock-api ne connaît que les parties qu'il a collectées lui-même.",
+      "budget": "Limite de requêtes atteinte pour l'instant. Dernier téléchargement de l'historique : {{time}}.",
+      "budgetNever": "Limite de requêtes atteinte pour l'instant : l'historique sera téléchargé lors d'une prochaine synchronisation.",
+      "paused": "deadlock-api a demandé de ralentir : synchronisation en pause jusqu'à {{time}}.",
+      "protected": "Les données de ce compte sont privées sur deadlock-api : la synchronisation automatique est arrêtée.",
+      "failed": "La dernière synchronisation a échoué : {{reason}}"
     }
   },
   "matchDetail": {

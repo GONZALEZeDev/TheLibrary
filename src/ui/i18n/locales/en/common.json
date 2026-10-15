@@ -20,6 +20,38 @@
     "empty": {
       "title": "No matches yet",
       "description": "Your match history will appear here after the first synchronisation."
+    },
+    "noAccount": {
+      "title": "No account linked",
+      "description": "Your match history will appear here once a Steam account is linked."
+    },
+    "loading": "Loading the matches…",
+    "count": "The {{shown}} most recent of your {{total}} matches.",
+    "table": {
+      "caption": "Most recent matches",
+      "date": "Date",
+      "hero": "Hero",
+      "result": "Result",
+      "kda": "K / D / A",
+      "duration": "Duration",
+      "win": "Win",
+      "loss": "Loss",
+      "unknownHero": "Hero #{{id}}"
+    },
+    "sync": {
+      "now": "Sync now",
+      "running": "Syncing…",
+      "noAccount": "No Steam account is linked.",
+      "never": "Not synchronised yet.",
+      "lastSync": "Last synchronisation: {{time}}.",
+      "newMatches": "New matches: {{number}}.",
+      "upToDate": "History refreshed from Steam.",
+      "partial": "History possibly incomplete: deadlock-api only knows the matches it collected itself.",
+      "budget": "Request limit reached for now. History last downloaded: {{time}}.",
+      "budgetNever": "Request limit reached for now: the history will be downloaded at a later synchronisation.",
+      "paused": "deadlock-api asked to slow down: synchronisation paused until {{time}}.",
+      "protected": "This account's data is private on deadlock-api: automatic synchronisation is stopped.",
+      "failed": "The last synchronisation failed: {{reason}}"
     }
   },
   "matchDetail": {

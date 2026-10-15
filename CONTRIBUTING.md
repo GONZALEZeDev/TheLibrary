@@ -66,7 +66,7 @@ Until the Steam sign-in exists, the desktop app synchronises the account named i
 
 1. Find your Steam **account id**: the number `N` of your SteamID3 `[U:1:N]` (not the 17-digit SteamID64), which any SteamID converter shows; it is also your SteamID64 minus 76561197960265728.
 2. Create `.env.development.local` at the root of the repository (git-ignored, never commit it) with the line `VITE_DEV_ACCOUNT_ID=N`. Put it in no other `.env` file: Vite reads `.env` and `.env.local` in every mode.
-3. Run `pnpm dev:desktop` (restart it after editing the file). The app synchronises your match history at startup and every 10 minutes. Without the file, the synchronisation banner shows how to create it.
+3. Run `pnpm dev:desktop` (restart it after editing the file). The app synchronises your match history at startup and every 13 minutes. Without the file, the synchronisation banner shows how to create it.
 
 `pnpm dev:desktop` runs the app under a separate identifier (`src-tauri/tauri.dev.conf.json`): its settings and database live in `%APPDATA%\io.github.gonzalezedev.thelibrary.dev`, its logs and WebView data in `%LOCALAPPDATA%\io.github.gonzalezedev.thelibrary.dev`, and they never touch an installed release. Delete those two folders to start from scratch. Do not run `pnpm tauri dev` directly: it would use the release identifier, and so the folders of an installed release. Release builds never read this file and never contain this code ([ADR 0006](docs/adr/0006-development-code-out-of-releases.md)).
 

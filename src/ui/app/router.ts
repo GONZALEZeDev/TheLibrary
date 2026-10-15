@@ -3,6 +3,8 @@
  *
  * Search parameters are validated with Zod: `.default()` keeps them optional in links and
  * `.catch()` replaces an invalid value with the default instead of failing, so any URL is safe.
+ * Path parameters are validated too: a match id that is not a positive integer shows the
+ * not-found page.
  *
  * @packageDocumentation
  */
@@ -10,11 +12,13 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  notFound,
   redirect,
   type RouterHistory,
 } from '@tanstack/react-router';
 import { z } from 'zod';
 import { PAIGE_HERO_ID } from '../../core/domain/hero';
+import { parseMatchId } from '../../core/domain/match';
 import { DEFAULT_PERIOD, PERIODS } from '../../core/domain/period';
 import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { MatchDetailPage } from '../features/match-detail/MatchDetailPage';
@@ -68,6 +72,17 @@ const matchesRoute = createRoute({
 const matchDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/matches/$matchId',
+  // The page receives a number; links pass one (`params={{ matchId: 108501737 }}`).
+  params: {
+    parse: ({ matchId }) => {
+      const parsed = parseMatchId(matchId);
+      if (parsed === null) {
+        throw notFound();
+      }
+      return { matchId: parsed };
+    },
+    stringify: ({ matchId }) => ({ matchId: String(matchId) }),
+  },
   component: MatchDetailPage,
 });
 

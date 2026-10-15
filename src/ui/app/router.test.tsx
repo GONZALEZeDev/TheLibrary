@@ -67,6 +67,17 @@ describe('application routes', () => {
     ).toBeInTheDocument();
   });
 
+  it.each(['/matches/abc', '/matches/0', '/matches/-5', '/matches/1.5', '/matches/0123'])(
+    'shows the not-found page for the invalid match id of %s',
+    async (url) => {
+      await renderAppAt(url);
+
+      expect(
+        await screen.findByRole('heading', { level: 1, name: 'Page not found' }),
+      ).toBeInTheDocument();
+    },
+  );
+
   it('shows the not-found page inside the shell for an unknown URL', async () => {
     await renderAppAt('/nowhere');
 

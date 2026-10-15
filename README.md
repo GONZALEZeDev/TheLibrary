@@ -18,7 +18,7 @@ TheLibrary is a free, open-source fan project (MIT). It is **not affiliated with
 The first version is built in six milestones:
 
 1. **M1 Foundations** — tooling, CI, the desktop shell and its screens, the theme, French and English.
-2. **M2 Data** — match data client, local archive and database, synchronisation.
+2. **M2 Data** — synchronisation of your match history (M2a), then the local archive of your Paige matches (M2b).
 3. **M3 Account** — Steam sign-in and onboarding.
 4. **M4 Analysis** — metrics, comparison with your rank and your own history, insights.
 5. **M5 Screens** — dashboard, match history, match detail and settings.
@@ -32,14 +32,14 @@ Match data comes from the community-run [deadlock-api.com](https://deadlock-api.
 
 Prerequisites (Windows 10/11):
 
-- [Node.js](https://nodejs.org/) 26 and [pnpm](https://pnpm.io/) 12.8.1 (`npm install --global pnpm@12.8.1`)
+- [Node.js](https://nodejs.org/) 26 and [pnpm](https://pnpm.io/) 12.11.2 (`npm install --global pnpm@12.11.2`)
 - [Rust](https://rustup.rs/) stable (1.90 or later) with the MSVC toolchain and the "Desktop development with C++" workload of Visual Studio Build Tools
 - The Microsoft Edge WebView2 runtime (preinstalled on Windows 11)
 
 ```bash
 pnpm install        # install dependencies (dependency install scripts are blocked by default)
-pnpm dev            # UI only, in the browser, on the development adapters (http://localhost:1420)
-pnpm tauri dev      # full desktop app
+pnpm dev            # UI only, in the browser, on synthetic data (http://localhost:1420)
+pnpm dev:desktop    # full desktop app, under its own development identifier (see CONTRIBUTING.md)
 pnpm check          # type-check + lint + format check + tests
 ```
 

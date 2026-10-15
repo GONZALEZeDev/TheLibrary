@@ -11,10 +11,13 @@ Everything here is **pure TypeScript**: no React, no Tauri, no network, no stora
 
 ## Contents
 
-| Folder      | Purpose                                                |
-| ----------- | ------------------------------------------------------ |
-| `domain/`   | Shared domain types and constants (periods, hero ids…) |
-| `errors/`   | `AppError` and its kinds                               |
-| `settings/` | Supported languages and the settings document          |
+| Folder          | Purpose                                                                                       |
+| --------------- | --------------------------------------------------------------------------------------------- |
+| `domain/`       | Shared domain types and constants (account and match ids, match summaries, heroes, periods…)  |
+| `errors/`       | `AppError` and its kinds                                                                      |
+| `settings/`     | Supported languages and the settings document                                                 |
+| `deadlock-api/` | Endpoints, request rules and budgets, response interpretation, schemas and mappers of the API |
+| `rate-limit/`   | Sliding-window rate limits                                                                    |
+| `sync/`         | State of the synchronisation, as saved and shown                                              |
 
-Later milestones add `deadlock-api/`, `steam/`, `archive/`, `sync/` and `analysis/`.
+Later milestones add `steam/`, `archive/` and `analysis/`.

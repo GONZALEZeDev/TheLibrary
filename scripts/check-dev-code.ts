@@ -18,11 +18,14 @@ import { readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { build } from 'vite';
 
+/** Environment variable holding the developer's account id in the desktop development build. */
+const DEV_ACCOUNT_VARIABLE = 'VITE_DEV_ACCOUNT_ID';
+
 /**
  * Texts that only development-only code contains: the marker of its log lines, and the name of the
  * variable holding the developer's account id (quoted in the hint shown when it is missing).
  */
-const MARKERS = ['thelibrary-dev-only', 'VITE_DEV_ACCOUNT_ID'];
+const MARKERS = ['thelibrary-dev-only', DEV_ACCOUNT_VARIABLE];
 
 /** Production build, made by `pnpm build`. */
 const PRODUCTION_DIR = 'dist';
@@ -67,6 +70,13 @@ async function scanDevelopmentBuild(): Promise<Map<string, string[]>> {
     await build({
       mode: 'development',
       logLevel: 'warn',
+      // The markers need no env value, and the developer's account id must never land on disk, even
+      // in this temporary folder (it stays there if the process is killed). `envDir: false` stops
+      // Vite loading the `.env*` files (`.env.development.local` included), but it still exposes
+      // the `VITE_*` variables of `process.env`: the account variable is replaced by `undefined`
+      // (also in the whole `import.meta.env` object, should one be built).
+      envDir: false,
+      define: { [`import.meta.env.${DEV_ACCOUNT_VARIABLE}`]: 'undefined' },
       build: { outDir: DEVELOPMENT_DIR, emptyOutDir: true },
     });
     return await findMarkers(DEVELOPMENT_DIR);

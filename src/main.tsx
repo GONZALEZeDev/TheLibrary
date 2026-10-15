@@ -237,11 +237,6 @@ async function start(rootElement: HTMLElement): Promise<void> {
   });
   // Registered right away, so that nothing happening after this point goes unlogged.
   logUnhandledErrors(services);
-  // Development only (`import.meta.hot` is undefined in a build): a module replaced by Vite must
-  // not leave its synchronisation timer running next to the new one.
-  import.meta.hot?.dispose(() => {
-    services.sync.stop();
-  });
   try {
     await bootstrap(rootElement, services, desktop);
   } catch (error) {

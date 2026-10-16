@@ -3,19 +3,26 @@
  *
  * @packageDocumentation
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createFixtureApi,
   FixtureHttpClient,
   jsonResponse,
   type FixtureHandler,
 } from '../adapters/dev/fixture-http-client.adapter';
-import { FIXTURE_ACCOUNT_ID } from '../adapters/dev/fixtures/match-history.fixture';
+import {
+  createMatchHistoryFixture,
+  FIXTURE_ACCOUNT_ID,
+} from '../adapters/dev/fixtures/match-history.fixture';
+import { isMetadataMissing } from '../adapters/dev/fixtures/match-metadata.fixture';
 import { MemoryLogger } from '../adapters/dev/memory-logger.adapter';
-import { AppError } from '../core/errors/app-error';
+import { DEFAULT_PAUSE_MS } from '../core/deadlock-api/api-response';
+import { MAX_RESPONSE_BYTES, matchMetadataRequest } from '../core/deadlock-api/endpoints';
+import { AppError, errorLogContext, isAppError } from '../core/errors/app-error';
 import type { Database } from '../ports/database.port';
-import { createTestDatabase } from '../test/test-data';
-import { DeadlockApiService } from './deadlock-api.service';
+import type { HttpRequest, HttpResponse } from '../ports/http-client.port';
+import { createTestDatabase, testMatchId } from '../test/test-data';
+import { DeadlockApiService, type MetadataFetch } from './deadlock-api.service';
 import { SyncStateRepository } from './sync-state.repository';
 
 const START = Date.UTC(2026, 9, 14, 12, 0, 0);
@@ -24,23 +31,42 @@ const MINUTE = 60_000;
 /**
  * Build the service on the given handler, with a controllable clock.
  *
+ * The service does not really sleep: its `sleep` records the wait it was asked for, lets the test
+ * act "meanwhile" (`sleeper.during`), then moves the clock forward by that wait.
+ *
  * @param handler - Answers the requests; the fixture API by default.
  * @param database - The database; a fresh one by default.
- * @returns The service, its HTTP client, logger and clock.
+ * @returns The service, its HTTP client, logger, clock and sleeper.
  */
 function setUp(
   handler: FixtureHandler = createFixtureApi({ now: START, matchCount: 5 }),
   database: Database = createTestDatabase(),
 ) {
   const clock = { now: START };
+  const sleeper = {
+    /** The wait of each call of `sleep`, in milliseconds, oldest first. */
+    calls: [] as number[],
+    /** How many requests had been sent when each call of `sleep` was made and time went by. */
+    sentWhileSleeping: [] as number[],
+    /** Runs while the service sleeps, before the clock moves: what happens meanwhile. */
+    during: undefined as (() => Promise<void> | void) | undefined,
+  };
   const http = new FixtureHttpClient(handler);
   const logger = new MemoryLogger();
   const syncState = new SyncStateRepository(database, logger, () => clock.now);
   const api = new DeadlockApiService(http, syncState, logger, {
     appVersion: '0.1.0',
     now: () => clock.now,
+    sleep: async (ms) => {
+      sleeper.calls.push(ms);
+      // Time goes by while the service sleeps: the other calls do all they can without waiting.
+      await settle();
+      sleeper.sentWhileSleeping.push(http.requests.length);
+      await sleeper.during?.();
+      clock.now += ms;
+    },
   });
-  return { api, http, logger, clock, syncState };
+  return { api, http, logger, clock, syncState, sleeper };
 }
 
 describe('DeadlockApiService.fetchMatchHistory', () => {
@@ -282,5 +308,529 @@ describe('DeadlockApiService.fetchHeroes', () => {
     await syncState.setPausedUntil(START + 5_000);
 
     await expect(api.fetchHeroes()).rejects.toMatchObject({ kind: 'rate_limited' });
+  });
+});
+
+/** Answers every request with a small valid JSON: for the tests that ignore the detail itself. */
+const ANSWER_OK: FixtureHandler = () => jsonResponse({ match_info: {} });
+
+/** What a successful call answers, whatever the match. */
+const FETCHED = expect.objectContaining({ kind: 'fetched' }) as unknown;
+
+/**
+ * Let every promise that can settle without a timer settle, so that a test can check that
+ * something did not happen (a request that stayed unsent).
+ */
+async function settle(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
+/** A handler that keeps every response until the test releases it. */
+interface HeldResponses {
+  readonly handler: FixtureHandler;
+  /** Answer the oldest request still waiting. */
+  readonly releaseNext: () => void;
+  /** The most requests that were waiting at the same time. */
+  readonly peak: () => number;
+}
+
+/**
+ * Build a handler whose responses wait for the test, to observe requests that overlap.
+ *
+ * @param answer - The response of the n-th request received (0 for the first one).
+ * @returns The handler, and the controls of the test.
+ */
+function holdResponses(
+  answer: (request: HttpRequest, index: number) => HttpResponse = () => jsonResponse({}),
+): HeldResponses {
+  const waiting: (() => void)[] = [];
+  let received = 0;
+  let peak = 0;
+  return {
+    handler: async (request) => {
+      const index = received;
+      received += 1;
+      const released = new Promise<void>((resolve) => waiting.push(resolve));
+      peak = Math.max(peak, waiting.length);
+      await released;
+      return answer(request, index);
+    },
+    releaseNext: () => waiting.shift()?.(),
+    peak: () => peak,
+  };
+}
+
+/**
+ * Narrow the result of a download to the one that carries the detail.
+ *
+ * @param result - The result.
+ * @returns The same result, known to be `fetched`.
+ */
+function expectFetched(result: MetadataFetch): Extract<MetadataFetch, { kind: 'fetched' }> {
+  if (result.kind !== 'fetched') {
+    expect.unreachable(`expected a fetched detail, got ${result.kind}`);
+  }
+  return result;
+}
+
+describe('DeadlockApiService.fetchMatchMetadata', () => {
+  /** A match of the fixture history that the fixture API serves. */
+  const servedMatch =
+    createMatchHistoryFixture({ now: START, count: 5 })
+      .map((row) => testMatchId(row.match_id))
+      .find((matchId) => !isMetadataMissing(matchId)) ??
+    expect.unreachable('the fixture history holds a served match');
+
+  it('fetches a match detail with disable_steam=true', async () => {
+    const { api, http } = setUp();
+
+    const fetched = expectFetched(await api.fetchMatchMetadata(servedMatch));
+
+    expect(JSON.parse(fetched.body)).toEqual(fetched.json);
+    expect(fetched.json).toMatchObject({ match_info: { match_id: servedMatch } });
+    expect(http.requests).toEqual([
+      {
+        url: `https://api.deadlock-api.com/v1/matches/${String(servedMatch)}/metadata?disable_steam=true`,
+        headers: {
+          'User-Agent': 'TheLibrary/0.1.0 (+https://github.com/GONZALEZeDev/TheLibrary)',
+          Accept: 'application/json',
+        },
+        timeoutMs: 15_000,
+        maxBodyBytes: 10 * 1024 * 1024,
+      },
+    ]);
+    expect(http.requests[0]?.url).toBe(matchMetadataRequest(servedMatch).url);
+  });
+
+  it('reports a match the API does not have', async () => {
+    const { api, syncState } = setUp();
+
+    // 42 is not in the fixture history: the API answers 404, and no pause follows.
+    await expect(api.fetchMatchMetadata(testMatchId(42))).resolves.toEqual({ kind: 'not_found' });
+    await expect(syncState.getPausedUntil()).resolves.toBeNull();
+  });
+
+  it('reports a body that is not JSON with the body', async () => {
+    const body = '<html>Bad gateway</html>';
+    const { api, syncState } = setUp(() => ({ status: 200, headers: {}, body }));
+
+    await expect(api.fetchMatchMetadata(testMatchId(1))).resolves.toEqual({
+      kind: 'invalid',
+      issue: 'not_json',
+      body,
+    });
+    await expect(syncState.getPausedUntil()).resolves.toBeNull();
+  });
+
+  it('pauses on a 429 and answers paused', async () => {
+    const { api, http, syncState } = setUp(() =>
+      jsonResponse({ status: 429 }, 429, { 'retry-after': '120' }),
+    );
+
+    await expect(api.fetchMatchMetadata(testMatchId(1))).resolves.toEqual({
+      kind: 'paused',
+      until: START + 120_000,
+    });
+    await expect(syncState.getPausedUntil()).resolves.toBe(START + 120_000);
+
+    // The pause is respected: the next call sends nothing.
+    await expect(api.fetchMatchMetadata(testMatchId(2))).resolves.toEqual({
+      kind: 'paused',
+      until: START + 120_000,
+    });
+    expect(http.requests).toHaveLength(1);
+  });
+
+  it('pauses on a 503 without Retry-After for the default delay', async () => {
+    const { api, syncState } = setUp(() => jsonResponse({ status: 503 }, 503));
+
+    await expect(api.fetchMatchMetadata(testMatchId(1))).resolves.toEqual({
+      kind: 'paused',
+      until: START + DEFAULT_PAUSE_MS,
+    });
+    await expect(syncState.getPausedUntil()).resolves.toBe(START + DEFAULT_PAUSE_MS);
+  });
+
+  it('answers paused without sending while a pause is running', async () => {
+    const { api, http, syncState, sleeper } = setUp();
+    await syncState.setPausedUntil(START + 5_000);
+
+    await expect(api.fetchMatchMetadata(servedMatch)).resolves.toEqual({
+      kind: 'paused',
+      until: START + 5_000,
+    });
+    expect(http.requests).toHaveLength(0);
+    expect(sleeper.calls).toEqual([]);
+  });
+
+  it('keeps the latest pause when two responses ask for one', async () => {
+    // Two requests are in flight and both answer in the same moment, in either order: the pause
+    // that ends last must win, whichever answer is saved first.
+    for (const retryAfters of [
+      [300, 60],
+      [60, 300],
+    ] as const) {
+      const held = holdResponses((_request, index) =>
+        jsonResponse({ status: 429 }, 429, { 'retry-after': String(retryAfters[index]) }),
+      );
+      const { api, http, syncState } = setUp(held.handler);
+      const first = api.fetchMatchMetadata(testMatchId(1));
+      const second = api.fetchMatchMetadata(testMatchId(2));
+      await vi.waitFor(() => {
+        expect(http.requests).toHaveLength(2);
+      });
+
+      held.releaseNext();
+      held.releaseNext();
+      const results = await Promise.all([first, second]);
+
+      await expect(syncState.getPausedUntil()).resolves.toBe(START + 300_000);
+      // A call reports the pause that is really running once its own is saved.
+      expect(results[1]).toEqual({ kind: 'paused', until: START + 300_000 });
+      expect(results[0]).toEqual({ kind: 'paused', until: START + retryAfters[0] * 1000 });
+    }
+  });
+
+  it('keeps the latest pause across the families of requests', async () => {
+    // The pause the history request asks for must not shorten the one the detail asked for.
+    const held = holdResponses((request) =>
+      jsonResponse({ status: 429 }, 429, {
+        'retry-after': request.url.includes('/metadata') ? '300' : '60',
+      }),
+    );
+    const { api, http, syncState } = setUp(held.handler);
+    const detail = api.fetchMatchMetadata(testMatchId(1));
+    const history = api.fetchMatchHistory(FIXTURE_ACCOUNT_ID, { automatic: false });
+    await vi.waitFor(() => {
+      expect(http.requests).toHaveLength(2);
+    });
+
+    held.releaseNext();
+    held.releaseNext();
+    const results = await Promise.all([detail, history]);
+
+    await expect(syncState.getPausedUntil()).resolves.toBe(START + 300_000);
+    expect(results).toEqual([
+      { kind: 'paused', until: START + 300_000 },
+      { kind: 'paused', until: START + 300_000 },
+    ]);
+  });
+
+  it('keeps saving the pauses after a write failed', async () => {
+    const { api, http, syncState } = setUp(() =>
+      jsonResponse({ status: 429 }, 429, { 'retry-after': '60' }),
+    );
+    vi.spyOn(syncState, 'setPausedUntil').mockRejectedValueOnce(
+      new AppError('storage', 'Could not save the synchronisation state'),
+    );
+
+    // The first pause cannot be saved, so the call fails and no pause is running...
+    await expect(api.fetchMatchMetadata(testMatchId(1))).rejects.toMatchObject({ kind: 'storage' });
+    // ...but the failure does not jam the saving of the next pauses.
+    await expect(api.fetchMatchMetadata(testMatchId(2))).resolves.toEqual({
+      kind: 'paused',
+      until: START + 60_000,
+    });
+    await expect(syncState.getPausedUntil()).resolves.toBe(START + 60_000);
+    expect(http.requests).toHaveLength(2);
+  });
+
+  it('answers paused to a call that starts while a pause is being saved', async () => {
+    const { api, http, syncState } = setUp(() =>
+      jsonResponse({ status: 429 }, 429, { 'retry-after': '60' }),
+    );
+    const save = syncState.setPausedUntil.bind(syncState);
+    let secondCall: Promise<MetadataFetch> | undefined;
+    vi.spyOn(syncState, 'setPausedUntil').mockImplementation(async (until) => {
+      // The write is under way, not done: another call starts now and runs as far as it can.
+      secondCall = api.fetchMatchMetadata(testMatchId(2));
+      await settle();
+      await save(until);
+    });
+
+    await api.fetchMatchMetadata(testMatchId(1));
+
+    // The second call waited for the write instead of reading the database as it was before.
+    await expect(secondCall).resolves.toEqual({ kind: 'paused', until: START + 60_000 });
+    expect(http.requests).toHaveLength(1);
+  });
+
+  it('waits for the next slot instead of exceeding 5 requests per second', async () => {
+    const { api, http, sleeper } = setUp(ANSWER_OK);
+
+    const results = await Promise.all(
+      [1, 2, 3, 4, 5, 6].map((id) => api.fetchMatchMetadata(testMatchId(id))),
+    );
+
+    // Exactly 5 requests went out right away; the 6th slept for the whole second, then went out.
+    expect(sleeper.calls).toEqual([1_000]);
+    expect(sleeper.sentWhileSleeping).toEqual([5]);
+    expect(http.requests).toHaveLength(6);
+    expect(results).toEqual(Array.from({ length: 6 }, () => FETCHED));
+  });
+
+  it('waits only until the oldest requests have left the window', async () => {
+    const { api, clock, sleeper } = setUp(ANSWER_OK);
+    for (const id of [1, 2, 3]) {
+      await api.fetchMatchMetadata(testMatchId(id));
+    }
+    clock.now = START + 400;
+    for (const id of [4, 5]) {
+      await api.fetchMatchMetadata(testMatchId(id));
+    }
+
+    await api.fetchMatchMetadata(testMatchId(6));
+
+    // The 3 oldest requests (at START) leave the window at START + 1,000: 600 ms from now.
+    expect(sleeper.calls).toEqual([600]);
+    expect(clock.now).toBe(START + 1_000);
+  });
+
+  it('never lets overlapping calls take the last slot twice', async () => {
+    const { api, http, sleeper } = setUp(ANSWER_OK);
+    for (const id of [1, 2, 3, 4]) {
+      await api.fetchMatchMetadata(testMatchId(id));
+    }
+
+    await Promise.all([
+      api.fetchMatchMetadata(testMatchId(5)),
+      api.fetchMatchMetadata(testMatchId(6)),
+    ]);
+
+    // One of the two took the 5th slot; the other one slept until a slot was free.
+    expect(sleeper.calls).toEqual([1_000]);
+    expect(sleeper.sentWhileSleeping).toEqual([5]);
+    expect(http.requests).toHaveLength(6);
+  });
+
+  it('sleeps with a timer when no sleep function is given', async () => {
+    const database = createTestDatabase();
+    // Open the database before the timers are faked: opening it may need real timers.
+    await database.select('SELECT 1');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      vi.setSystemTime(START);
+      const logger = new MemoryLogger();
+      const http = new FixtureHttpClient(ANSWER_OK);
+      const api = new DeadlockApiService(http, new SyncStateRepository(database, logger), logger, {
+        appVersion: '0.1.0',
+      });
+
+      const calls = [1, 2, 3, 4, 5, 6].map((id) => api.fetchMatchMetadata(testMatchId(id)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(http.requests).toHaveLength(5);
+      await vi.advanceTimersByTimeAsync(999);
+      expect(http.requests).toHaveLength(5);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(http.requests).toHaveLength(6);
+      await expect(Promise.all(calls)).resolves.toHaveLength(6);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops a call that slept when a pause was saved in the meantime', async () => {
+    const { api, http, syncState, sleeper } = setUp(ANSWER_OK);
+    for (const id of [1, 2, 3, 4, 5]) {
+      await api.fetchMatchMetadata(testMatchId(id));
+    }
+    // While the 6th call waits for its slot, another request is told to pause.
+    sleeper.during = () => syncState.setPausedUntil(START + 31_000);
+
+    await expect(api.fetchMatchMetadata(testMatchId(6))).resolves.toEqual({
+      kind: 'paused',
+      until: START + 31_000,
+    });
+    expect(http.requests).toHaveLength(5);
+  });
+
+  it('sends at most 2 requests at a time', async () => {
+    const held = holdResponses();
+    const { api, http, sleeper } = setUp(held.handler);
+
+    const calls = [1, 2, 3, 4].map((id) => api.fetchMatchMetadata(testMatchId(id)));
+    await vi.waitFor(() => {
+      expect(http.requests).toHaveLength(2);
+    });
+    await settle();
+    expect(http.requests).toHaveLength(2);
+
+    // Each answer frees a slot for exactly one more request.
+    for (const sent of [3, 4]) {
+      held.releaseNext();
+      await vi.waitFor(() => {
+        expect(http.requests).toHaveLength(sent);
+      });
+      await settle();
+      expect(http.requests).toHaveLength(sent);
+    }
+    held.releaseNext();
+    held.releaseNext();
+    await Promise.all(calls);
+
+    expect(held.peak()).toBe(2);
+    expect(sleeper.calls).toEqual([]);
+  });
+
+  it('answers paused at once to a call that would wait for a slot', async () => {
+    const held = holdResponses();
+    const { api, http, syncState } = setUp(held.handler);
+    const inFlight = [1, 2].map((id) => api.fetchMatchMetadata(testMatchId(id)));
+    await vi.waitFor(() => {
+      expect(http.requests).toHaveLength(2);
+    });
+    await syncState.setPausedUntil(START + 30_000);
+
+    // Both slots are taken, but the call does not queue for one just to learn about the pause.
+    await expect(api.fetchMatchMetadata(testMatchId(3))).resolves.toEqual({
+      kind: 'paused',
+      until: START + 30_000,
+    });
+
+    held.releaseNext();
+    held.releaseNext();
+    await Promise.all(inFlight);
+    expect(http.requests).toHaveLength(2);
+  });
+
+  it('answers paused to the calls waiting for a slot when a response asks for a pause', async () => {
+    const held = holdResponses((_request, index) =>
+      index === 0 ? jsonResponse({ status: 429 }, 429, { 'retry-after': '60' }) : jsonResponse({}),
+    );
+    const { api, http, clock } = setUp(held.handler);
+    const [first, second, third, fourth] = [1, 2, 3, 4].map((id) =>
+      api.fetchMatchMetadata(testMatchId(id)),
+    );
+    await vi.waitFor(() => {
+      expect(http.requests).toHaveLength(2);
+    });
+
+    held.releaseNext();
+
+    // The third and fourth calls get a slot one after the other, see the pause and send nothing.
+    const paused = { kind: 'paused', until: START + 60_000 };
+    await expect(Promise.all([first, third, fourth])).resolves.toEqual([paused, paused, paused]);
+    expect(http.requests).toHaveLength(2);
+    held.releaseNext();
+    await expect(second).resolves.toEqual(FETCHED);
+
+    // No slot was lost on the way: once the pause is over, two more requests go out together.
+    clock.now = START + 61_000;
+    const later = [5, 6].map((id) => api.fetchMatchMetadata(testMatchId(id)));
+    await vi.waitFor(() => {
+      expect(http.requests).toHaveLength(4);
+    });
+    held.releaseNext();
+    held.releaseNext();
+    await expect(Promise.all(later)).resolves.toEqual([FETCHED, FETCHED]);
+  });
+
+  const failures: readonly (readonly [string, FixtureHandler])[] = [
+    [
+      'a network error',
+      () => {
+        throw new AppError('network', 'The request failed');
+      },
+    ],
+    [
+      'a timeout',
+      () => {
+        throw new AppError('timeout', 'The request timed out');
+      },
+    ],
+    ['a server error', () => jsonResponse({}, 500)],
+    ['a refusal', () => jsonResponse({}, 403)],
+    ['a missing match', () => jsonResponse({}, 404)],
+    ['a body that is not JSON', () => ({ status: 200, headers: {}, body: 'nope' })],
+    ['a 429', () => jsonResponse({}, 429, { 'retry-after': '1' })],
+  ];
+
+  it.each(failures)('frees its slot after %s', async (_name, fail) => {
+    let received = 0;
+    const { api, http, clock } = setUp((request) => {
+      received += 1;
+      return received <= 2 ? fail(request) : jsonResponse({});
+    });
+
+    // Two calls that end badly would keep both slots for good if either of them were not freed.
+    for (const id of [1, 2]) {
+      await api.fetchMatchMetadata(testMatchId(id)).catch(() => undefined);
+      clock.now += 2 * MINUTE;
+    }
+
+    await expect(api.fetchMatchMetadata(testMatchId(3))).resolves.toEqual(FETCHED);
+    expect(http.requests).toHaveLength(3);
+  });
+
+  it.each([
+    [403, 'forbidden'],
+    [500, 'service_unavailable'],
+    [418, 'unexpected'],
+  ] as const)('throws a %s as %s', async (status, kind) => {
+    const { api } = setUp(() => jsonResponse({}, status));
+
+    await expect(api.fetchMatchMetadata(testMatchId(1))).rejects.toMatchObject({
+      kind,
+      context: { endpoint: '/v1/matches/{match_id}/metadata', status },
+    });
+  });
+
+  it('throws a body over 10 MB as an invalid payload', async () => {
+    const { api } = setUp(() => ({
+      status: 200,
+      headers: {},
+      body: 'x'.repeat(MAX_RESPONSE_BYTES + 1),
+    }));
+
+    await expect(api.fetchMatchMetadata(testMatchId(1))).rejects.toMatchObject({
+      kind: 'invalid_payload',
+    });
+  });
+
+  it('throws a network error as an AppError without the account id', async () => {
+    const { api, logger } = setUp(() => {
+      throw new AppError('network', 'The request failed', {
+        // The network layer quotes the URL it failed on: an account id in it must not survive.
+        cause: `error sending request for url (https://api.deadlock-api.com/v1/players/${String(FIXTURE_ACCOUNT_ID)}/match-history)`,
+      });
+    });
+
+    const error = await api.fetchMatchMetadata(testMatchId(1)).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AppError);
+    expect(error).toMatchObject({
+      kind: 'network',
+      context: { endpoint: '/v1/matches/{match_id}/metadata' },
+      cause:
+        'error sending request for url (https://api.deadlock-api.com/v1/players/{account_id}/match-history)',
+    });
+    expect(
+      JSON.stringify([isAppError(error) ? errorLogContext(error) : null, logger.entries]),
+    ).not.toContain(String(FIXTURE_ACCOUNT_ID));
+  });
+
+  it('never logs a response body', async () => {
+    const marker = 'BODY-MARKER-4f2a';
+    const answers: readonly HttpResponse[] = [
+      jsonResponse({ note: marker }),
+      { status: 200, headers: {}, body: `<html>${marker}</html>` },
+      jsonResponse({ error: marker }, 404),
+      jsonResponse({ error: marker }, 429, { 'retry-after': '5' }),
+      jsonResponse({ error: marker }, 503, { 'retry-after': '5' }),
+      jsonResponse({ error: marker }, 403),
+      jsonResponse({ error: marker }, 500),
+    ];
+
+    for (const answer of answers) {
+      const { api, logger } = setUp(() => answer);
+
+      const result = await api.fetchMatchMetadata(testMatchId(1)).catch((error: unknown) => error);
+
+      // What a caller logs for a failure is the log context of its error: no body there either.
+      const loggedByCaller = isAppError(result) ? errorLogContext(result) : null;
+      expect(JSON.stringify([logger.entries, loggedByCaller])).not.toContain(marker);
+      // The check means something only if the request itself was logged.
+      expect(logger.entries.length).toBeGreaterThan(0);
+    }
   });
 });

@@ -11,6 +11,14 @@
  * - one statement per call, and no transaction spanning several calls: the desktop plugin runs
  *   statements on a connection pool, so consecutive calls may use different connections.
  *
+ * Numbers and booleans across the port (the desktop plugin carries them as JSON):
+ * - a JavaScript number is bound as a 64-bit float (f64), which holds every integer up to 2^53
+ *   exactly; an integer beyond it loses digits before it reaches SQLite;
+ * - an `INTEGER` column comes back as a JSON number, so it is exact up to 2^53 too, whatever the
+ *   64 bits SQLite stores: a row is to be validated by the caller (`z.int()` refuses a number
+ *   beyond the safe integers) instead of being trusted;
+ * - a boolean is stored and read back as 0 or 1, SQLite having no boolean type.
+ *
  * @packageDocumentation
  */
 

@@ -88,8 +88,13 @@ describe('MatchesRepository', () => {
 
   it('reports an invalid stored row as a storage error', async () => {
     const database = createTestDatabase();
+    // The columns are named: a later migration adds columns to `matches`, and a positional insert
+    // would then have to list them all.
     await database.execute(
-      `INSERT INTO matches VALUES ($1, 1, 67, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, NULL, 0)`,
+      `INSERT INTO matches (account_id, match_id, hero_id, start_time, duration_s, game_mode,
+                           match_mode, won, kills, deaths, assists, net_worth, last_hits, denies,
+                           rank_delta, synced_at)
+       VALUES ($1, 1, 67, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, NULL, 0)`,
       [TEST_ACCOUNT_ID],
     );
     // A value the app cannot read: SQLite integers go beyond the safe integers of JavaScript.

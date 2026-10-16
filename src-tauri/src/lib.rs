@@ -148,12 +148,20 @@ fn sql_plugin<R: Runtime>() -> TauriPlugin<R, Option<SqlPluginConfig>> {
 /// applied migration changed, even by a whitespace. A released migration is therefore never
 /// edited: a change always goes in a new file, with the next version number.
 fn migrations() -> Vec<Migration> {
-    vec![Migration {
-        version: 1,
-        description: "matches, api cache and sync state",
-        sql: include_str!("../../migrations/0001_init.sql"),
-        kind: MigrationKind::Up,
-    }]
+    vec![
+        Migration {
+            version: 1,
+            description: "matches, api cache and sync state",
+            sql: include_str!("../../migrations/0001_init.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 2,
+            description: "match detail status",
+            sql: include_str!("../../migrations/0002_match_detail.sql"),
+            kind: MigrationKind::Up,
+        },
+    ]
 }
 
 /// Cancels every top-level navigation that would leave the app (clicked external links,

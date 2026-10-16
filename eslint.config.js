@@ -240,6 +240,7 @@ export default defineConfig([
         { type: 'services', pattern: 'src/services', partialMatch: false },
         { type: 'adapters-tauri', pattern: 'src/adapters/tauri', partialMatch: false },
         { type: 'adapters-dev', pattern: 'src/adapters/dev', partialMatch: false },
+        { type: 'adapters-browser', pattern: 'src/adapters/browser', partialMatch: false },
         { type: 'workers', pattern: 'src/workers', partialMatch: false },
         { type: 'ui', pattern: 'src/ui', partialMatch: false },
         { type: 'test-support', pattern: 'src/test', partialMatch: false },
@@ -276,6 +277,14 @@ export default defineConfig([
               from: { element: { type: 'adapters-dev' } },
               allow: { to: { element: { types: { anyOf: ['core', 'ports', 'adapters-dev'] } } } },
             },
+            // Browser APIs (a Web Worker…) that are not specific to Tauri and ship in releases,
+            // unlike `adapters-dev`. A worker file is reached by URL, never imported.
+            {
+              from: { element: { type: 'adapters-browser' } },
+              allow: {
+                to: { element: { types: { anyOf: ['core', 'ports', 'adapters-browser'] } } },
+              },
+            },
             {
               from: { element: { type: 'workers' } },
               allow: { to: { element: { type: 'core' } } },
@@ -289,10 +298,16 @@ export default defineConfig([
               from: [{ file: { categories: 'main' } }, { element: { type: 'test-support' } }],
               allow: { to: { element: { type: '*' } } },
             },
-            // Tests may use the development adapters and the shared test helpers.
+            // Tests may use the development and browser adapters and the shared test helpers.
             {
               from: { file: { categories: 'test' } },
-              allow: { to: { element: { types: { anyOf: ['adapters-dev', 'test-support'] } } } },
+              allow: {
+                to: {
+                  element: {
+                    types: { anyOf: ['adapters-dev', 'adapters-browser', 'test-support'] },
+                  },
+                },
+              },
             },
 
             // --- npm packages ---

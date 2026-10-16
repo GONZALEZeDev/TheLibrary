@@ -4,8 +4,15 @@
  * @packageDocumentation
  */
 import { describe, expect, it } from 'vitest';
+import { testMatchId } from '../../test/test-data';
 import { parseAccountId } from '../domain/account';
-import { heroesRequest, matchHistoryRequest, redactAccountIds, userAgent } from './endpoints';
+import {
+  heroesRequest,
+  matchHistoryRequest,
+  matchMetadataRequest,
+  redactAccountIds,
+  userAgent,
+} from './endpoints';
 
 /** An account id for the tests. */
 const ACCOUNT_ID = parseAccountId(123456789) ?? expect.unreachable();
@@ -33,6 +40,18 @@ describe('heroesRequest', () => {
     );
     expect(request.endpoint).toBe('/v1/assets/heroes');
     expect(request.family).toBe('assets');
+  });
+});
+
+describe('matchMetadataRequest', () => {
+  it('asks for a match detail without the Steam fallback', () => {
+    const request = matchMetadataRequest(testMatchId(117958378));
+
+    expect(request).toEqual({
+      url: 'https://api.deadlock-api.com/v1/matches/117958378/metadata?disable_steam=true',
+      endpoint: '/v1/matches/{match_id}/metadata',
+      family: 'metadata',
+    });
   });
 });
 

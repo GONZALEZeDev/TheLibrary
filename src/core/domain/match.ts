@@ -10,8 +10,16 @@
 import type { AccountId } from './account';
 import type { HeroId } from './hero';
 
-/** Numeric id of a Deadlock match (around 10^8 today, far below `Number.MAX_SAFE_INTEGER`). */
-export type MatchId = number;
+/**
+ * A validated Deadlock match id: a positive safe integer (around 10^8 today, far below
+ * `Number.MAX_SAFE_INTEGER`).
+ *
+ * The brand makes the type checker reject a plain number where a match id is expected. Above all it
+ * keeps an {@link AccountId} and a match id from being swapped: both are numbers at run time, and
+ * they travel side by side in archive paths and SQL keys. Every match id of the app went through
+ * {@link parseMatchId}.
+ */
+export type MatchId = number & { readonly __brand: 'MatchId' };
 
 /** Decimal form of a match id: digits only, without leading zero. */
 const MATCH_ID_TEXT = /^[1-9]\d{0,15}$/;
@@ -29,7 +37,8 @@ export function parseMatchId(value: unknown): MatchId | null {
       : typeof value === 'string' && MATCH_ID_TEXT.test(value)
         ? Number(value)
         : Number.NaN;
-  return Number.isSafeInteger(candidate) && candidate >= 1 ? candidate : null;
+  // The cast adds the brand: this is the one place that makes a `MatchId`, once it is validated.
+  return Number.isSafeInteger(candidate) && candidate >= 1 ? (candidate as MatchId) : null;
 }
 
 /** One match of a player's history, as the app stores and shows it. */

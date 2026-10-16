@@ -8,6 +8,7 @@
  * @packageDocumentation
  */
 import type { AccountId } from '../domain/account';
+import type { MatchId } from '../domain/match';
 
 /**
  * Base URL of deadlock-api. The desktop app may reach no other host: its HTTP permission
@@ -29,9 +30,10 @@ export const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 
 /**
  * Groups of endpoints sharing a politeness budget: `history` is the match history (its Steam
- * refresh is strictly rate-limited by deadlock-api), `assets` the static game data.
+ * refresh is strictly rate-limited by deadlock-api), `assets` the static game data, `metadata` the
+ * detail of one match.
  */
-export type RequestFamily = 'history' | 'assets';
+export type RequestFamily = 'history' | 'assets' | 'metadata';
 
 /** A request to deadlock-api. */
 export interface ApiRequest {
@@ -77,6 +79,27 @@ export function heroesRequest(): ApiRequest {
     url: `${DEADLOCK_API_BASE_URL}/v1/assets/heroes?language=english&only_active=true`,
     endpoint: '/v1/assets/heroes',
     family: 'assets',
+  };
+}
+
+/**
+ * The detail of one match (players, items, damage and healing over time): the full payload the
+ * app archives.
+ *
+ * `disable_steam=true` is always sent. Without it, a match deadlock-api does not hold makes the API
+ * ask Steam for it, and that fallback is budgeted at 3 requests per hour and per IP: once the
+ * budget is spent, the API answers 503 "Steam is busy" with a `Retry-After` of about 30 minutes
+ * (1807 s observed on a single such call). With the parameter, the API never asks Steam: a match it
+ * does not hold is simply reported missing, and the Steam budget of the user's IP stays untouched.
+ *
+ * @param matchId - The match.
+ * @returns The request.
+ */
+export function matchMetadataRequest(matchId: MatchId): ApiRequest {
+  return {
+    url: `${DEADLOCK_API_BASE_URL}/v1/matches/${String(matchId)}/metadata?disable_steam=true`,
+    endpoint: '/v1/matches/{match_id}/metadata',
+    family: 'metadata',
   };
 }
 

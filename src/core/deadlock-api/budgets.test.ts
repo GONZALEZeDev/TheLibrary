@@ -4,7 +4,12 @@
  * @packageDocumentation
  */
 import { describe, expect, it } from 'vitest';
-import { AUTOMATIC_HISTORY_RATE_LIMIT, HISTORY_RATE_LIMIT } from './budgets';
+import {
+  AUTOMATIC_HISTORY_RATE_LIMIT,
+  HISTORY_RATE_LIMIT,
+  METADATA_MAX_CONCURRENCY,
+  METADATA_RATE_LIMIT,
+} from './budgets';
 
 describe('history budgets', () => {
   it('counts the automatic synchronisations over the same window as every history request', () => {
@@ -16,5 +21,12 @@ describe('history budgets', () => {
 
   it('keeps at least 2 requests of the window for the "Sync" button', () => {
     expect(HISTORY_RATE_LIMIT.limit - AUTOMATIC_HISTORY_RATE_LIMIT.limit).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('match detail budget', () => {
+  it('sends at most 5 match detail requests per second, 2 at a time', () => {
+    expect(METADATA_RATE_LIMIT).toEqual({ limit: 5, windowMs: 1_000 });
+    expect(METADATA_MAX_CONCURRENCY).toBe(2);
   });
 });

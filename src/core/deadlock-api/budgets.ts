@@ -27,3 +27,19 @@ export const AUTOMATIC_HISTORY_RATE_LIMIT: RateLimit = { limit: 6, windowMs: HOU
 
 /** Static game data (the hero catalogue): 2 requests per second. */
 export const ASSETS_RATE_LIMIT: RateLimit = { limit: 2, windowMs: 1_000 };
+
+/**
+ * Match detail requests: 5 per second. deadlock-api allows 100 per second and per IP when the
+ * match is in its cache, but only 100 per 10 seconds (10 per second) when it is read from storage,
+ * and the app cannot know which of the two a match needs. 5 per second stays at half of the slower
+ * limit. The API also asks clients not to send many uncached requests in parallel, which
+ * {@link METADATA_MAX_CONCURRENCY} enforces.
+ */
+export const METADATA_RATE_LIMIT: RateLimit = { limit: 5, windowMs: 1_000 };
+
+/**
+ * Match detail requests in flight at the same time: 2. A request that is still waiting for its
+ * answer counts, whereas {@link METADATA_RATE_LIMIT} only counts the requests already sent: a slow
+ * storage read must not let the downloads pile up in parallel, which the API asks clients not to do.
+ */
+export const METADATA_MAX_CONCURRENCY = 2;

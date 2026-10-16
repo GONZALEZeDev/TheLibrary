@@ -10,7 +10,7 @@
  */
 import { z } from 'zod';
 import type { AccountId } from '../core/domain/account';
-import type { MatchSummary } from '../core/domain/match';
+import { parseMatchId, type MatchId, type MatchSummary } from '../core/domain/match';
 import { AppError } from '../core/errors/app-error';
 import type { Database, SqlValue } from '../ports/database.port';
 
@@ -43,7 +43,11 @@ const BATCH_SIZE = 50;
 /** Schema of a row of the `matches` table. */
 const matchRowSchema = z.object({
   account_id: z.int(),
-  match_id: z.int(),
+  // A stored id that `parseMatchId` rejects makes the whole row invalid, like any other bad column;
+  // the type guard gives the parsed field the `MatchId` brand without a cast.
+  match_id: z.int().refine((value): value is MatchId => parseMatchId(value) !== null, {
+    message: 'Invalid match id',
+  }),
   hero_id: z.int(),
   start_time: z.int(),
   duration_s: z.int(),

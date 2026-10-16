@@ -12,7 +12,7 @@
  */
 import { z } from 'zod';
 import type { AccountId } from '../domain/account';
-import type { MatchSummary } from '../domain/match';
+import { parseMatchId, type MatchId, type MatchSummary } from '../domain/match';
 import { AppError } from '../errors/app-error';
 
 /** A count or a duration: an integer that cannot be negative. */
@@ -26,7 +26,11 @@ const count = z.int().nonnegative();
  */
 const matchHistoryRowSchema = z.object({
   account_id: z.int(),
-  match_id: z.int().positive(),
+  // `parseMatchId` is the one validation of a match id: a row it rejects is an invalid row, and the
+  // type guard gives the parsed field the `MatchId` brand without a cast.
+  match_id: z.int().refine((value): value is MatchId => parseMatchId(value) !== null, {
+    message: 'Invalid match id',
+  }),
   hero_id: z.int().positive(),
   start_time: count,
   match_duration_s: count,

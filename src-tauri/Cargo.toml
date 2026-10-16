@@ -48,3 +48,10 @@ serde_json = "1"
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2.5.0"
 tauri-plugin-window-state = "2.5.0"
+
+# Development builds (`pnpm dev:desktop`, `cargo test`, `tauri build --debug`) compile the
+# dependencies without debug information: nobody steps through them, and their debug information
+# made up most of `target/` (several GB). The shell's own code keeps it, and release builds are
+# unaffected.
+[profile.dev.package."*"]
+debug = false

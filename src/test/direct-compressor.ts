@@ -3,7 +3,8 @@
  *
  * The desktop app compresses in a Web Worker so a large file does not freeze the window; jsdom has
  * no `Worker`, so tests use this class instead. It runs the same codec at the same level, so the
- * bytes it makes are the bytes the app makes.
+ * bytes it makes are the bytes the app makes. It does not translate the errors of the codec into
+ * `AppError`s as the worker adapter does: a bad frame rejects with the codec's own `Error`.
  *
  * @packageDocumentation
  */

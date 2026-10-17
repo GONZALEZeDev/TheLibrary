@@ -158,6 +158,38 @@ describe('parseMatchMetadata', () => {
     expect(parsed).toHaveProperty(['match_info', 'damage_matrix', 'sample_time_s'], [0, 60, 120]);
   });
 
+  it('keeps the fields it does not know inside a damage dealer, a source and a target', () => {
+    const body = rawMetadata();
+    const matrix = body.match_info.damage_matrix as {
+      damage_dealers: {
+        damage_sources: { damage_to_players: Record<string, unknown>[] }[];
+      }[];
+    };
+    const dealer = matrix.damage_dealers[1];
+    const source = dealer?.damage_sources[0];
+    const target = source?.damage_to_players[0];
+    // The loose schemas of these three levels are what keeps the damage samples of a real archive
+    // (a stripping object here would silently remove them from every archive written).
+    Object.assign(dealer ?? {}, { extra_dealer: 'a' });
+    Object.assign(source ?? {}, { extra_source: 'b' });
+    Object.assign(target ?? {}, { extra_target: 'c' });
+
+    const parsed = parseMatchMetadata(body, MATCH_ID);
+
+    const base = ['match_info', 'damage_matrix', 'damage_dealers', 1] as const;
+    expect(parsed).toHaveProperty([...base, 'extra_dealer'], 'a');
+    expect(parsed).toHaveProperty([...base, 'damage_sources', 0, 'extra_source'], 'b');
+    expect(parsed).toHaveProperty([...base, 'damage_sources', 0, 'source_details_index'], 1);
+    expect(parsed).toHaveProperty(
+      [...base, 'damage_sources', 0, 'damage_to_players', 0, 'extra_target'],
+      'c',
+    );
+    expect(parsed).toHaveProperty(
+      [...base, 'damage_sources', 0, 'damage_to_players', 0, 'damage'],
+      [5, 6],
+    );
+  });
+
   it('accepts u32 values above 2^31 in fields it does not validate', () => {
     const body = rawMetadata({ players: [rawPlayer(1, { items: [{ item_id: 4_204_808_176 }] })] });
 

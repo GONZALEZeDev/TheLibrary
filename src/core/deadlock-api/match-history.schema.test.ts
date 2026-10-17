@@ -116,12 +116,14 @@ describe('parseMatchHistory', () => {
         rawRow({ match_id: 1 }),
         rawRow({ match_id: 2, hero_id: 'Paige' }),
         rawRow({ match_id: 3, player_kills: -1 }),
+        // An integer, but not a match id: the shared rule of the match id refuses it.
+        rawRow({ match_id: 0 }),
       ],
       ACCOUNT_ID,
     );
 
     expect(history.matches.map((match) => match.matchId)).toEqual([1]);
-    expect(history.invalidRows).toBe(2);
+    expect(history.invalidRows).toBe(3);
     expect(history.firstIssue).toMatch(/^\[1\]\.hero_id: /);
   });
 

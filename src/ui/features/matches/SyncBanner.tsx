@@ -1,9 +1,10 @@
 /**
  * Banner of the synchronisation, above the match list: when the history was last synchronised,
  * whether it is complete, why it is not up to date, how far the archive of the Paige match details
- * is, and a button to synchronise now. While it is shown, every synchronisation (started by the
- * button, the schedule or the startup) refreshes the status and the matches, and the progress of
- * the detail queue refreshes the counts of the details and the matches as it goes.
+ * is, whether the detail queue is stuck on a local failure, and a button to synchronise now. While
+ * it is shown, every synchronisation (started by the button, the schedule or the startup) refreshes
+ * the status and the matches, and the progress of the detail queue refreshes the counts of the
+ * details and the matches as it goes.
  *
  * Milestone M2a ships it as a plain banner; the screens milestone (M5) gives it its final design.
  *
@@ -14,7 +15,7 @@ import { RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toAppError } from '../../../core/errors/app-error';
 import type { SyncStatus } from '../../../core/sync/sync-status';
-import type { DetailSummary } from '../../../services/match-detail.service';
+import type { DetailSummaryView } from '../../../services/match-detail.service';
 import {
   useDetailSummary,
   useRefreshOnSync,
@@ -83,7 +84,10 @@ function describeStatus(
  * @returns The line, or `null` when there is nothing to say: the counts are not known, or no match
  *   is eligible for an archive yet (the banner would only say "0, 0, 0").
  */
-function describeDetails(summary: DetailSummary | null | undefined, t: TFunction): string | null {
+function describeDetails(
+  summary: DetailSummaryView | null | undefined,
+  t: TFunction,
+): string | null {
   if (summary === null || summary === undefined) {
     return null;
   }
@@ -94,6 +98,28 @@ function describeDetails(summary: DetailSummary | null | undefined, t: TFunction
   const line = t('matches.sync.details', { archived, waiting, unavailable });
   // Invalid details are final and rare: they are only worth a mention when there are some.
   return invalid > 0 ? `${line} ${t('matches.sync.detailsInvalid', { count: invalid })}` : line;
+}
+
+/**
+ * Build the sentence that says the detail queue is stuck: the last run stopped on a local failure
+ * (the archive folder or the compressor), and the next one will most likely stop the same way. The
+ * counts alone would look like a queue that goes on.
+ *
+ * Only that stop is worth a sentence. A pause is already said by the status of the synchronisation,
+ * and a network failure comes with a failed synchronisation, which says so too.
+ *
+ * @param summary - The counts of the details and the reason of the last stop; `null` when no
+ *   account is linked, and `undefined` until they are read.
+ * @param t - Translation function.
+ * @returns The sentence, or `null` when the last run was not stopped by a local failure.
+ */
+function describeDetailsStop(
+  summary: DetailSummaryView | null | undefined,
+  t: TFunction,
+): string | null {
+  return summary?.lastStop === 'storage'
+    ? t('matches.sync.detailsStopped', { reason: t('errors.kind.storage') })
+    : null;
 }
 
 /**
@@ -122,6 +148,7 @@ export function SyncBanner() {
   // A failed read of the counts only hides their line: the query client logs the failure, and the
   // status above already says when the local data cannot be read.
   const detailsLine = describeDetails(detailSummary.data, t);
+  const detailsStopLine = describeDetailsStop(detailSummary.data, t);
   const hint = status.data?.missingAccountHint ?? null;
 
   return (
@@ -136,8 +163,10 @@ export function SyncBanner() {
         </div>
         {/* Outside the live region: the queue updates the counts up to once a second, and a screen
             reader would read them out at every change. (The hint above only shows without an
-            account, when there is no line.) */}
+            account, when there is no line.) The sentence of a stuck queue follows the counts, and
+            shows even when there are none to show. */}
         {detailsLine !== null && <p>{detailsLine}</p>}
+        {detailsStopLine !== null && <p>{detailsStopLine}</p>}
       </div>
       <button
         type="button"

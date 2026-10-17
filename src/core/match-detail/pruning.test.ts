@@ -18,7 +18,7 @@ import { findTrackedPlayer, pruneForPlayer } from './pruning';
 /** The match of the tests. */
 const MATCH_ID = testMatchId(108_501_737);
 
-/** The slot of the tracked player (his team is 1: slots 7 to 12). */
+/** The slot of the tracked player (their team is 1: slots 7 to 12). */
 const TRACKED_SLOT = 9;
 
 /** The account of the tracked player. */
@@ -88,10 +88,10 @@ function rawDealer(dealerSlot: number, sources: readonly ReturnType<typeof rawSo
  * The players are listed by descending slot, as `players[]` is not ordered by slot in real
  * payloads. The movement paths cover every slot. The damage matrix holds, in this order:
  * - the non-player dealer (slot 0): a source hitting the tracked player and another one, and a
- *   source hitting nobody that concerns him;
- * - the tracked player (slot 9): hits a player, himself, a non-player target and a teammate;
+ *   source hitting nobody that concerns them;
+ * - the tracked player (slot 9): hits a player, themselves, a non-player target and a teammate;
  * - a teammate (slot 8): a source hitting the tracked player and another one, and a source that
- *   does not concern him;
+ *   does not concern them;
  * - an enemy (slot 2): hits only other players;
  * - an enemy without any source.
  *
@@ -233,7 +233,7 @@ describe('pruneForPlayer', () => {
       // The non-player dealer keeps what hits the tracked player; the source hitting only others
       // is dropped.
       rawDealer(0, [{ ...rawSource(0, []), damage_to_players: [rawDamageTo(TRACKED_SLOT)] }]),
-      // The tracked player's own damage stays whole: every target, himself and the non-player
+      // The tracked player's own damage stays whole: every target, themselves and the non-player
       // target (slot 0) included.
       rawDealer(TRACKED_SLOT, [rawSource(1, [3, 0, TRACKED_SLOT, 8]), rawSource(2, [12])]),
       // A teammate keeps what hits the tracked player; sources that do not are dropped and the
@@ -244,6 +244,27 @@ describe('pruneForPlayer', () => {
       ]),
       // The enemy hitting only other players, and the dealer without any source, are gone.
     ]);
+  });
+
+  it.each([
+    ['has no source at all', []],
+    ['has a source that hits nobody', [rawSource(0, []), rawSource(1, [3])]],
+  ])('keeps the dealer of the tracked player as it is when it %s', (_name, sources) => {
+    // The tracked dealer is kept whole, whatever it holds: an empty source or no source at all is
+    // not dropped as it would be for another dealer.
+    const tracked = rawDealer(TRACKED_SLOT, sources);
+    const detail = metadata({
+      damage_matrix: {
+        sample_time_s: [0, 60, 120],
+        source_details: { stat_type: [0, 1, 2], source_name: ['Pistol', 'Burst', 'Wave'] },
+        damage_dealers: [tracked, rawDealer(3, [])],
+      },
+    });
+
+    const pruned = pruneForPlayer(detail, TRACKED_SLOT);
+
+    // The dealer without any source who is not the tracked player is gone.
+    expect(pruned.match_info.damage_matrix?.damage_dealers).toEqual([tracked]);
   });
 
   it('keeps the sample times and the source details whole', () => {

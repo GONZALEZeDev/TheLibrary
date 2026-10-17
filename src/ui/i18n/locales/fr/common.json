@@ -60,7 +60,8 @@
       "protected": "Les données de ce compte sont privées sur deadlock-api : la synchronisation automatique est arrêtée.",
       "failed": "La dernière synchronisation a échoué : {{reason}}",
       "details": "Détail des parties Paige : archivées {{archived}}, en attente {{waiting}}, indisponibles {{unavailable}}.",
-      "detailsInvalid": "Invalides : {{count}}."
+      "detailsInvalid": "Invalides : {{count}}.",
+      "detailsStopped": "Le détail des parties ne peut pas être enregistré pour l'instant : {{reason}}"
     }
   },
   "matchDetail": {
@@ -68,9 +69,10 @@
     "notEligible": "Le détail est archivé pour tes parties Paige en mode normal des 90 derniers jours.",
     "waiting": "Détail en attente.",
     "nextAttempt": "Prochaine tentative : {{time}}.",
-    "unavailable": "deadlock-api n'a pas le détail de cette partie.",
+    "unavailable": "deadlock-api n'a pas pu fournir le détail de cette partie après plusieurs tentatives.",
     "invalid": "Le détail de cette partie est illisible.",
     "missing": "L'archive de cette partie est introuvable : elle sera téléchargée à nouveau.",
+    "lost": "L'archive de cette partie a disparu : les parties de plus de 90 jours ne sont plus téléchargées.",
     "retry": "Réessayer",
     "facts": {
       "result": "Résultat",

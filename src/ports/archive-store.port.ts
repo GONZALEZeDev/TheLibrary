@@ -60,7 +60,7 @@ export interface ArchiveStore {
    *
    * @param matchId - The match the response was fetched for.
    * @param at - When the response was quarantined, in Unix milliseconds.
-   * @param bytes - The response as it was received.
+   * @param bytes - The response, zstd-compressed (the caller compresses it, as it does an archive).
    * @returns A promise resolved once the response is kept and the folder is trimmed.
    */
   quarantine(matchId: MatchId, at: number, bytes: Uint8Array): Promise<void>;

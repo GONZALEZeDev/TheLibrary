@@ -22,8 +22,8 @@ import { MemoryArchiveStore } from './memory-archive-store.adapter';
 /** The accounts and the matches of the tests. */
 const ACCOUNT = testAccountId(123456789);
 const OTHER_ACCOUNT = testAccountId(987654321);
-const MATCH = testMatchId(117958378);
-const OTHER_MATCH = testMatchId(117958379);
+const MATCH = testMatchId(100000001);
+const OTHER_MATCH = testMatchId(100000002);
 
 /** A quarantine time (Unix milliseconds) the tests count up from. */
 const QUARANTINE_START = 1_792_154_119_000;

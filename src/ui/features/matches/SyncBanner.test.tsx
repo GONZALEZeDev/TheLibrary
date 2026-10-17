@@ -53,6 +53,10 @@ const INCOMPLETE_SENTENCE =
 const FAILED_SENTENCE =
   'The last synchronisation failed: The data service is temporarily unavailable. Please try again later.';
 
+/** Said when the detail queue stopped on a local failure (the disk, the compressor...). */
+const DETAILS_STOPPED_SENTENCE =
+  'Match details cannot be saved right now: Local data could not be read or saved.';
+
 /** Key of the query that reads the summary of the match details. */
 const DETAILS_SUMMARY_KEY = ['details', 'summary'] as const;
 
@@ -443,7 +447,7 @@ describe('SyncBanner', () => {
   it('mentions invalid details only when there are some', async () => {
     const getSummary = vi
       .spyOn(MatchDetailService.prototype, 'getSummary')
-      .mockResolvedValue({ archived: 5, waiting: 2, unavailable: 1, invalid: 3 });
+      .mockResolvedValue({ archived: 5, waiting: 2, unavailable: 1, invalid: 3, lastStop: null });
     const { queryClient } = await renderBanner();
 
     expect(
@@ -452,7 +456,13 @@ describe('SyncBanner', () => {
       ),
     ).toBeInTheDocument();
 
-    getSummary.mockResolvedValue({ archived: 7, waiting: 1, unavailable: 1, invalid: 0 });
+    getSummary.mockResolvedValue({
+      archived: 7,
+      waiting: 1,
+      unavailable: 1,
+      invalid: 0,
+      lastStop: null,
+    });
     await act(() => queryClient.invalidateQueries({ queryKey: ['details'] }));
 
     expect(
@@ -473,6 +483,7 @@ describe('SyncBanner', () => {
       waiting: 0,
       unavailable: 0,
       invalid: 0,
+      lastStop: null,
     });
     expect(screen.queryByText(/Paige match details/)).not.toBeInTheDocument();
   });
@@ -490,7 +501,7 @@ describe('SyncBanner', () => {
   it('refreshes the progress of the match details whenever a synchronisation runs', async () => {
     const getSummary = vi
       .spyOn(MatchDetailService.prototype, 'getSummary')
-      .mockResolvedValue({ archived: 1, waiting: 4, unavailable: 0, invalid: 0 });
+      .mockResolvedValue({ archived: 1, waiting: 4, unavailable: 0, invalid: 0, lastStop: null });
     const fixtures = createFixtureApi({ now: NOW, matchCount: MATCH_COUNT });
     const { services } = await renderBanner({
       // The network is down for the details: the queue stops at the first one without recording
@@ -505,7 +516,13 @@ describe('SyncBanner', () => {
       await screen.findByText('Paige match details: 1 archived, 4 waiting, 0 unavailable.'),
     ).toBeInTheDocument();
 
-    getSummary.mockResolvedValue({ archived: 3, waiting: 2, unavailable: 0, invalid: 0 });
+    getSummary.mockResolvedValue({
+      archived: 3,
+      waiting: 2,
+      unavailable: 0,
+      invalid: 0,
+      lastStop: null,
+    });
     await services.sync.syncNow('manual');
 
     expect(
@@ -573,6 +590,89 @@ describe('SyncBanner', () => {
     expect(invalidate).toHaveBeenCalledTimes(4);
   });
 
+  it('says when the match details cannot be saved, as long as the last run was stopped by it', async () => {
+    const user = userEvent.setup();
+    const testServices = createTestServices({
+      now: () => NOW,
+      handler: createFixtureApi({ now: NOW, matchCount: MATCH_COUNT }),
+    });
+    // The disk refuses the first archive: the queue stops on a local failure.
+    testServices.archiveStore.failNextWrite(new Error('There is not enough space on the disk'));
+    await renderBannerOn(testServices);
+    await screen.findByText('Not synchronised yet.');
+
+    await clickSyncNow(user, 'Sync now');
+
+    // The counts alone would look like a queue that goes on, so the banner says it is stuck. The
+    // sentence stays out of the live region, like the line of the counts.
+    const sentence = await screen.findByText(DETAILS_STOPPED_SENTENCE);
+    expect(sentence.closest('[aria-live]')).toBeNull();
+    expect(screen.getByText(/^Paige match details: /)).toBeInTheDocument();
+    expect((await screen.findByText(REFRESHED_SENTENCE)).closest('[aria-live]')).not.toBeNull();
+
+    // The disk works again: the next run goes through, and the sentence goes away.
+    await clickSyncNow(user, 'Sync now');
+    await waitFor(() => {
+      expect(screen.queryByText(DETAILS_STOPPED_SENTENCE)).not.toBeInTheDocument();
+    });
+    expect((await testServices.services.details.getSummary())?.lastStop).toBeNull();
+  });
+
+  it('says it even when no match is counted', async () => {
+    vi.spyOn(MatchDetailService.prototype, 'getSummary').mockResolvedValue({
+      archived: 0,
+      waiting: 0,
+      unavailable: 0,
+      invalid: 0,
+      lastStop: 'storage',
+    });
+
+    await renderBanner();
+
+    expect(await screen.findByText(DETAILS_STOPPED_SENTENCE)).toBeInTheDocument();
+    // There is no line of counts to read "0, 0, 0".
+    expect(screen.queryByText(/Paige match details/)).not.toBeInTheDocument();
+  });
+
+  it.each([null, 'paused', 'network'] as const)(
+    'does not say the match details cannot be saved when the last run stopped on %s',
+    async (lastStop) => {
+      vi.spyOn(MatchDetailService.prototype, 'getSummary').mockResolvedValue({
+        archived: 1,
+        waiting: 4,
+        unavailable: 0,
+        invalid: 0,
+        lastStop,
+      });
+
+      await renderBanner();
+
+      // The counts are read, so the sentence is missing for a reason.
+      expect(
+        await screen.findByText('Paige match details: 1 archived, 4 waiting, 0 unavailable.'),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/cannot be saved/)).not.toBeInTheDocument();
+    },
+  );
+
+  it('says in French that the match details cannot be saved', async () => {
+    vi.spyOn(MatchDetailService.prototype, 'getSummary').mockResolvedValue({
+      archived: 3,
+      waiting: 2,
+      unavailable: 0,
+      invalid: 0,
+      lastStop: 'storage',
+    });
+
+    await renderBanner({}, 'fr');
+
+    expect(
+      await screen.findByText(
+        "Le détail des parties ne peut pas être enregistré pour l'instant : Impossible de lire ou d'enregistrer les données locales.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it('speaks French', async () => {
     const user = userEvent.setup();
     await renderBanner({ handler: createFixtureApi({ now: NOW, matchCount: MATCH_COUNT }) }, 'fr');
@@ -590,6 +690,7 @@ describe('SyncBanner', () => {
       waiting: 2,
       unavailable: 1,
       invalid: 3,
+      lastStop: null,
     });
 
     await renderBanner({}, 'fr');

@@ -72,7 +72,8 @@ const matchesRoute = createRoute({
 const matchDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/matches/$matchId',
-  // The page receives a number; links pass one (`params={{ matchId: 108501737 }}`).
+  // The page receives a `MatchId`, the branded number `parseMatchId` makes; links pass one too
+  // (`params={{ matchId: match.matchId }}`): a plain number does not compile.
   params: {
     parse: ({ matchId }) => {
       const parsed = parseMatchId(matchId);

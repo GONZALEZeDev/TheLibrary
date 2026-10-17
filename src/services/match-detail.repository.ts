@@ -18,7 +18,7 @@
 import { z } from 'zod';
 import type { AccountId } from '../core/domain/account';
 import { PAIGE_HERO_ID } from '../core/domain/hero';
-import { parseMatchId, type MatchId, type MatchSummary } from '../core/domain/match';
+import { matchIdSchema, type MatchId, type MatchSummary } from '../core/domain/match';
 import { AppError } from '../core/errors/app-error';
 import {
   ARCHIVED_GAME_MODE,
@@ -68,22 +68,17 @@ export interface StoredDetail {
   readonly match: Pick<MatchSummary, 'heroId' | 'gameMode' | 'matchMode' | 'startTime'>;
 }
 
-/** How many of the eligible matches stand in each state of the queue. */
+/** How many of the Paige matches stand in each state of the queue. */
 export interface DetailSummary {
-  /** Details archived (`ready`). */
+  /** Details archived (`ready`), whatever the age of the match: an archive outlives the window. */
   readonly archived: number;
-  /** Details still to download (`pending`), or to download again later (`retry`). */
+  /** Details still to download (`pending`), or to download again later (`retry`), in the window. */
   readonly waiting: number;
-  /** Details the queue gave up on after too many failures. */
+  /** Details the queue gave up on after too many failures, in the window. */
   readonly unavailable: number;
-  /** Details the API answered with but the app cannot use. */
+  /** Details the API answered with but the app cannot use, in the window. */
   readonly invalid: number;
 }
-
-/** Schema of a stored match id: positive safe integer, as {@link parseMatchId} accepts. */
-const matchIdSchema = z.int().refine((value): value is MatchId => parseMatchId(value) !== null, {
-  message: 'Invalid match id',
-});
 
 /** Schema of a counter of attempts. */
 const attemptsSchema = z.int().nonnegative();
@@ -154,21 +149,34 @@ class SqlParams {
  * @param params - The values of the statement, to which the conditions bind theirs.
  * @param accountId - The player.
  * @param now - The current time, in Unix milliseconds.
+ * @param statusKeptPastWindow - A status whose matches are kept whatever their age: the 90 days of
+ *   the window do not apply to them, the other conditions do. Without it, the window applies to
+ *   every match.
  * @returns The conditions, to be joined with `AND`.
  */
-function eligibleConditions(params: SqlParams, accountId: AccountId, now: number): string {
+function eligibleConditions(
+  params: SqlParams,
+  accountId: AccountId,
+  now: number,
+  statusKeptPastWindow?: DetailStatus,
+): string {
+  // The values are bound in the order the conditions are written, as the port requires.
+  const identity = `account_id = ${params.bind(accountId)}
+      AND hero_id = ${params.bind(PAIGE_HERO_ID)}
+      AND game_mode = ${params.bind(ARCHIVED_GAME_MODE)}
+      AND match_mode IN (${params.bindAll(ARCHIVED_MATCH_MODES)})`;
   // `start_time` is in Unix seconds while `now` and the window are in milliseconds, so the limit
   // is converted to seconds once, here. It stays fractional on purpose: with a `now` that is not a
   // whole second, a match that started on the whole second before the limit is out, exactly as
   // the core's `startTime * 1000 >= now - window` says. A limit that is not a whole second is at
   // least a thousandth away from the nearest one, far more than the rounding error of a double,
   // so the comparison of a whole `start_time` with it cannot differ from the core's.
-  // The values are bound in the order the conditions are written, as the port requires.
-  return `account_id = ${params.bind(accountId)}
-      AND hero_id = ${params.bind(PAIGE_HERO_ID)}
-      AND game_mode = ${params.bind(ARCHIVED_GAME_MODE)}
-      AND match_mode IN (${params.bindAll(ARCHIVED_MATCH_MODES)})
-      AND start_time >= ${params.bind((now - DETAIL_WINDOW_MS) / 1000)}`;
+  const inWindow = `start_time >= ${params.bind((now - DETAIL_WINDOW_MS) / 1000)}`;
+  return statusKeptPastWindow === undefined
+    ? `${identity}
+      AND ${inWindow}`
+    : `${identity}
+      AND (${inWindow} OR detail_status = ${params.bind(statusKeptPastWindow)})`;
 }
 
 /**
@@ -366,9 +374,13 @@ export class MatchDetailRepository {
   }
 
   /**
-   * Count the eligible matches of a player by state of the queue. The matches the queue never
-   * archives (Street Brawl, private lobbies, other heroes, older than 90 days) are not counted,
-   * whatever their status.
+   * Count the Paige matches of a player by state of the queue, in the one statement.
+   *
+   * The matches the queue never archives (Street Brawl, private lobbies, other heroes) are not
+   * counted, whatever their status. The 90 days of the window apply to the matches still to do or
+   * given up on, but not to the archived ones: an archive stays on disk, and is still shown by the
+   * list and the match page, once its match is older than 90 days, so the count of the archives
+   * keeps it too.
    *
    * @param accountId - The player.
    * @param now - The current time, in Unix milliseconds.
@@ -377,8 +389,9 @@ export class MatchDetailRepository {
    */
   async summary(accountId: AccountId, now: number): Promise<DetailSummary> {
     const params = new SqlParams();
+    // The `ready` matches are the status kept past the window: their archive outlives it.
     const sql = `SELECT detail_status, COUNT(*) AS total FROM matches
-       WHERE ${eligibleConditions(params, accountId, now)}
+       WHERE ${eligibleConditions(params, accountId, now, READY)}
        GROUP BY detail_status`;
     const rows = await this.#run(
       () => this.#database.select(sql, params.values),

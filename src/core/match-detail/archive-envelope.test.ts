@@ -100,15 +100,66 @@ function catchAppError(action: () => unknown): AppError {
   return expect.unreachable('the call should have thrown');
 }
 
+/** How far down the causes of an error {@link errorText} reads: a cause can never loop for ever. */
+const MAX_CAUSE_DEPTH = 10;
+
 /**
- * Everything a log line would hold of an error, as one text.
+ * Everything a log line would hold of an error, as one text: the message and the context of the
+ * error, then those of its cause, and of the cause of its cause, down the chain. The decoder keeps
+ * the error of the schema as the cause of its own, so a value leaked there must be seen too.
+ * (`JSON.stringify` of an `Error` is `{}`: its message is not an own enumerable property.)
  *
  * @param error - The error.
- * @returns Its message, its context and its cause, serialised.
+ * @returns The messages and the contexts of the chain, serialised.
  */
 function errorText(error: AppError): string {
-  return JSON.stringify({ message: error.message, context: error.context, cause: error.cause });
+  const parts: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; current !== undefined && depth < MAX_CAUSE_DEPTH; depth += 1) {
+    if (current instanceof Error) {
+      parts.push(current.message);
+      if (current instanceof AppError) {
+        parts.push(JSON.stringify(current.context));
+      }
+      current = current.cause;
+    } else {
+      // A cause that is not an error (a string, an object): kept as it would be logged.
+      parts.push(JSON.stringify(current));
+      current = undefined;
+    }
+  }
+  return parts.join('\n');
 }
+
+describe('errorText', () => {
+  it('holds the message and the context of the error and of every cause down the chain', () => {
+    const error = new AppError('invalid_payload', 'outer message', {
+      context: { issue: 'outer issue' },
+      cause: new AppError('invalid_payload', 'middle message', {
+        context: { issue: 'middle issue' },
+        cause: new Error('inner message'),
+      }),
+    });
+
+    const text = errorText(error);
+
+    for (const expected of [
+      'outer message',
+      'outer issue',
+      'middle message',
+      'middle issue',
+      'inner message',
+    ]) {
+      expect(text).toContain(expected);
+    }
+  });
+
+  it('holds a cause that is not an error', () => {
+    const error = new AppError('storage', 'outer message', { cause: { leaked: 'S3CR3T' } });
+
+    expect(errorText(error)).toContain('S3CR3T');
+  });
+});
 
 describe('createArchiveEnvelope', () => {
   it('wraps a detail with the format, the account and the fetch time', () => {

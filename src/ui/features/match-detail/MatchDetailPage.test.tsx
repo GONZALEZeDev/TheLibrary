@@ -23,6 +23,7 @@ import {
 } from '../../../adapters/dev/fixture-http-client.adapter';
 import {
   createMatchHistoryFixture,
+  FIXTURE_ACCOUNT_ID,
   type RawMatchHistoryRow,
 } from '../../../adapters/dev/fixtures/match-history.fixture';
 import { isMetadataMissing } from '../../../adapters/dev/fixtures/match-metadata.fixture';
@@ -109,6 +110,7 @@ interface PageStrings {
   readonly unavailable: string;
   readonly invalid: string;
   readonly missing: string;
+  readonly lost: string;
   readonly retry: string;
   readonly win: string;
   readonly loss: string;
@@ -131,9 +133,10 @@ const STRINGS: Record<Language, PageStrings> = {
       'Match details are archived for your normal-mode Paige matches of the last 90 days.',
     waiting: 'Waiting for the match detail.',
     nextAttempt: (time) => `Next attempt: ${time}.`,
-    unavailable: 'deadlock-api does not have the detail of this match.',
+    unavailable: 'deadlock-api could not give the detail of this match after several attempts.',
     invalid: 'The detail of this match could not be read.',
     missing: 'The archive of this match is missing: it will be downloaded again.',
+    lost: 'The archive of this match is gone: matches older than 90 days are not downloaded again.',
     retry: 'Retry',
     win: 'Win',
     loss: 'Loss',
@@ -153,9 +156,11 @@ const STRINGS: Record<Language, PageStrings> = {
       'Le détail est archivé pour tes parties Paige en mode normal des 90 derniers jours.',
     waiting: 'Détail en attente.',
     nextAttempt: (time) => `Prochaine tentative : ${time}.`,
-    unavailable: "deadlock-api n'a pas le détail de cette partie.",
+    unavailable:
+      "deadlock-api n'a pas pu fournir le détail de cette partie après plusieurs tentatives.",
     invalid: 'Le détail de cette partie est illisible.',
     missing: "L'archive de cette partie est introuvable : elle sera téléchargée à nouveau.",
+    lost: "L'archive de cette partie a disparu : les parties de plus de 90 jours ne sont plus téléchargées.",
     retry: 'Réessayer',
     win: 'Victoire',
     loss: 'Défaite',
@@ -673,6 +678,57 @@ describe('MatchDetailPage', () => {
     ]);
   });
 
+  it('says when the archive is lost, and refreshes the counts and the matches, once', async () => {
+    // The clock of the services moves on by hand: the match is archived now and shown 91 days later.
+    let clock = NOW;
+    const testServices = await synchronised({ now: () => clock });
+    await archivedView(testServices.services, ARCHIVED_ID);
+    clock = NOW + 91 * 24 * 60 * 60_000;
+    // The database says the detail is archived, but the folder holds no file for it.
+    vi.spyOn(testServices.archiveStore, 'read').mockResolvedValue(null);
+    const queryClient = createTestQueryClient(testServices.logger);
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    await renderMatchDetail(ARCHIVED_ID, testServices, { queryClient });
+
+    // Not "it will be downloaded again": it will not, the match is past the window.
+    expect(await screen.findByText(STRINGS.en.lost)).toBeInTheDocument();
+    expect(screen.queryByText(STRINGS.en.missing)).not.toBeInTheDocument();
+    expect(screen.queryByRole('term')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    // The service put the match back to pending, so the banner and the list changed.
+    expect(invalidate.mock.calls.map(([filters]) => filters)).toEqual([
+      { queryKey: ['details', 'summary'] },
+      { queryKey: ['matches'] },
+    ]);
+  });
+
+  it('shows the error, and keeps the match archived, when the archive file cannot be read', async () => {
+    const testServices = await synchronised();
+    const view = await archivedView(testServices.services, ARCHIVED_ID);
+    vi.spyOn(testServices.archiveStore, 'read').mockRejectedValueOnce(
+      new Error(`Access is denied to archive/${String(FIXTURE_ACCOUNT_ID)}/file.json.zst`),
+    );
+
+    await renderMatchDetail(ARCHIVED_ID, testServices);
+
+    // The page's own error path: the translated message of the kind, not "the archive is missing".
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Local data could not be read or saved.',
+    );
+    expect(screen.queryByText(STRINGS.en.missing)).not.toBeInTheDocument();
+    expect(screen.queryByText(STRINGS.en.lost)).not.toBeInTheDocument();
+    expect(screen.queryByRole('term')).not.toBeInTheDocument();
+    // The failure is logged once by the query client, with the step and without the account id.
+    const failures = testServices.logger.entries.filter((entry) => entry.scope === 'query');
+    expect(failures).toMatchObject([
+      { level: 'error', context: { kind: 'storage', step: 'read', query: 'details.match' } },
+    ]);
+    expect(JSON.stringify(failures)).not.toContain(String(FIXTURE_ACCOUNT_ID));
+    // The match was not put back to pending: its archive is still shown once the file reads again.
+    await expect(archivedView(testServices.services, ARCHIVED_ID)).resolves.toEqual(view);
+  });
+
   it('shows the match again once its archive was downloaded again', async () => {
     const testServices = await synchronised();
     // Only the first read finds the file missing; the next synchronisation writes it again.
@@ -770,6 +826,13 @@ const EXPLAINED_VIEWS: readonly ExplainedView[] = [
     name: 'a match whose archive is missing',
     view: { kind: 'missing' },
     says: (strings) => [strings.missing],
+    offersRetry: false,
+  },
+  {
+    // Nothing can be retried: the queue never downloads a match past the 90 days.
+    name: 'a match whose archive is lost',
+    view: { kind: 'lost' },
+    says: (strings) => [strings.lost],
     offersRetry: false,
   },
 ];

@@ -45,10 +45,10 @@ describe('heroesRequest', () => {
 
 describe('matchMetadataRequest', () => {
   it('asks for a match detail without the Steam fallback', () => {
-    const request = matchMetadataRequest(testMatchId(117958378));
+    const request = matchMetadataRequest(testMatchId(100000001));
 
     expect(request).toEqual({
-      url: 'https://api.deadlock-api.com/v1/matches/117958378/metadata?disable_steam=true',
+      url: 'https://api.deadlock-api.com/v1/matches/100000001/metadata?disable_steam=true',
       endpoint: '/v1/matches/{match_id}/metadata',
       family: 'metadata',
     });

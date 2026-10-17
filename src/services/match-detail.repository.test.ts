@@ -369,7 +369,8 @@ describe('MatchDetailRepository', () => {
       matchSummary({ matchId: 5, startTime: daysAgo(5) }),
       matchSummary({ matchId: 6, startTime: daysAgo(6) }),
       matchSummary({ matchId: 7, startTime: daysAgo(7) }),
-      // Not eligible, whatever their status: Street Brawl, another hero, too old, another player.
+      // Not counted, whatever their status: Street Brawl, another hero, another player; and a
+      // match older than 90 days that was never archived.
       matchSummary({ matchId: 8, startTime: daysAgo(1), gameMode: 4 }),
       matchSummary({ matchId: 9, startTime: daysAgo(1), heroId: PAIGE_HERO_ID + 1 }),
       matchSummary({ matchId: 10, startTime: daysAgo(91) }),
@@ -392,13 +393,59 @@ describe('MatchDetailRepository', () => {
     });
     await repository.markReady(TEST_ACCOUNT_ID, testMatchId(8), 100);
     await repository.markReady(TEST_ACCOUNT_ID, testMatchId(9), 100);
-    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(10), 100);
 
     await expect(repository.summary(TEST_ACCOUNT_ID, NOW)).resolves.toEqual({
       archived: 2,
       waiting: 3,
       unavailable: 1,
       invalid: 1,
+    });
+  });
+
+  it('keeps counting an archived match once it is older than 90 days', async () => {
+    const { repository } = await createRepositories([
+      // Archived, and 91 and 200 days old: the archive is still on disk and still shown.
+      matchSummary({ matchId: 1, startTime: daysAgo(91) }),
+      matchSummary({ matchId: 2, startTime: daysAgo(200) }),
+      matchSummary({ matchId: 3, startTime: daysAgo(1) }),
+      // Older than 90 days and in every other state: out of the window, so not counted.
+      matchSummary({ matchId: 4, startTime: daysAgo(91) }),
+      matchSummary({ matchId: 5, startTime: daysAgo(91) }),
+      matchSummary({ matchId: 6, startTime: daysAgo(91) }),
+      matchSummary({ matchId: 7, startTime: daysAgo(91) }),
+      // Archived and old, but not a match the queue ever archives: Street Brawl, another hero,
+      // a private lobby, another player.
+      matchSummary({ matchId: 8, startTime: daysAgo(91), gameMode: 4 }),
+      matchSummary({ matchId: 9, startTime: daysAgo(91), heroId: PAIGE_HERO_ID + 1 }),
+      matchSummary({ matchId: 10, startTime: daysAgo(91), matchMode: 2 }),
+      matchSummary({ matchId: 11, startTime: daysAgo(91), accountId: testAccountId(42) }),
+    ]);
+    for (const matchId of [1, 2, 3]) {
+      await repository.markReady(TEST_ACCOUNT_ID, testMatchId(matchId), 100);
+    }
+    await repository.saveState(TEST_ACCOUNT_ID, testMatchId(5), retryState(1, NOW + 60_000));
+    await repository.saveState(TEST_ACCOUNT_ID, testMatchId(6), {
+      status: 'unavailable',
+      attempts: 6,
+      nextAttemptAt: null,
+      lastError: 'http_404',
+    });
+    await repository.saveState(TEST_ACCOUNT_ID, testMatchId(7), {
+      status: 'invalid',
+      attempts: 1,
+      nextAttemptAt: null,
+      lastError: 'invalid_payload',
+    });
+    for (const matchId of [8, 9, 10]) {
+      await repository.markReady(TEST_ACCOUNT_ID, testMatchId(matchId), 100);
+    }
+    await repository.markReady(testAccountId(42), testMatchId(11), 100);
+
+    await expect(repository.summary(TEST_ACCOUNT_ID, NOW)).resolves.toEqual({
+      archived: 3,
+      waiting: 0,
+      unavailable: 0,
+      invalid: 0,
     });
   });
 

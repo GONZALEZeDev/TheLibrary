@@ -3,8 +3,8 @@
  *
  * A match detail weighs about 1 MB, most of it the movement paths of the twelve players and the
  * damage matrix. The app only analyses the tracked player, so before a detail is compressed and
- * archived it is reduced to what concerns him (see `docs/adr/0003-user-centric-archive-zstd.md`):
- * the movement paths and the damage of the other players that do not involve him are dropped,
+ * archived it is reduced to what concerns them (see `docs/adr/0003-user-centric-archive-zstd.md`):
+ * the movement paths and the damage of the other players that do not involve them are dropped,
  * and everything else is kept exactly as the API sent it.
  *
  * Both functions are pure: they never modify their input.
@@ -16,11 +16,11 @@ import { PAIGE_HERO_ID } from '../domain/hero';
 import { AppError } from '../errors/app-error';
 import type { RawMatchMetadata } from '../deadlock-api/match-metadata.schema';
 
-/** The tracked player in a match detail: where to find him in the slot-indexed parts. */
+/** The tracked player in a match detail: where to find them in the slot-indexed parts. */
 export interface TrackedPlayer {
-  /** His slot (1 to 12): the key of his movement path and of his damage in the detail. */
+  /** Their slot (1 to 12): the key of their movement path and of their damage in the detail. */
   readonly playerSlot: number;
-  /** His team, as numbered by the API. */
+  /** Their team, as numbered by the API. */
   readonly team: number;
 }
 
@@ -32,16 +32,16 @@ type DamageDealer = NonNullable<
 /**
  * Find the tracked player among the players of a match.
  *
- * The detail lists the players in no particular order, so he is found by account id and never by
+ * The detail lists the players in no particular order, so they are found by account id and never by
  * position. The match must hold exactly one player with that account id, and that player must be
  * playing Paige: the archive only holds Paige matches of the tracked account, so anything else
  * means the detail does not describe the match the history announced.
  *
  * @param metadata - The validated match detail.
  * @param accountId - The tracked account.
- * @returns His slot and his team.
+ * @returns Their slot and their team.
  * @throws AppError of kind `invalid_payload` when no player, or several players, have this account
- *   id, or when he is not playing Paige (the context `issue` is `tracked_player_missing`,
+ *   id, or when they are not playing Paige (the context `issue` is `tracked_player_missing`,
  *   `tracked_player_ambiguous` or `tracked_player_not_paige`; the account id itself is never
  *   put in the error).
  */
@@ -79,14 +79,14 @@ export function findTrackedPlayer(metadata: RawMatchMetadata, accountId: Account
  * These are the only things dropped:
  * - the movement paths of the other players (`match_info.match_paths.paths`);
  * - in the damage matrix, the damage that involves neither the tracked player as dealer nor as
- *   target: every damage entry of another dealer that does not target him, then the damage sources
+ *   target: every damage entry of another dealer that does not target them, then the damage sources
  *   and the dealers that are left empty.
  *
  * Everything else is copied unchanged: all the players, `sample_time_s` and `source_details` (the
  * damage sources refer to `source_details` by index, so it must stay whole), and every field the
  * schema does not name. The non-player dealer (slot `0`) is treated like any other dealer: what it
  * does to the tracked player is kept, and the tracked player's damage to a non-player target (slot
- * `0`) is kept with the rest of his damage.
+ * `0`) is kept with the rest of their damage.
  *
  * The input is never modified. The result shares the parts that are kept as they are (such as the
  * players) with the input, which is safe because neither is ever mutated.
@@ -127,7 +127,7 @@ export function pruneForPlayer(metadata: RawMatchMetadata, trackedSlot: number):
 /**
  * Prune the dealers of the damage matrix for one player.
  *
- * The tracked player's own dealer is kept whole (what he deals, to anyone). Any other dealer is
+ * The tracked player's own dealer is kept whole (what they deal, to anyone). Any other dealer is
  * reduced to the damage it did to the tracked player, and disappears when nothing is left.
  *
  * @param dealers - The damage dealers of the match.

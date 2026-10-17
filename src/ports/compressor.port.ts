@@ -6,12 +6,17 @@
  *
  * Adapters do not wrap their failures (see `src/adapters/README.md`), with one exception here. The
  * Web Worker adapter of the desktop app is a boundary where errors cross as text, so only the
- * adapter can report them: every one of its failures (the worker cannot be created or reached,
- * crashes, or reports an error, which includes input that is not valid zstd) rejects with
- * `AppError('storage', …)` and keeps the original failure as the cause. The test compressor
- * (`src/test/direct-compressor.ts`) calls the library on the calling thread and lets the library's
- * errors through as they are. The service that calls the port therefore wraps what is not an
- * `AppError` yet.
+ * adapter can classify them, and it keeps the original failure as the cause.
+ * - A problem of the data rejects with `AppError('invalid_payload', …)`: the worker answered that
+ *   the codec ran and failed on the bytes it got, for example input that is not valid zstd.
+ * - A broken compressor rejects with `AppError('storage', …)`, and says nothing about the data: the
+ *   worker cannot be created or reached, it crashes, or it answers that it is unavailable (its
+ *   codec could not be loaded, for example because the WebAssembly was refused). After a crash or
+ *   such an answer, the adapter replaces the worker, so the next call can succeed.
+ *
+ * The test compressor (`src/test/direct-compressor.ts`) calls the codec on the calling thread and
+ * lets its own errors through, plain `Error`s that are not `AppError`s, so a caller must treat an
+ * error that is not an `AppError` as a problem of the data, and wrap it.
  *
  * @packageDocumentation
  */

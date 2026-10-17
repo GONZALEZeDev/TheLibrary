@@ -7,6 +7,7 @@
  *
  * @packageDocumentation
  */
+import { z } from 'zod';
 import type { AccountId } from './account';
 import type { HeroId } from './hero';
 
@@ -40,6 +41,20 @@ export function parseMatchId(value: unknown): MatchId | null {
   // The cast adds the brand: this is the one place that makes a `MatchId`, once it is validated.
   return Number.isSafeInteger(candidate) && candidate >= 1 ? (candidate as MatchId) : null;
 }
+
+/**
+ * Schema of a match id that arrives as a number from outside the app: a row of the match history
+ * of deadlock-api, or a row read back from the database. The one rule is {@link parseMatchId}: an
+ * integer it rejects makes the whole row invalid, like any other bad column, and the type guard
+ * gives the parsed field the {@link MatchId} brand without a cast.
+ *
+ * It is a number-only schema: decimal text (a URL parameter) goes through {@link parseMatchId}.
+ */
+export const matchIdSchema = z
+  .int()
+  .refine((value): value is MatchId => parseMatchId(value) !== null, {
+    message: 'Invalid match id',
+  });
 
 /** One match of a player's history, as the app stores and shows it. */
 export interface MatchSummary {

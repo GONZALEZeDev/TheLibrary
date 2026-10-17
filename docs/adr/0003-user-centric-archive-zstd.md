@@ -13,7 +13,7 @@ A full match metadata payload weighs about 1.07 MB of JSON (average of 10 Paige 
 - Keep the archive as the **source of truth** for match detail, and SQLite only for data compared across matches (metrics, history, sync state).
 - Archive only the **normal-mode Paige matches of the last 90 days**: hero Paige, `game_mode` 1 (Street Brawl is 4), `match_mode` 1 (unranked) or 4 (ranked) (a private lobby is 2).
 - Before archiving, apply a **user-centric pruning** that drops only two things: the per-second paths of the 11 other players, and the damage-matrix entries that involve the tracked player neither as dealer nor as target. Everything else, the final stats, stat snapshots, items and deaths of every player included, stays exactly as the API sent it (1,070 KB → 516 KB).
-- Compress with **zstd level 19**: 516 KB → **48 KB** on average; about 0.3 s once per match, about 2 ms to read back. The library is `@hpcc-js/wasm-zstd` 1.16.2: zstd compiled to WebAssembly, because the WebView has no native zstd. It runs in a module Web Worker, so the window never freezes, and the Content-Security-Policy allows it with `'wasm-unsafe-eval'`.
+- Compress with **zstd level 19**: 516 KB → about **48 KB** on average (the 2026-09 estimate, from the sample above; the size measured on real archives is under Consequences); about 0.3 s once per match, about 2 ms to read back. The library is `@hpcc-js/wasm-zstd` 1.16.2: zstd compiled to WebAssembly, because the WebView has no native zstd. It runs in a module Web Worker, so the window never freezes, and the Content-Security-Policy allows it with `'wasm-unsafe-eval'`.
 - Write one file per match, `%LOCALAPPDATA%\<identifier>\archive\<accountId>\<matchId>.json.zst`. It holds an envelope, `{ archiveFormat, prunedForAccountId, fetchedAt, payload }`, as UTF-8 JSON, compressed. The file is written to a `.tmp` file, then renamed, so a crash never leaves a half-written archive under its final name.
 
 ## The detail queue
@@ -29,10 +29,10 @@ After each synchronisation of the history, a queue downloads the detail of every
 
 ## Consequences
 
-- About 50 MB per 1,000 Paige matches (about 48 MB of archive plus the database) instead of about 1 GB raw.
-- **Measured size:** 55 KB per match on average (116 real Paige matches of one account, 6.4 MB in all, measured 2026-10-17), so about 55 MB of archive per 1,000 matches.
+- **2026-09 estimate:** about 50 MB per 1,000 Paige matches (about 48 MB of archive plus the database) instead of about 1 GB raw.
+- **Measured size:** 55 KB per match on average (116 real Paige matches of one account, 6.4 MB in all, measured 2026-10-17), so about 55 MB of archive per 1,000 matches. The 48 KB estimate came from a sample of 10 matches of 34.5 minutes on average; what makes real archives larger has not been measured yet.
 - Metrics can be recomputed from the archive (projection versioning), with no network access, for every match whose archive is still on disk.
-- A deleted or unreadable archive is not an error: the match goes back to `pending` when its page is opened, and the next synchronisation downloads it again if the match is still within the 90-day window (an older one keeps no archive).
+- A deleted or damaged archive (a file that is gone, or whose content cannot be decompressed or read) is not an error: the match goes back to `pending` when its page is opened, and the next synchronisation downloads it again if the match is still within the 90-day window (an older one keeps no archive, and its page says the archive is gone). A file that cannot be read (locked, denied) or a broken compressor (its worker crashed, or its codec could not be loaded, say because the WebAssembly was refused) says nothing about the archive: it is an error for the page, and the match stays archived. Only a codec that ran and failed on the bytes counts as a damaged archive.
 - Features needing every player's positions re-download the full payload on demand (not built yet).
 - A configurable storage cap (500 MB by default) deletes the oldest archives first; their metrics stay, but can no longer be recomputed (not built yet).
 

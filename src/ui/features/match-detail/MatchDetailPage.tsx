@@ -3,8 +3,10 @@
  *
  * An archived match shows what its archive holds about the tracked player. Any other match says
  * why it has no archive: the app does not archive it, it waits for its first or its next attempt,
- * deadlock-api has no detail for it, the detail cannot be read, or the archive file is gone (the
- * match is then downloaded again). A match that failed for good has a "Retry" button.
+ * deadlock-api could not give its detail, the detail cannot be read, or the archive file is gone
+ * (the match is then downloaded again, or, past the 90 days, never). A match that failed for good
+ * has a "Retry" button. A failure to read the archive file or to decompress it is not an
+ * explanation of the match but an error of the page, shown like any other.
  *
  * Milestone M2b ships the facts and the explanations; the timeline, strengths and weaknesses,
  * scoreboard and build order arrive in later milestones.
@@ -175,6 +177,9 @@ function renderView(view: MatchDetailView, t: TFunction, format: Formatters, ret
       return renderExplanation([t('matchDetail.invalid')], renderRetryButton(t, retry));
     case 'missing':
       return renderExplanation([t('matchDetail.missing')]);
+    case 'lost':
+      // Nothing to retry: the queue only downloads the matches of the last 90 days.
+      return renderExplanation([t('matchDetail.lost')]);
   }
 }
 

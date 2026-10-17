@@ -13,7 +13,7 @@
  */
 import { z } from 'zod';
 import type { AccountId } from '../core/domain/account';
-import { parseMatchId, type MatchId, type MatchSummary } from '../core/domain/match';
+import { matchIdSchema, type MatchSummary } from '../core/domain/match';
 import { AppError } from '../core/errors/app-error';
 import { DETAIL_STATUSES, type DetailStatus } from '../core/match-detail/detail-status';
 import type { Database, SqlValue } from '../ports/database.port';
@@ -65,11 +65,9 @@ const LIST_COLUMNS = [...COLUMNS.filter((column) => column !== 'synced_at'), 'de
 /** Schema of a row read for the match list. */
 const matchRowSchema = z.object({
   account_id: z.int(),
-  // A stored id that `parseMatchId` rejects makes the whole row invalid, like any other bad column;
-  // the type guard gives the parsed field the `MatchId` brand without a cast.
-  match_id: z.int().refine((value): value is MatchId => parseMatchId(value) !== null, {
-    message: 'Invalid match id',
-  }),
+  // A stored id that the shared rule of the match id rejects makes the whole row invalid, like any
+  // other bad column.
+  match_id: matchIdSchema,
   hero_id: z.int(),
   start_time: z.int(),
   duration_s: z.int(),

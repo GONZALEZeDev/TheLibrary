@@ -60,7 +60,8 @@
       "protected": "This account's data is private on deadlock-api: automatic synchronisation is stopped.",
       "failed": "The last synchronisation failed: {{reason}}",
       "details": "Paige match details: {{archived}} archived, {{waiting}} waiting, {{unavailable}} unavailable.",
-      "detailsInvalid": "{{count}} invalid."
+      "detailsInvalid": "{{count}} invalid.",
+      "detailsStopped": "Match details cannot be saved right now: {{reason}}"
     }
   },
   "matchDetail": {
@@ -68,9 +69,10 @@
     "notEligible": "Match details are archived for your normal-mode Paige matches of the last 90 days.",
     "waiting": "Waiting for the match detail.",
     "nextAttempt": "Next attempt: {{time}}.",
-    "unavailable": "deadlock-api does not have the detail of this match.",
+    "unavailable": "deadlock-api could not give the detail of this match after several attempts.",
     "invalid": "The detail of this match could not be read.",
     "missing": "The archive of this match is missing: it will be downloaded again.",
+    "lost": "The archive of this match is gone: matches older than 90 days are not downloaded again.",
     "retry": "Retry",
     "facts": {
       "result": "Result",

@@ -7,12 +7,12 @@
  * `Math.random`, no clock): the same row always gives the same detail, so tests can rely on it.
  *
  * What the detail holds:
- * - twelve players, six per team, each in his own slot (1 to 12). The tracked player is in the slot
- *   `(match_id % 12) + 1` with the hero, the team, the kills, deaths, assists and net worth of his
- *   history row. The eleven others are invented accounts (from 2,000,001 up) playing the heroes of
- *   the fixture catalogue;
- * - for every player: the cumulative `stats` snapshots, his `items` (purchases and ability
- *   upgrades) and his `death_details`;
+ * - twelve players, six per team, each in their own slot (1 to 12). The tracked player is in the
+ *   slot `(match_id % 12) + 1` with the hero, the team, the kills, deaths, assists and net worth of
+ *   their history row. The eleven others are invented accounts (from 2,000,001 up) playing the
+ *   heroes of the fixture catalogue;
+ * - for every player: the cumulative `stats` snapshots, their `items` (purchases and ability
+ *   upgrades) and their `death_details`;
  * - `match_paths`: one path per player with a position every second;
  * - `damage_matrix`: one dealer per player, plus the non-player dealer (slot 0).
  *
@@ -31,7 +31,7 @@ type Random = () => number;
 
 /** One of the twelve seats of a match: who sits in a slot. */
 interface Seat {
-  /** The slot, from 1 to 12: the key of his path and of his damage in the detail. */
+  /** The slot, from 1 to 12: the key of their path and of their damage in the detail. */
   readonly slot: number;
   /** The team (0 or 1). */
   readonly team: number;
@@ -41,7 +41,7 @@ interface Seat {
   readonly tracked: boolean;
 }
 
-/** One death of the match: who died, who killed him, and when. */
+/** One death of the match: who died, who killed them, and when. */
 interface Death {
   readonly victim: number;
   readonly killer: number;
@@ -60,7 +60,7 @@ interface Timeline {
   readonly snapshotTimes: readonly number[];
 }
 
-/** The final numbers of one player, from which his snapshots are interpolated. */
+/** The final numbers of one player, from which their snapshots are interpolated. */
 interface Totals {
   readonly level: number;
   readonly assists: number;
@@ -226,9 +226,9 @@ export function isMetadataMissing(matchId: MatchId): boolean {
 /**
  * Invent the detail of a match of the synthetic history.
  *
- * The slot of the tracked player is `(match_id % 12) + 1`, whatever his team: slots 1 to 6 make one
- * team and 7 to 12 the other, and when the row's team is not the one of his half the two teams swap
- * numbers, so the teams always split six and six and every slot is used once.
+ * The slot of the tracked player is `(match_id % 12) + 1`, whatever their team: slots 1 to 6 make
+ * one team and 7 to 12 the other, and when the row's team is not the one of their half the two teams
+ * swap numbers, so the teams always split six and six and every slot is used once.
  *
  * `row.match_duration_s` must be positive. The result is plain JSON data that the caller may
  * serialise as the body of a response.
@@ -276,7 +276,7 @@ export function createMatchMetadataFixture(row: RawMatchHistoryRow, accountId: A
 }
 
 /**
- * Seat the twelve players: the tracked one in his slot, the others around him.
+ * Seat the twelve players: the tracked one in their slot, the others around them.
  *
  * @param random - The generator.
  * @param row - The history row of the match.
@@ -286,7 +286,7 @@ export function createMatchMetadataFixture(row: RawMatchHistoryRow, accountId: A
 function seatPlayers(random: Random, row: RawMatchHistoryRow, accountId: AccountId): Seat[] {
   const trackedSlot = (row.match_id % SLOTS.length) + 1;
   // Slots 1 to 6 are one team and 7 to 12 the other. If the history row puts the tracked player in
-  // the other team than the half of his slot, the two teams swap numbers.
+  // the other team than the half of their slot, the two teams swap numbers.
   const halfOf = (slot: number) => (slot <= TEAM_SIZE ? 0 : 1);
   const swapped = halfOf(trackedSlot) !== row.player_team;
   const teamOf = (slot: number) => (swapped ? 1 - halfOf(slot) : halfOf(slot));
@@ -321,8 +321,8 @@ function seatPlayers(random: Random, row: RawMatchHistoryRow, accountId: Account
 /**
  * Invent the deaths of the match, with their killers.
  *
- * The tracked player dies as often as his row says and kills as many players as it says: the
- * opponents die at least that often, and exactly `player_kills` of their deaths name him as the
+ * The tracked player dies as often as their row says and kills as many players as it says: the
+ * opponents die at least that often, and exactly `player_kills` of their deaths name them as the
  * killer. Every other death has a killer of the other team.
  *
  * @param random - The generator.
@@ -356,7 +356,7 @@ function createDeaths(random: Random, row: RawMatchHistoryRow, seats: readonly S
   const extraDeaths = Math.ceil(missingDeaths / opponentDeathCounts.length);
 
   // The deaths of the opponents are shuffled, then the first ones are the kills of the tracked
-  // player and the others are shared among his teammates.
+  // player and the others are shared among their teammates.
   const opponentDeaths = shuffled(
     random,
     opponentDeathCounts.flatMap(({ slot, count }) =>
@@ -380,7 +380,7 @@ function createDeaths(random: Random, row: RawMatchHistoryRow, seats: readonly S
  * The times at which one player dies.
  *
  * They are spread over the match, one in each of equal slices of time, so that a player never dies
- * again before he has respawned.
+ * again before they have respawned.
  *
  * @param random - The generator.
  * @param count - Number of deaths.
@@ -423,7 +423,7 @@ function snapshotTimes(durationS: number): number[] {
  * Invent the movement path of one player: a position every second, from second 0 to the end of the
  * match (`duration_s + 1` positions).
  *
- * The player starts in the base of his team and wanders around it with some inertia.
+ * The player starts in the base of their team and wanders around it with some inertia.
  *
  * @param random - The generator.
  * @param seat - The player.
@@ -461,7 +461,7 @@ function createPath(random: Random, seat: Seat, durationS: number) {
 /**
  * Where a player was at a time, in game units.
  *
- * @param path - His movement path.
+ * @param path - Their movement path.
  * @param timeS - Seconds since the match start; inside the match.
  * @returns The decoded position (the fixture map is flat, `z` is 0).
  */
@@ -475,7 +475,7 @@ function positionAt(path: Path, timeS: number): { x: number; y: number; z: numbe
  * Invent one player of the match.
  *
  * The kills and deaths of every player are read from the death ledger; for the tracked player the
- * ledger was built to agree with his history row. His assists, net worth, last hits, denies and
+ * ledger was built to agree with their history row. Their assists, net worth, last hits, denies and
  * level come from the row too. Everything else is invented.
  *
  * @param random - The generator.
@@ -496,7 +496,7 @@ function createPlayer(random: Random, row: RawMatchHistoryRow, seat: Seat, timel
     playerDamage: between(random, 15_000, 60_000),
     damageTaken: between(random, 15_000, 55_000),
     healing: between(random, 0, 15_000),
-    // The tracked player has the numbers of his history row, whatever was invented above.
+    // The tracked player has the numbers of their history row, whatever was invented above.
     ...(seat.tracked
       ? {
           level: row.hero_level,
@@ -546,7 +546,7 @@ function createPlayer(random: Random, row: RawMatchHistoryRow, seat: Seat, timel
  * player's final numbers. At the end of the match every figure is the final one.
  *
  * @param seat - The player.
- * @param totals - His final numbers.
+ * @param totals - Their final numbers.
  * @param deaths - Every death of the match.
  * @param times - The snapshot times.
  * @param durationS - Length of the match, in seconds.
@@ -580,8 +580,8 @@ function createStats(
 }
 
 /**
- * Invent the `items` of a player: the items he bought (some sold again later) and the upgrades of
- * his abilities. Only the upgrades carry an `upgrade_id`.
+ * Invent the `items` of a player: the items they bought (some sold again later) and the upgrades of
+ * their abilities. Only the upgrades carry an `upgrade_id`.
  *
  * @param random - The generator.
  * @param durationS - Length of the match, in seconds.
@@ -615,8 +615,8 @@ function createItems(random: Random, durationS: number) {
 /**
  * Invent the damage matrix: who damaged whom, from which source, over time.
  *
- * Every player is a dealer. His weapon hits all the players of the other team and the non-player
- * target (slot 0); each of his two abilities hits three of them. The non-player dealer (slot 0)
+ * Every player is a dealer. Their weapon hits all the players of the other team and the non-player
+ * target (slot 0); each of their two abilities hits three of them. The non-player dealer (slot 0)
  * hits everybody. The damage is cumulative: one value per sample time, never decreasing.
  *
  * @param random - The generator.

@@ -19,11 +19,12 @@ import {
 /**
  * What the page shows about the detail of one match: the facts of its archive, or why there is none.
  *
- * When the answer is `missing`, the service has just put the match back to `pending` (its archive
- * file was gone or unreadable). That changes what the banner counts and what the list says of the
- * match, so both are read again, once per answer. The query itself is not: its next answer is
- * `waiting`, and it is read again by the synchronisation that downloads the match, so refreshing it
- * here would only repeat what the service did.
+ * When the answer is `missing` or `lost`, the service has just put the match back to `pending`
+ * (its archive file was gone or damaged). That changes what the banner counts and what the list says
+ * of the match, so both are read again, once per answer. The query itself is not: its next answer
+ * is `waiting` (or `not_eligible`, for a match past the 90 days), and it is read again by the
+ * synchronisation that downloads the match, so refreshing it here would only repeat what the
+ * service did.
  *
  * @param matchId - The match.
  * @returns The TanStack Query result holding the view of the match.
@@ -35,7 +36,7 @@ export function useMatchDetail(matchId: MatchId) {
     queryKey: [...DETAILS_QUERY_KEY, 'match', matchId],
     queryFn: async () => {
       const view = await details.getMatchDetail(matchId);
-      if (view.kind === 'missing') {
+      if (view.kind === 'missing' || view.kind === 'lost') {
         void queryClient.invalidateQueries({ queryKey: DETAILS_SUMMARY_QUERY_KEY });
         void queryClient.invalidateQueries({ queryKey: MATCHES_QUERY_KEY });
       }

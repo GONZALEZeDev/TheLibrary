@@ -90,7 +90,10 @@ export function heroesRequest(): ApiRequest {
  * ask Steam for it, and that fallback is budgeted at 3 requests per hour and per IP: once the
  * budget is spent, the API answers 503 "Steam is busy" with a `Retry-After` of about 30 minutes
  * (1807 s observed on a single such call). With the parameter, the API never asks Steam: a match it
- * does not hold is simply reported missing, and the Steam budget of the user's IP stays untouched.
+ * does not hold is answered with a plain 404, and the Steam budget of the user's IP stays untouched.
+ * The detail queue relies on that 404 (`not_found` in `api-response.ts`): it takes it for a match
+ * the API may not have collected yet, counts it as a failed attempt and tries the match again
+ * later, giving up at the sixth.
  *
  * @param matchId - The match.
  * @returns The request.

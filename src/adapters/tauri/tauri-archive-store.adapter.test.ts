@@ -26,8 +26,8 @@ import { TauriArchiveStore, type FsFunctions } from './tauri-archive-store.adapt
 /** The accounts and the matches of the tests. `ACCOUNT` is a prefix of `LONGER_ACCOUNT`. */
 const ACCOUNT = testAccountId(1234);
 const LONGER_ACCOUNT = testAccountId(12345);
-const MATCH = testMatchId(117958378);
-const OTHER_MATCH = testMatchId(117958379);
+const MATCH = testMatchId(100000001);
+const OTHER_MATCH = testMatchId(100000002);
 
 /** A quarantine time (Unix milliseconds) the tests count up from. */
 const QUARANTINE_START = 1_792_154_119_000;
@@ -443,7 +443,7 @@ describe('TauriArchiveStore', () => {
 
   it('tries every temporary file, then rejects with the first failure', async () => {
     const fake = createFakeFs();
-    const leftovers = [OTHER_MATCH, testMatchId(117958380), testMatchId(117958381)].map((match) =>
+    const leftovers = [OTHER_MATCH, testMatchId(100000003), testMatchId(100000004)].map((match) =>
       temporaryArchivePath(ACCOUNT, match),
     );
     for (const leftover of leftovers) {

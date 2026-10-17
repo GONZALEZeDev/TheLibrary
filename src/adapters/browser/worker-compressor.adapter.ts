@@ -58,8 +58,8 @@ interface PendingRequest {
 }
 
 /**
- * One worker and the requests it has not answered yet. A crash drops the whole session, and the
- * next call starts a new one: an answer or a report that comes late from a dropped session only
+ * One worker and the requests it has not answered yet. A crash, or an answer saying the worker is
+ * unavailable, drops the whole session, and the next call starts a new one: an answer or a report that comes late from a dropped session only
  * reaches its own (empty) map of requests, never the requests of the session that replaced it.
  */
 interface WorkerSession {
@@ -68,33 +68,59 @@ interface WorkerSession {
   readonly pending: Map<number, PendingRequest>;
 }
 
-/** Message of the error every failure of the compressor is reported with. */
+/** Message of the error a broken compressor is reported with (kind `storage`). */
 const COMPRESSOR_FAILED = 'The compressor failed';
 
+/** Message of the error a codec failure on the caller's data is reported with (kind `invalid_payload`). */
+const COMPRESSOR_REJECTED_DATA = 'The compressor could not read the data';
+
 /**
- * Report a failure of the compressor.
+ * Report a broken compressor: the worker cannot be created or reached, it crashed, or it answered
+ * that it is unavailable.
  *
  * @param cause - What failed, kept for the logs.
- * @returns The error every call of the compressor rejects with.
+ * @returns The error the calls that the failure hit reject with.
  */
 function compressorFailure(cause: unknown): AppError {
   return new AppError('storage', COMPRESSOR_FAILED, { cause });
 }
 
 /**
+ * Report a codec failure on the data of a request: the worker is healthy and answered that the
+ * codec ran and could not process the bytes (for example a decompression of bytes that are not a
+ * zstd frame).
+ *
+ * @param cause - The message the worker reported, kept for the logs.
+ * @returns The error the call that the failure hit rejects with.
+ */
+function compressorRejectedData(cause: unknown): AppError {
+  return new AppError('invalid_payload', COMPRESSOR_REJECTED_DATA, { cause });
+}
+
+/**
  * {@link Compressor} that delegates to the zstd Web Worker.
  *
- * Every failure rejects with the same error, an {@link AppError} of kind `storage` with the message
- * `The compressor failed` and the original failure as its `cause`: the worker cannot be created,
- * a request cannot be sent, the worker crashes, or it reports an error (which includes bytes that
- * are not a zstd frame). Errors cross the worker boundary as text, so only this adapter can report
- * them; the archive, the only caller, cannot go on without its compressor.
+ * A call rejects with an {@link AppError} that keeps the original failure as its `cause`, and the
+ * kind tells the caller whose fault it is:
+ * - `invalid_payload`, with the message `The compressor could not read the data`: the worker
+ *   answered `kind: 'data'`, that is, the codec ran and could not process the bytes it got (for
+ *   example bytes that are not a zstd frame). This is a problem of the data, and the worker stays
+ *   in use.
+ * - `storage`, with the message `The compressor failed`: the compressor itself is broken, and says
+ *   nothing about the data. The worker cannot be created, a request cannot be copied or sent, the
+ *   worker crashes or fails to load its script, or it answers `kind: 'unavailable'` (its codec
+ *   could not be loaded, which includes a refused WebAssembly, the operation is unknown, or the
+ *   request is malformed). In all these cases except the creation, copy and send failures, the
+ *   worker is stopped and the next call starts a new one, which can recover from a failed load.
+ *
+ * Errors cross the worker boundary as text, so only this adapter can classify them, from the
+ * `kind` of the answer.
  */
 export class WorkerCompressor implements Compressor {
-  /** Starts the worker. Called on the first request, and again after a crash. */
+  /** Starts the worker. Called on the first request, and again after the worker was dropped. */
   readonly #createWorker: () => WorkerLike;
 
-  /** The worker in use, or `null` before the first call and after a crash. */
+  /** The worker in use, or `null` before the first call and after the worker was dropped. */
   #session: WorkerSession | null = null;
 
   /** Id of the next request. Never reused, so an old answer cannot be taken for a new one. */
@@ -119,7 +145,8 @@ export class WorkerCompressor implements Compressor {
    *
    * @param bytes - The data to compress. The caller keeps them: the worker gets a copy.
    * @returns The zstd frame.
-   * @throws {@link AppError} of kind `storage` when the compressor fails (see the class).
+   * @throws {@link AppError} of kind `storage` when the compressor is broken, or of kind
+   *   `invalid_payload` when the codec cannot process the bytes (see the class).
    */
   compress(bytes: Uint8Array): Promise<Uint8Array> {
     return this.#request('compress', bytes);
@@ -130,8 +157,8 @@ export class WorkerCompressor implements Compressor {
    *
    * @param bytes - The zstd frame. The caller keeps it: the worker gets a copy.
    * @returns The original data.
-   * @throws {@link AppError} of kind `storage` when the compressor fails (see the class), which
-   *   includes bytes that are not a valid zstd frame.
+   * @throws {@link AppError} of kind `invalid_payload` when the bytes are not a valid zstd frame,
+   *   or of kind `storage` when the compressor is broken (see the class).
    */
   decompress(bytes: Uint8Array): Promise<Uint8Array> {
     return this.#request('decompress', bytes);
@@ -173,6 +200,30 @@ export class WorkerCompressor implements Compressor {
   }
 
   /**
+   * Stop trusting a worker: stop it, forget it, fail the requests it still owes, and let the next
+   * call start a new one. A worker that failed to load, or that kept running after an uncaught
+   * error, must not stay in memory.
+   *
+   * A report from a worker already replaced must not touch the session that replaced it, and it
+   * has no request left to fail: nothing happens.
+   *
+   * @param session - The session of the worker.
+   * @param cause - What went wrong, kept for the logs as the cause of each failure.
+   */
+  #dropSession(session: WorkerSession, cause: unknown): void {
+    if (this.#session !== session) {
+      return;
+    }
+    session.worker.terminate();
+    this.#session = null;
+    const pending = [...session.pending.values()];
+    session.pending.clear();
+    for (const request of pending) {
+      request.reject(compressorFailure(cause));
+    }
+  }
+
+  /**
    * Create a worker and start listening to it.
    *
    * @returns The new session, which is also the one the next requests use.
@@ -185,36 +236,36 @@ export class WorkerCompressor implements Compressor {
       const response = event.data;
       const request = session.pending.get(response.id);
       if (request === undefined) {
-        // Answer to a request that was already rejected (the worker crashed meanwhile).
+        // Answer to a request that was already rejected (its worker was dropped meanwhile).
         return;
       }
       session.pending.delete(response.id);
-      if ('error' in response) {
-        // The worker caught the failure and sent its message (never the data). Keep it as the
-        // cause, for the logs.
-        request.reject(compressorFailure(new Error(response.error)));
-      } else {
+      if (!('error' in response)) {
         request.resolve(response.bytes);
+        return;
+      }
+      // The worker caught a failure and sent its message (never the data). Keep it as the cause,
+      // for the logs.
+      const cause = new Error(response.error);
+      if (response.kind === 'data') {
+        // The codec ran and failed on the bytes of this request. The worker is healthy, so this is
+        // a problem of the data, not of the compressor, and nothing else is touched.
+        request.reject(compressorRejectedData(cause));
+      } else {
+        // Anything else (the kind is checked for `data` only: an answer without a kind is not
+        // trusted either): the codec could not do its job, which says nothing about the bytes.
+        // The worker is broken the way a crash would break it, and a failed load of the
+        // WebAssembly is kept by the library for the life of the worker: it is replaced, so that
+        // the next call can succeed.
+        request.reject(compressorFailure(cause));
+        this.#dropSession(session, cause);
       }
     });
 
     worker.addEventListener('error', (event) => {
-      // A report from a worker already replaced must not touch the session that replaced it.
-      if (this.#session !== session) {
-        return;
-      }
-      // The worker is not trusted any more: stop it (a worker that failed to load, or that kept
-      // running after an uncaught error, must not stay in memory), forget it, fail what it still
-      // owed, and let the next call start a new one. `event.error` is empty when the script could
-      // not be loaded; the message then tells what happened.
-      session.worker.terminate();
-      this.#session = null;
-      const pending = [...session.pending.values()];
-      session.pending.clear();
-      const cause = (event.error as unknown) ?? event.message;
-      for (const request of pending) {
-        request.reject(compressorFailure(cause));
-      }
+      // `event.error` is empty when the script could not be loaded; the message then tells what
+      // happened.
+      this.#dropSession(session, (event.error as unknown) ?? event.message);
     });
 
     this.#session = session;

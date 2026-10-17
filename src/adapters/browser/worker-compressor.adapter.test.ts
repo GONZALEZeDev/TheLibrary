@@ -13,7 +13,11 @@
  * @packageDocumentation
  */
 import { describe, expect, it } from 'vitest';
-import type { ZstdRequest, ZstdResponse } from '../../core/compression/zstd-protocol';
+import type {
+  ZstdErrorKind,
+  ZstdRequest,
+  ZstdResponse,
+} from '../../core/compression/zstd-protocol';
 import { AppError } from '../../core/errors/app-error';
 import { WorkerCompressor, type WorkerLike } from './worker-compressor.adapter';
 
@@ -83,9 +87,11 @@ class FakeWorker implements WorkerLike {
    *
    * @param index - Position of the request in {@link FakeWorker.received}.
    * @param message - The error message.
+   * @param kind - Whose fault it is: `data` when the codec failed on the bytes of the request,
+   *   `unavailable` when the worker could not do its job at all (the codec failed to load...).
    */
-  fail(index: number, message: string): void {
-    this.#send({ id: this.#requestAt(index).id, error: message });
+  fail(index: number, message: string, kind: ZstdErrorKind): void {
+    this.#send({ id: this.#requestAt(index).id, error: message, kind });
   }
 
   terminate(): void {
@@ -163,19 +169,47 @@ function workerAt(workers: readonly FakeWorker[], index: number): FakeWorker {
 }
 
 /**
- * Expect a promise to reject with the one error the compressor gives when anything fails.
+ * Wait for a promise to reject and check that it did so with an {@link AppError}.
  *
  * @param promise - The promise of a compressor call.
- * @returns The error, once the expectation holds, so a test can look at its cause.
+ * @returns The error, so a test can look at its kind, its message and its cause.
  */
-async function expectStorageError(promise: Promise<unknown>): Promise<AppError> {
+async function rejectionOf(promise: Promise<unknown>): Promise<AppError> {
   const error = await promise.then(
     () => null,
     (reason: unknown) => reason,
   );
   expect(error).toBeInstanceOf(AppError);
-  expect(error).toMatchObject({ kind: 'storage', message: 'The compressor failed' });
   return error as AppError;
+}
+
+/**
+ * Expect a promise to reject with the error of a broken compressor: the worker cannot be created
+ * or reached, or it crashed.
+ *
+ * @param promise - The promise of a compressor call.
+ * @returns The error, once the expectation holds, so a test can look at its cause.
+ */
+async function expectStorageError(promise: Promise<unknown>): Promise<AppError> {
+  const error = await rejectionOf(promise);
+  expect(error).toMatchObject({ kind: 'storage', message: 'The compressor failed' });
+  return error;
+}
+
+/**
+ * Expect a promise to reject with the error of bad data: the worker answered, and reported that
+ * the codec could not process the bytes it got.
+ *
+ * @param promise - The promise of a compressor call.
+ * @returns The error, once the expectation holds, so a test can look at its cause.
+ */
+async function expectInvalidPayloadError(promise: Promise<unknown>): Promise<AppError> {
+  const error = await rejectionOf(promise);
+  expect(error).toMatchObject({
+    kind: 'invalid_payload',
+    message: 'The compressor could not read the data',
+  });
+  return error;
 }
 
 describe('WorkerCompressor', () => {
@@ -229,14 +263,14 @@ describe('WorkerCompressor', () => {
     expect(Array.from(await third)).toEqual([9, 8]);
   });
 
-  it('rejects with a storage error when the worker reports one', async () => {
+  it('rejects with an invalid_payload error when the worker reports a codec error', async () => {
     const { compressor, workers } = createCompressor({ autoAnswer: false });
 
     const failing = compressor.decompress(Uint8Array.of(1, 2, 3));
     const healthy = compressor.compress(Uint8Array.of(4, 5));
     const worker = workerAt(workers, 0);
-    const failure = expectStorageError(failing);
-    worker.fail(0, 'decompress failed: Unknown frame descriptor');
+    const failure = expectInvalidPayloadError(failing);
+    worker.fail(0, 'decompress failed: Unknown frame descriptor', 'data');
     worker.answer(1);
 
     // Only the request that failed is rejected, and the technical message is kept as its cause.
@@ -244,11 +278,60 @@ describe('WorkerCompressor', () => {
     expect(error.cause).toMatchObject({ message: 'decompress failed: Unknown frame descriptor' });
     expect(Array.from(await healthy)).toEqual([5, 4]);
 
-    // The worker is still the one in use, and it was not stopped.
+    // A bad frame is a problem of the data, not of the worker: the worker is still the one in use,
+    // and it was not stopped.
     expect(worker.terminated).toBe(false);
     const later = compressor.compress(Uint8Array.of(6, 7));
     worker.answer(2);
     expect(Array.from(await later)).toEqual([7, 6]);
+    expect(workers).toHaveLength(1);
+  });
+
+  it('rejects with a storage error, stops the worker and starts a new one when the worker is unavailable', async () => {
+    const { compressor, workers } = createCompressor({ autoAnswer: false });
+
+    const failing = compressor.decompress(Uint8Array.of(1, 2, 3));
+    const other = compressor.compress(Uint8Array.of(4, 5));
+    const unavailable = workerAt(workers, 0);
+    const failure = expectStorageError(failing);
+    const otherFailure = expectStorageError(other);
+    // The worker answers that it could not load its codec: nothing it says about the bytes counts.
+    unavailable.fail(0, 'The zstd codec could not be loaded', 'unavailable');
+
+    // The request is rejected as a broken compressor, with the message of the worker as the cause,
+    // not as a problem of its data...
+    const error = await failure;
+    expect(error.cause).toMatchObject({ message: 'The zstd codec could not be loaded' });
+    // ...and so is the other request the worker still owed, like for a crash of the worker.
+    expect((await otherFailure).cause).toBe(error.cause);
+    expect(unavailable.terminated).toBe(true);
+
+    // The next call starts again on a new worker, whose load of the codec can succeed this time.
+    const later = compressor.compress(Uint8Array.of(6, 7));
+    expect(workers).toHaveLength(2);
+    // The worker that was stopped is not heard any more: its late answer reaches nobody.
+    unavailable.answer(1);
+    workerAt(workers, 1).answer(0);
+    expect(Array.from(await later)).toEqual([7, 6]);
+    expect(workerAt(workers, 1).terminated).toBe(false);
+    expect(workers).toHaveLength(2);
+  });
+
+  it('keeps the worker that reports an error on the data, and the requests it still owes', async () => {
+    const { compressor, workers } = createCompressor({ autoAnswer: false });
+
+    const failing = compressor.decompress(Uint8Array.of(1, 2, 3));
+    const owed = compressor.compress(Uint8Array.of(4, 5));
+    const worker = workerAt(workers, 0);
+    const failure = expectInvalidPayloadError(failing);
+    worker.fail(0, 'Unknown frame descriptor', 'data');
+    await failure;
+
+    // A bad frame says nothing about the worker: it stays, it is not stopped, and the other
+    // request is answered by it.
+    expect(worker.terminated).toBe(false);
+    worker.answer(1);
+    expect(Array.from(await owed)).toEqual([5, 4]);
     expect(workers).toHaveLength(1);
   });
 

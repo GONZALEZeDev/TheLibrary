@@ -13,10 +13,14 @@ import type { MatchId } from '../domain/match';
 /** The folder that holds everything the app archives. */
 export const ARCHIVE_ROOT = 'archive';
 
-/** The folder of the archives that could not be read (kept for a look, never read again). */
+/**
+ * The folder of the API responses that could not be used (kept for a look, never read again). It
+ * holds the responses, zstd-compressed, of the matches whose detail was refused: an archive that
+ * cannot be read back is never moved here.
+ */
 export const QUARANTINE_FOLDER = `${ARCHIVE_ROOT}/quarantine`;
 
-/** How many quarantined archives are kept: the 20 most recent. */
+/** How many quarantined responses are kept: the 20 most recent. */
 export const QUARANTINE_LIMIT = 20;
 
 /** The extension of an archive: JSON compressed with zstd. */
@@ -40,7 +44,7 @@ export function archiveFolder(accountId: AccountId): string {
  *
  * @param accountId - The account the archive is pruned for.
  * @param matchId - The match.
- * @returns The path of the archive, e.g. `archive/123456789/117958378.json.zst`.
+ * @returns The path of the archive, e.g. `archive/123456789/100000001.json.zst`.
  */
 export function archivePath(accountId: AccountId, matchId: MatchId): string {
   return `${archiveFolder(accountId)}/${String(matchId)}${ARCHIVE_EXTENSION}`;
@@ -61,18 +65,47 @@ export function temporaryArchivePath(accountId: AccountId, matchId: MatchId): st
 }
 
 /**
- * The name a quarantined archive is moved to.
+ * The name of a quarantined response, in the quarantine folder.
  *
  * The time is padded to 15 digits (a millisecond time has 13 today) so that sorting the names as
  * plain text sorts them by time: the oldest ones are the first to drop when the folder is over
  * {@link QUARANTINE_LIMIT}.
  *
- * @param matchId - The match of the quarantined archive.
- * @param at - When the archive was quarantined, in Unix milliseconds.
- * @returns The file name, e.g. `001792154119000-117958378.json.zst`.
+ * @param matchId - The match the response was fetched for.
+ * @param at - When the response was quarantined, in Unix milliseconds.
+ * @returns The file name, e.g. `001792154119000-100000001.json.zst`.
  */
 export function quarantineFileName(matchId: MatchId, at: number): string {
   return `${String(at).padStart(15, '0')}-${String(matchId)}${ARCHIVE_EXTENSION}`;
+}
+
+/**
+ * The file of a quarantined response.
+ *
+ * @param matchId - The match the response was fetched for.
+ * @param at - When the response was quarantined, in Unix milliseconds.
+ * @returns The path, e.g. `archive/quarantine/001792154119000-100000001.json.zst`.
+ */
+export function quarantinePath(matchId: MatchId, at: number): string {
+  return `${QUARANTINE_FOLDER}/${quarantineFileName(matchId, at)}`;
+}
+
+/**
+ * What {@link quarantineFileName} builds: the time padded to at least 15 digits, a dash, the match
+ * id, the archive extension. It is the one copy of that shape outside the function itself.
+ */
+const QUARANTINE_NAME = /^\d{15,}-\d+\.json\.zst$/;
+
+/**
+ * Whether a file name is a quarantined response, named by {@link quarantineFileName}. The stores
+ * trim the quarantine folder by name, so anything else found there (a note, a folder, a file of
+ * another program) is not ours to delete.
+ *
+ * @param name - A file name from the quarantine folder.
+ * @returns `true` when the name has the shape of {@link quarantineFileName}.
+ */
+export function isQuarantineFileName(name: string): boolean {
+  return QUARANTINE_NAME.test(name);
 }
 
 /**

@@ -30,9 +30,19 @@ export interface ZstdRequest {
 }
 
 /**
- * The answer to a {@link ZstdRequest}: the result bytes, or the message of the failure. The two
- * shapes are told apart by the presence of `error`.
+ * Whose fault a failed request is, as the worker tells it:
+ * - `data`: the codec ran and failed on the bytes of the request (a frame that is not zstd, a
+ *   decoding or encoding error on the input). The worker is healthy, and the bytes are to blame;
+ * - `unavailable`: everything else. The codec could not be loaded (the WebAssembly was refused or
+ *   failed to start), the operation is unknown, the request is malformed, or the answer could not
+ *   be posted. Nothing is known about the bytes, and the worker cannot be trusted any more.
+ */
+export type ZstdErrorKind = 'data' | 'unavailable';
+
+/**
+ * The answer to a {@link ZstdRequest}: the result bytes, or the message of the failure and whose
+ * fault it is. The two shapes are told apart by the presence of `error`.
  */
 export type ZstdResponse =
   | { readonly id: number; readonly bytes: Uint8Array }
-  | { readonly id: number; readonly error: string };
+  | { readonly id: number; readonly error: string; readonly kind: ZstdErrorKind };

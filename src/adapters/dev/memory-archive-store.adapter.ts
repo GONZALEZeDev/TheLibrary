@@ -13,8 +13,9 @@ import type { MatchId } from '../../core/domain/match';
 import {
   archiveFolder,
   archivePath,
+  isQuarantineFileName,
   isTemporaryArchiveName,
-  quarantineFileName,
+  quarantinePath,
   QUARANTINE_FOLDER,
   QUARANTINE_LIMIT,
   temporaryArchivePath,
@@ -99,16 +100,21 @@ export class MemoryArchiveStore implements ArchiveStore {
    *
    * @param matchId - The match the response was fetched for.
    * @param at - When the response was quarantined, in Unix milliseconds.
-   * @param bytes - The response as it was received.
+   * @param bytes - The response, zstd-compressed.
    * @returns A promise resolved once the response is kept and the folder is trimmed.
    */
   quarantine(matchId: MatchId, at: number, bytes: Uint8Array): Promise<void> {
-    this.#stored.set(`${QUARANTINE_FOLDER}/${quarantineFileName(matchId, at)}`, bytes.slice());
+    this.#stored.set(quarantinePath(matchId, at), bytes.slice());
 
-    // The names start with the time padded to a fixed width: sorting them as text sorts them by
-    // time, oldest first, so the ones to drop are at the front of the list.
+    // Only the files named like a quarantined response count, as in the desktop adapter. The names
+    // start with the time padded to a fixed width: sorting them as text sorts them by time, oldest
+    // first, so the ones to drop are at the front of the list.
+    const folderPrefix = `${QUARANTINE_FOLDER}/`;
     const quarantined = [...this.#stored.keys()]
-      .filter((path) => path.startsWith(`${QUARANTINE_FOLDER}/`))
+      .filter(
+        (path) =>
+          path.startsWith(folderPrefix) && isQuarantineFileName(path.slice(folderPrefix.length)),
+      )
       .sort();
     for (const path of quarantined.slice(0, Math.max(0, quarantined.length - QUARANTINE_LIMIT))) {
       this.#stored.delete(path);

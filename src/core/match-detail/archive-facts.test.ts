@@ -16,7 +16,7 @@ import { createArchiveEnvelope } from './archive-envelope';
 import type { ArchiveEnvelope } from './archive-envelope';
 import { summarizeArchive } from './archive-facts';
 
-/** The slot of the tracked player (his team is 1: slots 7 to 12). */
+/** The slot of the tracked player (their team is 1: slots 7 to 12). */
 const TRACKED_SLOT = 9;
 
 /** The account of the tracked player. */
@@ -151,7 +151,7 @@ describe('summarizeArchive', () => {
     expect(summarizeArchive(archive({ matchInfo: { winning_team: 0 } })).won).toBe(false);
   });
 
-  it('reads the tracked player by account id, wherever he is in the list', () => {
+  it('reads the tracked player by account id, wherever they are in the list', () => {
     const tracked = rawPlayer(TRACKED_SLOT);
     const others = [1, 2, 3].map((slot) => rawPlayer(slot));
 
@@ -205,7 +205,7 @@ describe('summarizeArchive', () => {
   });
 
   it('never puts a payload value in the error', () => {
-    // An archive whose payload lacks the tracked player: neither his account id nor any other
+    // An archive whose payload lacks the tracked player: neither their account id nor any other
     // account id of the payload may reach the error.
     const envelope = createArchiveEnvelope(
       archive({ players: [rawPlayer(1), rawPlayer(2), rawPlayer(3)] }).payload,

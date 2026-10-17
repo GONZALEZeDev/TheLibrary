@@ -275,7 +275,7 @@ describe('createMatchMetadataFixture', () => {
     expect(times(1_200)).toEqual([180, 360, 540, 720, 900, 1_200]);
   });
 
-  it('ends the snapshots of every player on his final numbers, and never goes back', () => {
+  it('ends the snapshots of every player on their final numbers, and never goes back', () => {
     const { players } = detailOf(PAIGE_ROW);
 
     for (const player of players) {
@@ -302,7 +302,7 @@ describe('createMatchMetadataFixture', () => {
 
       for (const player of info.players) {
         expect(player.death_details).toHaveLength(player.deaths);
-        // He cannot die again before he has respawned, and dies inside the match.
+        // They cannot die again before they have respawned, and die inside the match.
         let respawnedAt = 0;
         for (const death of player.death_details) {
           expect(death.game_time_s).toBeGreaterThan(respawnedAt);
@@ -310,7 +310,7 @@ describe('createMatchMetadataFixture', () => {
           expect(teamOfSlot.get(death.killer_player_slot)).toBe(1 - player.team);
           respawnedAt = death.game_time_s + death.death_duration_s;
         }
-        // His kills are the deaths that name him as the killer.
+        // Their kills are the deaths that name them as the killer.
         const kills = allDeaths.filter(
           (death) => death.killer_player_slot === player.player_slot,
         ).length;

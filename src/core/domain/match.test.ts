@@ -4,7 +4,7 @@
  * @packageDocumentation
  */
 import { describe, expect, it } from 'vitest';
-import { parseMatchId, type MatchId } from './match';
+import { matchIdSchema, parseMatchId, type MatchId } from './match';
 
 describe('parseMatchId', () => {
   it('accepts a positive safe integer, as a number or as decimal text', () => {
@@ -52,5 +52,34 @@ describe('parseMatchId', () => {
     const matchId: MatchId = 108501737;
 
     expect(matchId).toBe(108501737);
+  });
+});
+
+describe('matchIdSchema', () => {
+  it('accepts what parseMatchId accepts, as a number', () => {
+    expect(matchIdSchema.parse(108501737)).toBe(108501737);
+    expect(matchIdSchema.parse(1)).toBe(1);
+  });
+
+  it('gives the parsed value the MatchId brand', () => {
+    // Compiles only when the output type of the schema is the branded type.
+    const matchId: MatchId = matchIdSchema.parse(108501737);
+
+    expect(matchId).toBe(108501737);
+  });
+
+  it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN, '1', '108501737', null, undefined])(
+    'rejects %s: only an integer that parseMatchId accepts passes',
+    (value) => {
+      const result = matchIdSchema.safeParse(value);
+
+      expect(result.success).toBe(false);
+    },
+  );
+
+  it('reports a number that is not a match id as an invalid match id', () => {
+    const result = matchIdSchema.safeParse(0);
+
+    expect(result.error?.issues.map((issue) => issue.message)).toEqual(['Invalid match id']);
   });
 });

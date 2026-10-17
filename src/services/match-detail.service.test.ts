@@ -37,7 +37,7 @@ import { parseMatchMetadata } from '../core/deadlock-api/match-metadata.schema';
 import type { AccountId } from '../core/domain/account';
 import { PAIGE_HERO_ID } from '../core/domain/hero';
 import type { MatchId, MatchSummary } from '../core/domain/match';
-import { AppError } from '../core/errors/app-error';
+import { AppError, errorLogContext } from '../core/errors/app-error';
 import {
   createArchiveEnvelope,
   decodeArchiveEnvelope,
@@ -459,7 +459,7 @@ interface EditableDetail {
 }
 
 /**
- * The synthetic detail of a match, except that the tracked player has lost his `net_worth`: it
+ * The synthetic detail of a match, except that the tracked player has lost their `net_worth`: it
  * passes the validation of a download, but the facts of the match page cannot be read from it.
  *
  * @param row - The row of the match.
@@ -1093,6 +1093,11 @@ describe('MatchDetailService.runQueue', () => {
   it.each([
     ['a library error', new Error('The wasm module trapped')],
     ['an error of the worker', new AppError('storage', 'The compression worker failed')],
+    // The worker reports a failure of the codec on the data: it is still not the match's fault.
+    [
+      'a codec error of the worker',
+      new AppError('invalid_payload', 'The compressor could not read the data'),
+    ],
   ])('stops the run without counting an attempt on %s of the compressor', async (_name, error) => {
     const { service, repository, archive, compressor } = await setUp({
       matches: summariesOf([SERVED]),
@@ -1606,7 +1611,7 @@ function linesAt(logger: MemoryLogger, level: LogEntry['level']): LogEntry[] {
 }
 
 describe('MatchDetailService.getSummary', () => {
-  it('summarises the eligible matches of the linked account', async () => {
+  it('summarises the Paige matches of the linked account', async () => {
     const otherAccount = testAccountId(42);
     const { service, repository, clock } = await setUp({
       matches: [
@@ -1637,16 +1642,55 @@ describe('MatchDetailService.getSummary', () => {
       waiting: 2,
       unavailable: 1,
       invalid: 1,
+      lastStop: null,
     });
 
     // The window is read from the clock of the service: 91 days later, no match is in it any more.
+    // The archives are still on disk and still shown, so the two archived matches still count.
     clock.now = START + 91 * DAY;
     await expect(service.getSummary()).resolves.toEqual({
-      archived: 0,
+      archived: 2,
       waiting: 0,
       unavailable: 0,
       invalid: 0,
+      lastStop: null,
     });
+  });
+
+  it('tells why the last run of the queue stopped, until a run goes through', async () => {
+    const { service, archive } = await setUp({ matches: summariesOf([SERVED]) });
+    // No run has finished yet: there is nothing to say.
+    await expect(service.getSummary()).resolves.toMatchObject({ lastStop: null });
+
+    // A run that stops on a local failure.
+    archive.failNextWrite(new Error('There is not enough space on the disk'));
+    await expect(service.runQueue(ACCOUNT, RUN)).resolves.toMatchObject({ stoppedBy: 'storage' });
+    await expect(service.getSummary()).resolves.toMatchObject({ waiting: 1, lastStop: 'storage' });
+
+    // A run of another account says nothing about this one.
+    await service.runQueue(testAccountId(42), 'run-0002');
+    await expect(service.getSummary()).resolves.toMatchObject({ lastStop: 'storage' });
+
+    // The next run of this account goes through: the stop is forgotten.
+    await expect(service.runQueue(ACCOUNT, 'run-0003')).resolves.toMatchObject({ stoppedBy: null });
+    await expect(service.getSummary()).resolves.toMatchObject({ archived: 1, lastStop: null });
+  });
+
+  it.each([
+    ['a pause', 'paused'],
+    ['a network failure', 'network'],
+  ] as const)('tells that the last run stopped on %s', async (_name, stop) => {
+    const { service, answer } = await setUp({ matches: summariesOf([SERVED]) });
+    answer.handler = () => {
+      if (stop === 'network') {
+        throw new AppError('network', 'The server cannot be reached');
+      }
+      return jsonResponse({ status: 429 }, 429, { 'retry-after': '600' });
+    };
+
+    await expect(service.runQueue(ACCOUNT, RUN)).resolves.toMatchObject({ stoppedBy: stop });
+
+    await expect(service.getSummary()).resolves.toMatchObject({ lastStop: stop });
   });
 
   it('returns null without an account', async () => {
@@ -1668,13 +1712,31 @@ interface UnreadableArchive {
   readonly plant: (context: TestContext) => Promise<void>;
 }
 
-/** The ways an archive can fail to be read: one for each step of the reading. */
+/**
+ * The ways an archive can be unreadable, that is, damaged: one for each step of the reading that
+ * can find a problem in the data. A failure of the disk or of the compressor is not one of them:
+ * it says nothing about the archive (see the tests of `getMatchDetail`).
+ */
 const UNREADABLE_ARCHIVES: readonly UnreadableArchive[] = [
   {
     label: 'a file that is not a zstd frame',
     step: 'decompress',
     expectedInLog: { kind: 'storage' },
     plant: (context) => plantArchive(context, SERVED, Uint8Array.of(1, 2, 3, 4)),
+  },
+  {
+    label: 'a frame the compressor rejects as invalid data',
+    step: 'decompress',
+    expectedInLog: { kind: 'invalid_payload', cause: 'Unknown frame descriptor' },
+    plant: async (context) => {
+      await plantArchive(context, SERVED, Uint8Array.of(1));
+      // The error the worker adapter gives when the codec reports a bad frame.
+      vi.spyOn(context.compressor, 'decompress').mockRejectedValueOnce(
+        new AppError('invalid_payload', 'The compressor could not read the data', {
+          cause: new Error('Unknown frame descriptor'),
+        }),
+      );
+    },
   },
   {
     label: 'a frame that holds no JSON',
@@ -1697,15 +1759,6 @@ const UNREADABLE_ARCHIVES: readonly UnreadableArchive[] = [
         SERVED,
         await context.compressor.compress(encodeArchiveEnvelope(envelopeWithoutNetWorth(SERVED))),
       ),
-  },
-  {
-    label: 'a file the store cannot read',
-    step: 'read',
-    expectedInLog: { kind: 'storage', cause: 'Access is denied' },
-    plant: async (context) => {
-      await plantArchive(context, SERVED, Uint8Array.of(1));
-      vi.spyOn(context.archive, 'read').mockRejectedValueOnce(new Error('Access is denied'));
-    },
   },
 ];
 
@@ -1830,7 +1883,111 @@ describe('MatchDetailService.getMatchDetail', () => {
     ]);
   });
 
-  it('keeps the account id out of the log when the store fails on a path', async () => {
+  it('says the archive is lost, not missing, once the match is past the 90 days', async () => {
+    /** The ways the archive of a ready match can be unusable: the damaged files, and the others. */
+    const unusable: readonly Pick<UnreadableArchive, 'label' | 'plant'>[] = [
+      ...UNREADABLE_ARCHIVES,
+      {
+        label: 'a file that is gone',
+        plant: (context) => context.repository.markReady(ACCOUNT, matchOf(SERVED), 52_431),
+      },
+      {
+        label: 'a ready match without an archive size',
+        plant: async (context) => {
+          await plantArchive(context, SERVED, Uint8Array.of(1));
+          await context.database.execute('UPDATE matches SET archived_bytes = NULL');
+        },
+      },
+    ];
+    for (const { label, plant } of unusable) {
+      const context = await setUp({ matches: summariesOf([SERVED]) });
+      await plant(context);
+      // The match aged past the window while its archive was unusable: it is not downloaded again.
+      context.clock.now = START + 91 * DAY;
+
+      const view = await context.service.getMatchDetail(matchOf(SERVED));
+
+      expect(view, label).toEqual({ kind: 'lost' });
+      // The row no longer claims an archive that is not there.
+      await expect(storedDetail(context.repository, SERVED), label).resolves.toEqual(UNTOUCHED);
+      // The page said it once; from now on the match is one the app does not archive.
+      await expect(context.service.getMatchDetail(matchOf(SERVED)), label).resolves.toEqual({
+        kind: 'not_eligible',
+      });
+    }
+  });
+
+  it('answers missing, not lost, until the match leaves the window', async () => {
+    const context = await setUp({ matches: summariesOf([SERVED]) });
+    await context.repository.markReady(ACCOUNT, matchOf(SERVED), 52_431);
+    // The very last instant at which the match is still inside the window.
+    context.clock.now = SERVED.start_time * 1000 + DETAIL_WINDOW_MS;
+
+    await expect(context.service.getMatchDetail(matchOf(SERVED))).resolves.toEqual({
+      kind: 'missing',
+    });
+  });
+
+  it.each([
+    ['the file cannot be read', 'read'],
+    ['the compressor is broken', 'decompress'],
+  ] as const)(
+    'lets the failure reach the caller, and keeps the match archived, when %s',
+    async (_name, step) => {
+      const context = await setUp({ matches: summariesOf([SERVED]) });
+      await context.service.runQueue(ACCOUNT, RUN);
+      const archivedBefore = await storedDetail(context.repository, SERVED);
+      expect(archivedBefore).toMatchObject({ status: 'ready' });
+      const resetToPending = vi.spyOn(context.repository, 'resetToPending');
+      // The failure of the worker adapter when the compressor itself is broken.
+      const compressorFailure = new AppError('storage', 'The compressor failed');
+      if (step === 'read') {
+        vi.spyOn(context.archive, 'read').mockRejectedValueOnce(new Error('Access is denied'));
+      } else {
+        vi.spyOn(context.compressor, 'decompress').mockRejectedValueOnce(compressorFailure);
+      }
+
+      const failure = await context.service.getMatchDetail(matchOf(SERVED)).then(
+        () => null,
+        (reason: unknown) => reason,
+      );
+
+      // The interface shows a storage error, and the next view tries again.
+      expect(failure).toBeInstanceOf(AppError);
+      expect(failure).toMatchObject({ kind: 'storage' });
+      if (step === 'decompress') {
+        expect(failure).toBe(compressorFailure);
+      }
+      // Nothing says the archive is damaged: the match is still archived, and its file still there.
+      expect(resetToPending).not.toHaveBeenCalled();
+      await expect(storedDetail(context.repository, SERVED)).resolves.toEqual(archivedBefore);
+      expect(context.archive.files.has(archivePath(ACCOUNT, matchOf(SERVED)))).toBe(true);
+      await expect(context.service.getMatchDetail(matchOf(SERVED))).resolves.toMatchObject({
+        kind: 'ready',
+      });
+    },
+  );
+
+  it('does not reset a match past the 90 days when the archive cannot be read', async () => {
+    const context = await setUp({ matches: summariesOf([SERVED]) });
+    await context.service.runQueue(ACCOUNT, RUN);
+    context.clock.now = START + 91 * DAY;
+    vi.spyOn(context.archive, 'read').mockRejectedValueOnce(new Error('Access is denied'));
+
+    await expect(context.service.getMatchDetail(matchOf(SERVED))).rejects.toMatchObject({
+      kind: 'storage',
+    });
+
+    // A momentary lock on the file must not detach an archive that can never be downloaded again.
+    await expect(storedDetail(context.repository, SERVED)).resolves.toMatchObject({
+      status: 'ready',
+    });
+    await expect(context.service.getMatchDetail(matchOf(SERVED))).resolves.toMatchObject({
+      kind: 'ready',
+    });
+  });
+
+  it('keeps the account id out of the error and the log when the disk fails on a path', async () => {
     const context = await setUp({ matches: summariesOf([SERVED]) });
     await plantArchive(context, SERVED, Uint8Array.of(1));
     const matchText = String(SERVED.match_id);
@@ -1838,12 +1995,23 @@ describe('MatchDetailService.getMatchDetail', () => {
       new Error(`Access is denied to archive/${String(ACCOUNT)}/${matchText}.json.zst`),
     );
 
-    await context.service.getMatchDetail(matchOf(SERVED));
-
-    const [warning] = linesAt(context.logger, 'warn');
-    expect(warning?.context.cause).toBe(
-      `Access is denied to archive/{account_id}/${matchText}.json.zst`,
+    const failure = await context.service.getMatchDetail(matchOf(SERVED)).then(
+      () => null,
+      (reason: unknown) => reason,
     );
+
+    // The query client logs the error with `errorLogContext`: what that holds has the account id
+    // replaced, wherever the error kept the cause.
+    expect(failure).toBeInstanceOf(AppError);
+    const logged = errorLogContext(failure as AppError);
+    expect(logged).toMatchObject({
+      kind: 'storage',
+      step: 'read',
+      matchId: matchOf(SERVED),
+      cause: `Access is denied to archive/{account_id}/${matchText}.json.zst`,
+    });
+    expect(JSON.stringify(logged)).not.toContain(String(ACCOUNT));
+    expect((failure as AppError).message).not.toContain(String(ACCOUNT));
     expect(JSON.stringify(context.logger.entries)).not.toContain(String(ACCOUNT));
   });
 

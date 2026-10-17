@@ -2,7 +2,7 @@
  * The few facts the match detail page reads back from an archive.
  *
  * The archive holds a whole match detail (pruned for the tracked player), but the first version of
- * the page only shows a handful of figures about him. This module reads exactly those, with a
+ * the page only shows a handful of figures about them. This module reads exactly those, with a
  * schema that names only the fields it needs and ignores everything else, so that an archive
  * stays readable as the API (and the rest of the app) evolves.
  *
@@ -22,17 +22,17 @@ export interface ArchiveFacts {
   readonly won: boolean;
   /** The length of the match, in seconds. */
   readonly durationS: number;
-  /** His kills. */
+  /** Their kills. */
   readonly kills: number;
-  /** His deaths. */
+  /** Their deaths. */
   readonly deaths: number;
-  /** His assists. */
+  /** Their assists. */
   readonly assists: number;
-  /** His souls at the end of the match. */
+  /** Their souls at the end of the match. */
   readonly netWorth: number;
-  /** The number of statistic snapshots the archive holds for him (one is taken at the match end). */
+  /** The number of statistic snapshots the archive holds for them (one at the match end). */
   readonly snapshots: number;
-  /** The number of items he bought (the ability upgrades of his list are not counted). */
+  /** The number of items they bought (the ability upgrades of their list are not counted). */
   readonly itemsBought: number;
   /** When the archived detail was fetched from the API, in Unix milliseconds. */
   readonly fetchedAt: number;
@@ -67,8 +67,8 @@ const matchInfoSchema = z.looseObject({
 /**
  * Summarise the tracked player of an archive.
  *
- * The tracked player is the one the archive was pruned for. He is found by account id exactly like
- * the pruning does, so an archive that would not have been written (no such player, several of
+ * The tracked player is the one the archive was pruned for. They are found by account id exactly
+ * like the pruning does, so an archive that would not have been written (no such player, several of
  * them, not playing Paige) is not read either.
  *
  * @param envelope - The decoded archive; it is not modified.
@@ -96,7 +96,7 @@ export function summarizeArchive(envelope: ArchiveEnvelope): ArchiveFacts {
     netWorth: player.net_worth,
     snapshots: player.stats?.length ?? 0,
     // The items of a player mix purchases and ability unlocks/upgrades: a non-zero `upgrade_id`
-    // marks the latter, which are not items he bought.
+    // marks the latter, which are not items they bought.
     itemsBought: (player.items ?? []).filter((item) => (item.upgrade_id ?? 0) === 0).length,
     fetchedAt: envelope.fetchedAt,
   };

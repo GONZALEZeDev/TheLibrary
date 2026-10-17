@@ -28,8 +28,9 @@ import type { MatchId } from '../../core/domain/match';
 import {
   archiveFolder,
   archivePath,
+  isQuarantineFileName,
   isTemporaryArchiveName,
-  quarantineFileName,
+  quarantinePath,
   QUARANTINE_FOLDER,
   QUARANTINE_LIMIT,
   temporaryArchivePath,
@@ -56,13 +57,6 @@ const RENAME_AT_LOCAL_DATA = {
   oldPathBaseDir: BaseDirectory.AppLocalData,
   newPathBaseDir: BaseDirectory.AppLocalData,
 } as const;
-
-/**
- * The name of a quarantined response, as {@link quarantineFileName} builds it: the time padded to
- * at least 15 digits, a dash, the match id, the archive extension. Anything else found in the
- * quarantine folder is not ours to delete.
- */
-const QUARANTINE_NAME = /^\d{15,}-\d+\.json\.zst$/;
 
 /** {@link ArchiveStore} keeping the archive files with `@tauri-apps/plugin-fs`. */
 export class TauriArchiveStore implements ArchiveStore {
@@ -167,27 +161,25 @@ export class TauriArchiveStore implements ArchiveStore {
    *
    * @param matchId - The match the response was fetched for.
    * @param at - When the response was quarantined, in Unix milliseconds.
-   * @param bytes - The response as it was received.
+   * @param bytes - The response, zstd-compressed.
    * @returns A promise resolved once the response is kept and the folder is trimmed.
    * @throws Whatever the plugin rejects with: a full disk, a denied path…
    */
   async quarantine(matchId: MatchId, at: number, bytes: Uint8Array): Promise<void> {
     await this.#fs.mkdir(QUARANTINE_FOLDER, MAKE_FOLDERS);
-    await this.#fs.writeFile(
-      `${QUARANTINE_FOLDER}/${quarantineFileName(matchId, at)}`,
-      bytes,
-      AT_LOCAL_DATA,
-    );
+    await this.#fs.writeFile(quarantinePath(matchId, at), bytes, AT_LOCAL_DATA);
 
     // The folder exists (it was just made), so listing it cannot fail on a missing path. Only the
     // files named like a quarantined response count: a folder or a stray file is left alone.
     // The names start with the time padded to a fixed width, so sorting them as text sorts them
     // by time, oldest first: the ones to drop are at the front of the list.
     const quarantined = (await this.#fs.readDir(QUARANTINE_FOLDER, AT_LOCAL_DATA))
-      .filter((entry) => entry.isFile && QUARANTINE_NAME.test(entry.name))
+      .filter((entry) => entry.isFile && isQuarantineFileName(entry.name))
       .map((entry) => entry.name)
       .sort();
     for (const name of quarantined.slice(0, Math.max(0, quarantined.length - QUARANTINE_LIMIT))) {
+      // The folder and the name of a response that was listed here: `quarantinePath` builds a path
+      // from a match and a time, which a listed name no longer carries as numbers.
       await this.#fs.remove(`${QUARANTINE_FOLDER}/${name}`, AT_LOCAL_DATA);
     }
   }

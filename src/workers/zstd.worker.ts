@@ -3,17 +3,19 @@
  *
  * The page posts a {@link ZstdRequest}; the worker runs the codec (`./zstd-codec`) and posts back
  * the {@link ZstdResponse} with the same `id`. Every request that has an `id` gets an answer: the
- * result bytes, or `{ id, error }` when anything goes wrong (the codec throws, the operation is
- * unknown, the result cannot be posted). The page has no timeout, so an unanswered request would
- * leave its caller waiting forever. Compressing a large file at level 19 takes long enough to
- * freeze the window, which is why this runs in a worker. The adapter that starts it is
+ * result bytes, or `{ id, error, kind }` when anything goes wrong. The `kind` says whose fault it
+ * is: `data` when the codec failed on the bytes, `unavailable` for everything else (the codec could
+ * not be loaded, the operation is unknown, the request is malformed, the result cannot be posted),
+ * so that the page can tell a bad frame from a worker that is broken and must be replaced. The page
+ * has no timeout, so an unanswered request would leave its caller waiting forever. Compressing a
+ * large file at level 19 takes long enough to freeze the window, which is why this runs in a worker. The adapter that starts it is
  * `adapters/browser/worker-compressor.adapter.ts`; it names this file in a
  * `new Worker(new URL(…))` expression, which is how Vite finds and bundles the worker.
  *
  * @packageDocumentation
  */
 import type { ZstdRequest, ZstdResponse } from '../core/compression/zstd-protocol';
-import { compressBytes, decompressBytes } from './zstd-codec';
+import { compressBytes, decompressBytes, describeFailure } from './zstd-codec';
 
 /**
  * The part of the worker scope this file uses. The application is type-checked with the DOM
@@ -77,8 +79,8 @@ function postResponse(response: ZstdResponse): void {
 }
 
 /**
- * Answer one request. Never throws and never rejects: every failure becomes an `{ id, error }`
- * answer, so the page is never left waiting.
+ * Answer one request. Never throws and never rejects: every failure becomes an
+ * `{ id, error, kind }` answer, so the page is never left waiting.
  *
  * @param data - What the page posted, which is not trusted to be a well-formed request.
  */
@@ -92,12 +94,20 @@ async function handle(data: unknown): Promise<void> {
   try {
     // Read inside the `try`: a request that lacks the fields is answered with an error, not lost.
     const { operation, bytes } = data as ZstdRequest;
+    // The codec only knows bytes: anything else is a malformed request, which is the page's bug and
+    // not a problem of any data (the check is made here, in the realm of the worker, where the
+    // structured clone of a `Uint8Array` is one).
+    if (!(bytes instanceof Uint8Array)) {
+      throw new TypeError('The request holds no bytes');
+    }
     postResponse({ id, bytes: await runCodec(operation, bytes) });
   } catch (error) {
     // The failure may come from posting the result (a result that cannot be cloned), so the
-    // answer is a new, plain message: a number and a string, which can always be posted.
+    // answer is a new, plain message: a number and two strings, which can always be posted. Only a
+    // failure of the codec on the bytes is `data`; the codec says which that is (see
+    // `describeFailure`).
     try {
-      postResponse({ id, error: error instanceof Error ? error.message : String(error) });
+      postResponse({ id, ...describeFailure(error) });
     } catch {
       // Only a worker scope that is itself broken gets here, and no answer can be posted from it;
       // there is nothing left to try, and a rejection nobody handles would only add noise.

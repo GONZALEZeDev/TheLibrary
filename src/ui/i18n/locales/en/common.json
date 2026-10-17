@@ -34,9 +34,16 @@
       "result": "Result",
       "kda": "K / D / A",
       "duration": "Duration",
+      "detail": "Detail",
       "win": "Win",
       "loss": "Loss",
-      "unknownHero": "Hero #{{id}}"
+      "unknownHero": "Hero #{{id}}",
+      "detailStatus": {
+        "ready": "Archived",
+        "waiting": "Waiting",
+        "unavailable": "Unavailable",
+        "invalid": "Invalid"
+      }
     },
     "sync": {
       "now": "Sync now",
@@ -51,14 +58,29 @@
       "budgetNever": "Request limit reached for now: the history will be downloaded at a later synchronisation.",
       "paused": "deadlock-api asked to slow down: synchronisation paused until {{time}}.",
       "protected": "This account's data is private on deadlock-api: automatic synchronisation is stopped.",
-      "failed": "The last synchronisation failed: {{reason}}"
+      "failed": "The last synchronisation failed: {{reason}}",
+      "details": "Paige match details: {{archived}} archived, {{waiting}} waiting, {{unavailable}} unavailable.",
+      "detailsInvalid": "{{count}} invalid."
     }
   },
   "matchDetail": {
     "title": "Match {{matchId}}",
-    "empty": {
-      "title": "Match details coming soon",
-      "description": "The detailed analysis of this match will be available in a future version."
+    "notEligible": "Match details are archived for your normal-mode Paige matches of the last 90 days.",
+    "waiting": "Waiting for the match detail.",
+    "nextAttempt": "Next attempt: {{time}}.",
+    "unavailable": "deadlock-api does not have the detail of this match.",
+    "invalid": "The detail of this match could not be read.",
+    "missing": "The archive of this match is missing: it will be downloaded again.",
+    "retry": "Retry",
+    "facts": {
+      "result": "Result",
+      "duration": "Duration",
+      "kda": "K/D/A",
+      "netWorth": "Net worth",
+      "snapshots": "Stat snapshots",
+      "items": "Items bought",
+      "archive": "Archive",
+      "archiveValue": "{{size}} KB, {{date}}"
     }
   },
   "settings": {

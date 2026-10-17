@@ -17,10 +17,27 @@ import { useServices } from '../../app/ServicesContext';
 export const RECENT_MATCHES_LIMIT = 100;
 
 /** Prefix of every query about stored matches. */
-const MATCHES_QUERY_KEY = ['matches'] as const;
+export const MATCHES_QUERY_KEY = ['matches'] as const;
+
+/**
+ * Prefix of every query about the match details: their summary ({@link DETAILS_SUMMARY_QUERY_KEY})
+ * and the detail of one match (read by the match detail page, under `['details', 'match', matchId]`).
+ */
+export const DETAILS_QUERY_KEY = ['details'] as const;
+
+/** Key of the query that counts the match details by status, shown by the synchronisation banner. */
+export const DETAILS_SUMMARY_QUERY_KEY = [...DETAILS_QUERY_KEY, 'summary'] as const;
 
 /** Prefix of every query about the synchronisation. */
 const SYNC_QUERY_KEY = ['sync'] as const;
+
+/**
+ * Shortest time between two refreshes caused by the progress of the detail queue. The queue
+ * reports each match it records, and it can record several in a second: refreshing the list of
+ * matches and the counts at every one would read the database far more often than a person can
+ * see the change.
+ */
+const DETAIL_REFRESH_INTERVAL_MS = 1000;
 
 /**
  * The most recent matches of the linked account.
@@ -77,6 +94,20 @@ export function useSyncStatus() {
 }
 
 /**
+ * How many match details are archived, waiting, unavailable or invalid. Kept up to date by
+ * {@link useRefreshOnSync}.
+ *
+ * @returns The TanStack Query result holding the counts, or `null` when no account is linked.
+ */
+export function useDetailSummary() {
+  const { details } = useServices();
+  return useQuery({
+    queryKey: DETAILS_SUMMARY_QUERY_KEY,
+    queryFn: () => details.getSummary(),
+  });
+}
+
+/**
  * Whether a synchronisation is running, updated as soon as one starts or ends.
  *
  * @returns `true` while a synchronisation runs.
@@ -100,19 +131,95 @@ export function useSyncNow() {
   });
 }
 
+/** A function that runs an action at most once per interval, see {@link createThrottle}. */
+export interface Throttle {
+  /** Ask for the action: it runs at once, or when the current interval ends. */
+  readonly trigger: () => void;
+  /** Forget the call that waits, and stop the interval. The next `trigger` runs at once. */
+  readonly cancel: () => void;
+}
+
 /**
- * Refresh the matches and the synchronisation status whenever a synchronisation starts or ends,
- * whatever started it (the schedule, another screen…).
+ * Make an action run at most once per interval, without losing the last call of a burst.
+ *
+ * The first call runs at once (the leading call), so the screen reacts to the first change without
+ * delay. The calls that come while the interval runs are merged into one that runs when it ends
+ * (the trailing call): the last change of a burst is always applied, even if the burst stops
+ * between two ticks and nothing else follows. A call that ends the interval starts the next one.
+ * The interval is a timer, not a comparison of clocks, so it follows the (fake) timers of a test.
+ *
+ * Exported for its tests; the hooks of this file are its only users.
+ *
+ * @param action - What to run.
+ * @param intervalMs - The shortest time between two runs, in milliseconds.
+ * @returns The throttle. Call `cancel` when the action is no longer wanted (an unmounted
+ *   component): a trailing call left behind would run an action nobody waits for.
+ */
+export function createThrottle(action: () => void, intervalMs: number): Throttle {
+  // Set while an interval runs: a call that comes now has to wait for its end.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // Whether a call came while the interval ran.
+  let waiting = false;
+
+  /** Run the action, and keep the next runs at a distance for one interval. */
+  const run = (): void => {
+    action();
+    timer = setTimeout(() => {
+      timer = undefined;
+      if (waiting) {
+        waiting = false;
+        run();
+      }
+    }, intervalMs);
+  };
+
+  return {
+    trigger: () => {
+      if (timer === undefined) {
+        run();
+      } else {
+        waiting = true;
+      }
+    },
+    cancel: () => {
+      clearTimeout(timer);
+      timer = undefined;
+      waiting = false;
+    },
+  };
+}
+
+/**
+ * Keep the screen up to date with what happens in the background, while the component that calls
+ * it is shown:
+ * - whenever a synchronisation starts or ends, whatever started it (the schedule, another
+ *   screen…), the synchronisation status, the matches and the details are read again;
+ * - while the detail queue runs, each match it records changes the counts of the details and the
+ *   detail column of the list, so those are read again too, at most once a second
+ *   ({@link DETAIL_REFRESH_INTERVAL_MS}). The last match of a burst is always taken into account.
  */
 export function useRefreshOnSync(): void {
-  const { sync } = useServices();
+  const { sync, details } = useServices();
   const queryClient = useQueryClient();
   useEffect(
     () =>
       sync.subscribe(() => {
         void queryClient.invalidateQueries({ queryKey: SYNC_QUERY_KEY });
         void queryClient.invalidateQueries({ queryKey: MATCHES_QUERY_KEY });
+        void queryClient.invalidateQueries({ queryKey: DETAILS_QUERY_KEY });
       }),
     [sync, queryClient],
   );
+  useEffect(() => {
+    const refresh = createThrottle(() => {
+      void queryClient.invalidateQueries({ queryKey: DETAILS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: MATCHES_QUERY_KEY });
+    }, DETAIL_REFRESH_INTERVAL_MS);
+    const unsubscribe = details.subscribe(refresh.trigger);
+    return () => {
+      unsubscribe();
+      // A refresh that waits for the end of the interval has no one left to refresh.
+      refresh.cancel();
+    };
+  }, [details, queryClient]);
 }

@@ -6,13 +6,29 @@
  * row read back is validated, so a damaged database is reported as an error instead of reaching
  * the screens.
  *
+ * The same rows also carry the state of the detail queue (`detail_status`), which this repository
+ * only reads: the history never writes it, so a match that is already archived stays archived.
+ *
  * @packageDocumentation
  */
 import { z } from 'zod';
 import type { AccountId } from '../core/domain/account';
 import { parseMatchId, type MatchId, type MatchSummary } from '../core/domain/match';
 import { AppError } from '../core/errors/app-error';
+import { DETAIL_STATUSES, type DetailStatus } from '../core/match-detail/detail-status';
 import type { Database, SqlValue } from '../ports/database.port';
+
+/**
+ * A stored match: its summary, and where its detail stands in the detail queue.
+ *
+ * It extends {@link MatchSummary} instead of wrapping it: the summary is what deadlock-api gives
+ * and what `upsertMany` writes, so it stays unchanged, and code that only reads the summary fields
+ * works with a stored match as it does with a summary.
+ */
+export interface StoredMatch extends MatchSummary {
+  /** Where the detail of the match stands; `pending` until the queue has tried it. */
+  readonly detailStatus: DetailStatus;
+}
 
 /** Columns written for each match, in the order of {@link toParams}. */
 const COLUMNS = [
@@ -40,7 +56,13 @@ const COLUMNS = [
  */
 const BATCH_SIZE = 50;
 
-/** Schema of a row of the `matches` table. */
+/**
+ * Columns read for the match list: every written column but `synced_at` (nothing shows it), and the
+ * detail status, so one query gives each match with where its detail stands.
+ */
+const LIST_COLUMNS = [...COLUMNS.filter((column) => column !== 'synced_at'), 'detail_status'];
+
+/** Schema of a row read for the match list. */
 const matchRowSchema = z.object({
   account_id: z.int(),
   // A stored id that `parseMatchId` rejects makes the whole row invalid, like any other bad column;
@@ -61,6 +83,10 @@ const matchRowSchema = z.object({
   last_hits: z.int(),
   denies: z.int(),
   rank_delta: z.int().nullable(),
+  // Checked against the known statuses (the migration's CHECK keeps others out of the table, but a
+  // damaged database is the case this validation is for): a corrupt value is an error, never
+  // coerced to a status.
+  detail_status: z.enum(DETAIL_STATUSES),
 });
 
 /** Reads and writes the `matches` table. */
@@ -134,14 +160,15 @@ export class MatchesRepository {
    *
    * @param accountId - The player.
    * @param limit - Maximum number of matches.
-   * @returns The matches.
-   * @throws AppError of kind `storage` when the database fails or holds an invalid row.
+   * @returns The matches, each with where its detail stands.
+   * @throws AppError of kind `storage` when the database fails or holds an invalid row (a match id
+   *   or a detail status the app does not know included).
    */
-  async listRecent(accountId: AccountId, limit: number): Promise<MatchSummary[]> {
+  async listRecent(accountId: AccountId, limit: number): Promise<StoredMatch[]> {
     const rows = await this.#run(
       () =>
         this.#database.select(
-          `SELECT ${COLUMNS.filter((column) => column !== 'synced_at').join(', ')}
+          `SELECT ${LIST_COLUMNS.join(', ')}
            FROM matches WHERE account_id = $1
            ORDER BY start_time DESC, match_id DESC LIMIT $2`,
           [accountId, limit],
@@ -155,7 +182,7 @@ export class MatchesRepository {
           context: { issue: parsed.error.issues[0]?.message ?? 'unknown' },
         });
       }
-      return toMatchSummary(parsed.data, accountId);
+      return toStoredMatch(parsed.data, accountId);
     });
   }
 
@@ -205,13 +232,13 @@ function toParams(match: MatchSummary, syncedAt: number): SqlValue[] {
 }
 
 /**
- * Turn a validated row into a match summary.
+ * Turn a validated row into a stored match.
  *
  * @param row - The row.
  * @param accountId - The player the row was read for.
- * @returns The match summary.
+ * @returns The match summary, with the detail status of the row.
  */
-function toMatchSummary(row: z.infer<typeof matchRowSchema>, accountId: AccountId): MatchSummary {
+function toStoredMatch(row: z.infer<typeof matchRowSchema>, accountId: AccountId): StoredMatch {
   return {
     accountId,
     matchId: row.match_id,
@@ -228,5 +255,6 @@ function toMatchSummary(row: z.infer<typeof matchRowSchema>, accountId: AccountI
     lastHits: row.last_hits,
     denies: row.denies,
     rankDelta: row.rank_delta,
+    detailStatus: row.detail_status,
   };
 }

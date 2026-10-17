@@ -85,7 +85,7 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
   return {
     logger,
     settings: new SettingsService(settingsStore, logger),
-    matches: new MatchesService(accountSource, matches),
+    matches: new MatchesService(accountSource, matches, now),
     heroes: new HeroCatalogService(api, new ApiCacheRepository(database), logger, now),
     details,
     // The synchronisation runs the detail queue after the history: it gets the one `details`.

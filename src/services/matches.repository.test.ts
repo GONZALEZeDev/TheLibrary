@@ -21,8 +21,44 @@ describe('MatchesRepository', () => {
 
     await repository.upsertMany([older, newer]);
 
-    await expect(repository.listRecent(TEST_ACCOUNT_ID, 10)).resolves.toEqual([newer, older]);
+    // A saved match starts as `pending` in the detail queue: the rows carry that status too.
+    await expect(repository.listRecent(TEST_ACCOUNT_ID, 10)).resolves.toEqual([
+      { ...newer, detailStatus: 'pending' },
+      { ...older, detailStatus: 'pending' },
+    ]);
     await expect(repository.count(TEST_ACCOUNT_ID)).resolves.toBe(2);
+  });
+
+  it('reads where the detail of each match stands, in the same query as the match', async () => {
+    const database = createTestDatabase();
+    const repository = new MatchesRepository(database);
+    await repository.upsertMany([
+      matchSummary({ matchId: 1, startTime: 1_000 }),
+      matchSummary({ matchId: 2, startTime: 2_000 }),
+      matchSummary({ matchId: 3, startTime: 3_000 }),
+    ]);
+    // The detail queue writes these statuses; the history never does.
+    await database.execute(`UPDATE matches SET detail_status = 'ready' WHERE match_id = $1`, [3]);
+    await database.execute(`UPDATE matches SET detail_status = 'retry' WHERE match_id = $1`, [2]);
+    // Count the queries the listing sends: the status must come with the rows, not from one more
+    // query per match.
+    const selects: string[] = [];
+    const spied: Database = {
+      execute: (sql, params) => database.execute(sql, params),
+      select: (sql, params) => {
+        selects.push(sql);
+        return database.select(sql, params);
+      },
+    };
+
+    const matches = await new MatchesRepository(spied).listRecent(TEST_ACCOUNT_ID, 10);
+
+    expect(matches.map((match) => [match.matchId, match.detailStatus])).toEqual([
+      [3, 'ready'],
+      [2, 'retry'],
+      [1, 'pending'],
+    ]);
+    expect(selects).toHaveLength(1);
   });
 
   it('updates a match saved twice instead of duplicating it', async () => {
@@ -103,5 +139,35 @@ describe('MatchesRepository', () => {
     await expect(
       new MatchesRepository(database).listRecent(TEST_ACCOUNT_ID, 10),
     ).rejects.toMatchObject({ kind: 'storage' });
+  });
+
+  it('reports a stored match id that is not a match id as a storage error', async () => {
+    const database = createTestDatabase();
+    await new MatchesRepository(database).upsertMany([matchSummary({ matchId: 1 })]);
+    // The column is a plain INTEGER, so SQLite accepts 0, which is no match id (the first is 1).
+    await database.execute(`UPDATE matches SET match_id = $1`, [0]);
+
+    await expect(
+      new MatchesRepository(database).listRecent(TEST_ACCOUNT_ID, 10),
+    ).rejects.toMatchObject({ kind: 'storage', message: 'A stored match is invalid' });
+  });
+
+  it('reports a corrupt detail status as a storage error, without the value', async () => {
+    const database = createTestDatabase();
+    await new MatchesRepository(database).upsertMany([matchSummary()]);
+    // The migration refuses any status but the five known ones (a CHECK). Switching the check off
+    // for the statement stands for a database damaged or edited by hand, the case the validation of
+    // the rows is there for.
+    await database.execute('PRAGMA ignore_check_constraints = ON');
+    await database.execute(`UPDATE matches SET detail_status = $1`, ['corrupt-status']);
+
+    await expect(
+      new MatchesRepository(database).listRecent(TEST_ACCOUNT_ID, 10),
+    ).rejects.toMatchObject({
+      kind: 'storage',
+      message: 'A stored match is invalid',
+      // The error names the problem; the stored value stays out of the logs.
+      context: { issue: expect.not.stringContaining('corrupt-status') as unknown },
+    });
   });
 });

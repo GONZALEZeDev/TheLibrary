@@ -5,7 +5,10 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { AccountId } from '../core/domain/account';
+import { PAIGE_HERO_ID } from '../core/domain/hero';
+import type { DetailStatus } from '../core/match-detail/detail-status';
 import type { AccountSource } from '../ports/account-source.port';
+import type { Database } from '../ports/database.port';
 import {
   createTestDatabase,
   matchSummary,
@@ -15,6 +18,12 @@ import {
 import { MatchesRepository } from './matches.repository';
 import { MatchesService } from './matches.service';
 
+/** Time of the tests (Unix ms): the clock the service reads to judge the 90-day window. */
+const NOW = Date.UTC(2026, 9, 14, 12, 0, 0);
+
+/** One day, in milliseconds. */
+const DAY_MS = 24 * 60 * 60_000;
+
 /**
  * An account source returning a fixed account.
  *
@@ -23,6 +32,45 @@ import { MatchesService } from './matches.service';
  */
 function accountSource(accountId: AccountId | null): AccountSource {
   return { currentAccountId: () => Promise.resolve(accountId), missingAccountHint: null };
+}
+
+/**
+ * The start time of a match that began some days before {@link NOW}.
+ *
+ * @param days - How many days before {@link NOW}.
+ * @returns The start time, in Unix seconds (a match start time is in seconds, not milliseconds).
+ */
+function startedDaysAgo(days: number): number {
+  return (NOW - days * DAY_MS) / 1000;
+}
+
+/**
+ * Set where the detail of a stored match stands, as the detail queue does.
+ *
+ * @param database - The database holding the match.
+ * @param matchId - The match.
+ * @param status - Its new detail status.
+ */
+async function setDetailStatus(
+  database: Database,
+  matchId: number,
+  status: DetailStatus,
+): Promise<void> {
+  await database.execute('UPDATE matches SET detail_status = $1 WHERE match_id = $2', [
+    status,
+    matchId,
+  ]);
+}
+
+/**
+ * The detail status of each listed match, by match id.
+ *
+ * @param service - The service to list from.
+ * @returns A record from match id to the detail status the list gives it.
+ */
+async function detailStatusesOf(service: MatchesService): Promise<Record<number, unknown>> {
+  const recent = await service.listRecent(100);
+  return Object.fromEntries(recent.matches.map((match) => [match.matchId, match.detailStatus]));
 }
 
 describe('MatchesService', () => {
@@ -51,5 +99,95 @@ describe('MatchesService', () => {
     await expect(
       new MatchesService(accountSource(null), repository).listRecent(10),
     ).resolves.toEqual({ accountLinked: false, total: 0, matches: [] });
+  });
+
+  it('gives the detail status of eligible matches', async () => {
+    const database = createTestDatabase();
+    const repository = new MatchesRepository(database);
+    // Five normal-mode Paige matches of the last 90 days, one for each status of the queue.
+    const statuses = ['pending', 'retry', 'ready', 'unavailable', 'invalid'] as const;
+    await repository.upsertMany(
+      statuses.map((_, index) =>
+        matchSummary({ matchId: index + 1, startTime: startedDaysAgo(index + 1) }),
+      ),
+    );
+    for (const [index, status] of statuses.entries()) {
+      await setDetailStatus(database, index + 1, status);
+    }
+
+    const service = new MatchesService(accountSource(TEST_ACCOUNT_ID), repository, () => NOW);
+
+    await expect(detailStatusesOf(service)).resolves.toEqual({
+      1: 'pending',
+      2: 'retry',
+      3: 'ready',
+      4: 'unavailable',
+      5: 'invalid',
+    });
+  });
+
+  it('gives no detail status to other matches', async () => {
+    const database = createTestDatabase();
+    const repository = new MatchesRepository(database);
+    const recent = startedDaysAgo(1);
+    await repository.upsertMany([
+      // Eligible, for contrast.
+      matchSummary({ matchId: 1, startTime: recent }),
+      // Another hero than Paige.
+      matchSummary({ matchId: 2, startTime: recent, heroId: PAIGE_HERO_ID + 1 }),
+      // Street Brawl.
+      matchSummary({ matchId: 3, startTime: recent, gameMode: 4 }),
+      // A private lobby.
+      matchSummary({ matchId: 4, startTime: recent, matchMode: 2 }),
+      // Older than 90 days.
+      matchSummary({ matchId: 5, startTime: startedDaysAgo(91) }),
+    ]);
+    // None of them was archived, whatever the queue made of them: it is the rule, not the stored
+    // status, that tells the list a match has no detail.
+    await setDetailStatus(database, 4, 'retry');
+    await setDetailStatus(database, 5, 'unavailable');
+
+    const service = new MatchesService(accountSource(TEST_ACCOUNT_ID), repository, () => NOW);
+
+    await expect(detailStatusesOf(service)).resolves.toEqual({
+      1: 'pending',
+      2: null,
+      3: null,
+      4: null,
+      5: null,
+    });
+  });
+
+  it('keeps the ready status of a match that left the 90-day window', async () => {
+    const database = createTestDatabase();
+    const repository = new MatchesRepository(database);
+    await repository.upsertMany([
+      // Archived while it was recent.
+      matchSummary({ matchId: 1, startTime: startedDaysAgo(120) }),
+      // Of the same age, but never archived.
+      matchSummary({ matchId: 2, startTime: startedDaysAgo(120) }),
+    ]);
+    await setDetailStatus(database, 1, 'ready');
+
+    const service = new MatchesService(accountSource(TEST_ACCOUNT_ID), repository, () => NOW);
+
+    // The archive is still on disk and the detail page still shows it.
+    await expect(detailStatusesOf(service)).resolves.toEqual({ 1: 'ready', 2: null });
+  });
+
+  it('judges the 90-day window with its own clock', async () => {
+    const repository = new MatchesRepository(createTestDatabase());
+    await repository.upsertMany([matchSummary({ matchId: 1, startTime: startedDaysAgo(89) })]);
+
+    const early = new MatchesService(accountSource(TEST_ACCOUNT_ID), repository, () => NOW);
+    // Two days later the same match is 91 days old.
+    const late = new MatchesService(
+      accountSource(TEST_ACCOUNT_ID),
+      repository,
+      () => NOW + 2 * DAY_MS,
+    );
+
+    await expect(detailStatusesOf(early)).resolves.toEqual({ 1: 'pending' });
+    await expect(detailStatusesOf(late)).resolves.toEqual({ 1: null });
   });
 });

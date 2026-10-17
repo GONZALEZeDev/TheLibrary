@@ -34,9 +34,16 @@
       "result": "Résultat",
       "kda": "K / D / A",
       "duration": "Durée",
+      "detail": "Détail",
       "win": "Victoire",
       "loss": "Défaite",
-      "unknownHero": "Héros n°{{id}}"
+      "unknownHero": "Héros n°{{id}}",
+      "detailStatus": {
+        "ready": "Archivée",
+        "waiting": "En attente",
+        "unavailable": "Indisponible",
+        "invalid": "Invalide"
+      }
     },
     "sync": {
       "now": "Synchroniser",
@@ -51,14 +58,29 @@
       "budgetNever": "Limite de requêtes atteinte pour l'instant : l'historique sera téléchargé lors d'une prochaine synchronisation.",
       "paused": "deadlock-api a demandé de ralentir : synchronisation en pause jusqu'à {{time}}.",
       "protected": "Les données de ce compte sont privées sur deadlock-api : la synchronisation automatique est arrêtée.",
-      "failed": "La dernière synchronisation a échoué : {{reason}}"
+      "failed": "La dernière synchronisation a échoué : {{reason}}",
+      "details": "Détail des parties Paige : archivées {{archived}}, en attente {{waiting}}, indisponibles {{unavailable}}.",
+      "detailsInvalid": "Invalides : {{count}}."
     }
   },
   "matchDetail": {
     "title": "Partie {{matchId}}",
-    "empty": {
-      "title": "Détail bientôt disponible",
-      "description": "L'analyse détaillée de cette partie arrivera dans une prochaine version."
+    "notEligible": "Le détail est archivé pour tes parties Paige en mode normal des 90 derniers jours.",
+    "waiting": "Détail en attente.",
+    "nextAttempt": "Prochaine tentative : {{time}}.",
+    "unavailable": "deadlock-api n'a pas le détail de cette partie.",
+    "invalid": "Le détail de cette partie est illisible.",
+    "missing": "L'archive de cette partie est introuvable : elle sera téléchargée à nouveau.",
+    "retry": "Réessayer",
+    "facts": {
+      "result": "Résultat",
+      "duration": "Durée",
+      "kda": "K/D/A",
+      "netWorth": "Âmes",
+      "snapshots": "Relevés de stats",
+      "items": "Objets achetés",
+      "archive": "Archive",
+      "archiveValue": "{{size}} Ko, {{date}}"
     }
   },
   "settings": {

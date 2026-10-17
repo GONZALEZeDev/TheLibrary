@@ -1,31 +1,36 @@
 /**
  * Tests of the synchronisation banner, with the real providers and the development adapters:
- * synthetic deadlock-api and in-memory database.
+ * synthetic deadlock-api and in-memory database. The last block tests the throttle of the
+ * refreshes on its own, with fake timers.
  *
  * @packageDocumentation
  */
-import { render, screen } from '@testing-library/react';
+import type { QueryClient } from '@tanstack/react-query';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createFixtureApi,
   jsonResponse,
   type FixtureHandler,
 } from '../../../adapters/dev/fixture-http-client.adapter';
-import { HISTORY_RATE_LIMIT } from '../../../core/deadlock-api/budgets';
+import { HISTORY_RATE_LIMIT, METADATA_MAX_CONCURRENCY } from '../../../core/deadlock-api/budgets';
 import { AppError } from '../../../core/errors/app-error';
 import type { Language } from '../../../core/settings/language';
 import type { AppServices } from '../../../services/app-services';
+import { MatchDetailService, type DetailSummary } from '../../../services/match-detail.service';
 import { SyncService } from '../../../services/sync.service';
 import {
   createTestQueryClient,
   createTestServices,
+  type TestServices,
   type TestServicesOptions,
 } from '../../../test/create-test-services';
 import { clickSyncNow } from '../../../test/user-actions';
 import { AppProviders } from '../../app/AppProviders';
 import { createI18n } from '../../i18n/i18n';
 import { SyncBanner } from './SyncBanner';
+import { createThrottle } from './use-matches';
 
 /** Time of the tests: the synthetic history ends 2 hours before it. */
 const NOW = Date.UTC(2026, 9, 14, 12, 0, 0);
@@ -48,26 +53,114 @@ const INCOMPLETE_SENTENCE =
 const FAILED_SENTENCE =
   'The last synchronisation failed: The data service is temporarily unavailable. Please try again later.';
 
+/** Key of the query that reads the summary of the match details. */
+const DETAILS_SUMMARY_KEY = ['details', 'summary'] as const;
+
+/** The URL of a match detail request. */
+const METADATA_URL = /\/v1\/matches\/\d+\/metadata/;
+
+/**
+ * Render the banner on services the test has built, for the test that must watch them before the
+ * banner starts to use them.
+ *
+ * @param testServices - The services of the test.
+ * @param language - Language of the interface.
+ * @returns The test services, and the query client of the banner.
+ */
+async function renderBannerOn(testServices: TestServices, language: Language = 'en') {
+  const queryClient = createTestQueryClient();
+  const i18n = await createI18n(language);
+  render(
+    <AppProviders services={testServices.services} queryClient={queryClient} i18n={i18n}>
+      <SyncBanner />
+    </AppProviders>,
+  );
+  return { ...testServices, queryClient };
+}
+
 /**
  * Render the banner.
  *
  * @param options - Options of the test services; the clock is fixed at {@link NOW}.
  * @param language - Language of the interface.
- * @returns The test services.
+ * @returns The test services, and the query client of the banner.
  */
 async function renderBanner(options: TestServicesOptions = {}, language: Language = 'en') {
-  const testServices = createTestServices({ now: () => NOW, ...options });
-  const i18n = await createI18n(language);
-  render(
-    <AppProviders
-      services={testServices.services}
-      queryClient={createTestQueryClient()}
-      i18n={i18n}
-    >
-      <SyncBanner />
-    </AppProviders>,
-  );
-  return testServices;
+  return renderBannerOn(createTestServices({ now: () => NOW, ...options }), language);
+}
+
+/**
+ * The sentence the banner says about the match details, in English, without the one about the
+ * invalid details.
+ *
+ * @param summary - The counts of the details.
+ * @returns The sentence.
+ */
+function detailsSentence({ archived, waiting, unavailable }: DetailSummary): string {
+  return `Paige match details: ${String(archived)} archived, ${String(waiting)} waiting, ${String(unavailable)} unavailable.`;
+}
+
+/**
+ * The counts of the details the services hold now.
+ *
+ * @param services - The services of the test, with a linked account.
+ * @returns The counts.
+ */
+async function summaryOf(services: AppServices): Promise<DetailSummary> {
+  return (await services.details.getSummary()) ?? expect.unreachable('An account is linked');
+}
+
+/**
+ * Wait until the banner has read the summary of the details. A test that expects the line to be
+ * missing waits for it first: otherwise the line could be missing only because the summary has not
+ * arrived yet, and the test would pass whatever the banner does with it.
+ *
+ * @param queryClient - The query client of the banner.
+ */
+async function waitForSummary(queryClient: QueryClient): Promise<void> {
+  await waitFor(() => {
+    expect(queryClient.getQueryState(DETAILS_SUMMARY_KEY)?.status).toBe('success');
+  });
+}
+
+/**
+ * A handler that lets one match detail through and holds all the others until the test releases
+ * them, so that the detail queue stops with one match archived and the synchronisation still runs.
+ * The detail that goes through is the first the API holds: a 404 is held like the rest, since its
+ * match would only wait for a new attempt, and the line of the banner would not change.
+ *
+ * @param fixtures - The synthetic deadlock-api.
+ * @returns The handler, `whenHeld` (settled once every puller of the queue holds a detail, told by
+ *   the handler: nothing polls the clock), and `release`.
+ */
+function holdAllDetailsButOne(fixtures: FixtureHandler) {
+  let oneThrough = false;
+  let held = 0;
+  let allHeld = (): void => undefined;
+  const whenHeld = new Promise<void>((resolve) => {
+    allHeld = resolve;
+  });
+  let release = (): void => undefined;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const handler: FixtureHandler = async (request) => {
+    const response = await fixtures(request);
+    if (!METADATA_URL.test(request.url)) {
+      return response;
+    }
+    if (!oneThrough && response.status === 200) {
+      oneThrough = true;
+      return response;
+    }
+    held += 1;
+    if (held >= METADATA_MAX_CONCURRENCY) {
+      allHeld();
+    }
+    await released;
+    return response;
+  };
+  return { handler, whenHeld, release };
 }
 
 /**
@@ -132,6 +225,8 @@ function formatTime(time: number): string {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  // A test that fakes the timers must not leave them faked for the next one.
+  vi.useRealTimers();
 });
 
 describe('SyncBanner', () => {
@@ -324,6 +419,160 @@ describe('SyncBanner', () => {
     expect(await screen.findByText('Local data could not be read or saved.')).toBeInTheDocument();
   });
 
+  it('shows the progress of the match details', async () => {
+    const { services } = await renderBanner({
+      handler: createFixtureApi({ now: NOW, matchCount: MATCH_COUNT }),
+    });
+    await screen.findByText('Not synchronised yet.');
+
+    await services.sync.syncNow('manual');
+
+    // What the services count after the run is what the banner says, whatever the fixtures hold.
+    const summary = await summaryOf(services);
+    expect(summary.archived).toBeGreaterThan(0);
+    const line = await screen.findByText(detailsSentence(summary));
+    expect(line).toBeInTheDocument();
+    // The queue updates the line up to once a second: it stays out of the live region, which would
+    // make screen readers read it out at every change. The status sentences stay in it.
+    expect(line.closest('[aria-live]')).toBeNull();
+    expect(
+      (await screen.findByText(REFRESHED_SENTENCE)).closest('[aria-live="polite"]'),
+    ).not.toBeNull();
+  });
+
+  it('mentions invalid details only when there are some', async () => {
+    const getSummary = vi
+      .spyOn(MatchDetailService.prototype, 'getSummary')
+      .mockResolvedValue({ archived: 5, waiting: 2, unavailable: 1, invalid: 3 });
+    const { queryClient } = await renderBanner();
+
+    expect(
+      await screen.findByText(
+        'Paige match details: 5 archived, 2 waiting, 1 unavailable. 3 invalid.',
+      ),
+    ).toBeInTheDocument();
+
+    getSummary.mockResolvedValue({ archived: 7, waiting: 1, unavailable: 1, invalid: 0 });
+    await act(() => queryClient.invalidateQueries({ queryKey: ['details'] }));
+
+    expect(
+      await screen.findByText('Paige match details: 7 archived, 1 waiting, 1 unavailable.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/invalid/)).not.toBeInTheDocument();
+  });
+
+  it('shows no detail line without eligible matches', async () => {
+    const { services, queryClient } = await renderBanner();
+    await screen.findByText('Not synchronised yet.');
+
+    await waitForSummary(queryClient);
+
+    // Nothing was synchronised, so no match is eligible: the summary is read, and it is empty.
+    expect(await summaryOf(services)).toEqual({
+      archived: 0,
+      waiting: 0,
+      unavailable: 0,
+      invalid: 0,
+    });
+    expect(screen.queryByText(/Paige match details/)).not.toBeInTheDocument();
+  });
+
+  it('shows no detail line without a linked account', async () => {
+    const { services, queryClient } = await renderBanner({ accountId: null });
+    await screen.findByText('No Steam account is linked.');
+
+    await waitForSummary(queryClient);
+
+    expect(await services.details.getSummary()).toBeNull();
+    expect(screen.queryByText(/Paige match details/)).not.toBeInTheDocument();
+  });
+
+  it('refreshes the progress of the match details whenever a synchronisation runs', async () => {
+    const getSummary = vi
+      .spyOn(MatchDetailService.prototype, 'getSummary')
+      .mockResolvedValue({ archived: 1, waiting: 4, unavailable: 0, invalid: 0 });
+    const fixtures = createFixtureApi({ now: NOW, matchCount: MATCH_COUNT });
+    const { services } = await renderBanner({
+      // The network is down for the details: the queue stops at the first one without recording
+      // anything, so nothing tells the banner about a detail and only the synchronisation can
+      // refresh its line.
+      handler: (request) =>
+        METADATA_URL.test(request.url)
+          ? Promise.reject(new AppError('network', 'The network is down'))
+          : fixtures(request),
+    });
+    expect(
+      await screen.findByText('Paige match details: 1 archived, 4 waiting, 0 unavailable.'),
+    ).toBeInTheDocument();
+
+    getSummary.mockResolvedValue({ archived: 3, waiting: 2, unavailable: 0, invalid: 0 });
+    await services.sync.syncNow('manual');
+
+    expect(
+      await screen.findByText('Paige match details: 3 archived, 2 waiting, 0 unavailable.'),
+    ).toBeInTheDocument();
+  });
+
+  it('refreshes the progress of the match details while the queue runs', async () => {
+    const held = holdAllDetailsButOne(createFixtureApi({ now: NOW, matchCount: MATCH_COUNT }));
+    const { services } = await renderBanner({ handler: held.handler });
+    await screen.findByText('Not synchronised yet.');
+
+    const run = services.sync.syncNow('manual');
+    try {
+      // The queue is held: one match is archived, the others wait for the test.
+      await held.whenHeld;
+      const summary = await summaryOf(services);
+
+      expect(services.sync.isRunning()).toBe(true);
+      expect(summary.archived).toBe(1);
+      expect(await screen.findByText(detailsSentence(summary))).toBeInTheDocument();
+    } finally {
+      // Whatever the assertions said, the run ends: a failing test leaves no synchronisation
+      // blocked on the gate.
+      held.release();
+      await run;
+    }
+  });
+
+  it('reads the details and the matches again as the queue records matches, at most once a second', async () => {
+    const testServices = createTestServices({ now: () => NOW });
+    const { details } = testServices.services;
+    // Play the queue: keep the listener the banner gives it, and call it like the queue does after
+    // each match it records.
+    let recordMatch = (): void => expect.unreachable('The banner does not listen to the queue');
+    const subscribe = details.subscribe;
+    vi.spyOn(details, 'subscribe').mockImplementation((listener) => {
+      recordMatch = listener;
+      return subscribe(listener);
+    });
+    const { queryClient } = await renderBannerOn(testServices);
+    // Let the banner finish loading before the timers are faked, so that nothing it does after the
+    // test started waits for a clock the test moves by hand.
+    await screen.findByText('Not synchronised yet.');
+    await waitForSummary(queryClient);
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries').mockResolvedValue(undefined);
+    vi.useFakeTimers();
+
+    // A burst: the first match is applied at once, the others wait for the end of the second.
+    recordMatch();
+    recordMatch();
+    recordMatch();
+    expect(invalidate).toHaveBeenCalledTimes(2);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['details'] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['matches'] });
+    vi.advanceTimersByTime(999);
+    expect(invalidate).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(1);
+    expect(invalidate).toHaveBeenCalledTimes(4);
+
+    // A match recorded while the banner goes away is not applied: nobody waits for it.
+    recordMatch();
+    cleanup();
+    vi.advanceTimersByTime(10_000);
+    expect(invalidate).toHaveBeenCalledTimes(4);
+  });
+
   it('speaks French', async () => {
     const user = userEvent.setup();
     await renderBanner({ handler: createFixtureApi({ now: NOW, matchCount: MATCH_COUNT }) }, 'fr');
@@ -333,5 +582,103 @@ describe('SyncBanner', () => {
     expect(
       await screen.findByText(`Nouvelles parties : ${String(MATCH_COUNT)}.`),
     ).toBeInTheDocument();
+  });
+
+  it('says the progress of the match details in French', async () => {
+    vi.spyOn(MatchDetailService.prototype, 'getSummary').mockResolvedValue({
+      archived: 5,
+      waiting: 2,
+      unavailable: 1,
+      invalid: 3,
+    });
+
+    await renderBanner({}, 'fr');
+
+    expect(
+      await screen.findByText(
+        'Détail des parties Paige : archivées 5, en attente 2, indisponibles 1. Invalides : 3.',
+      ),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('createThrottle', () => {
+  /** The interval of the throttles of the tests. */
+  const INTERVAL_MS = 1000;
+
+  // The timers go back to real ones in the `afterEach` of the file.
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  it('runs the first call at once', () => {
+    const action = vi.fn();
+    const throttle = createThrottle(action, INTERVAL_MS);
+
+    throttle.trigger();
+
+    expect(action).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs a burst once at once and once more when the interval ends', () => {
+    const action = vi.fn();
+    const throttle = createThrottle(action, INTERVAL_MS);
+
+    throttle.trigger();
+    throttle.trigger();
+    throttle.trigger();
+    expect(action).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(INTERVAL_MS - 1);
+    expect(action).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1);
+    expect(action).toHaveBeenCalledTimes(2);
+
+    // Nothing is left to run.
+    vi.advanceTimersByTime(10 * INTERVAL_MS);
+    expect(action).toHaveBeenCalledTimes(2);
+  });
+
+  it('never runs more than once per interval', () => {
+    const action = vi.fn();
+    const throttle = createThrottle(action, INTERVAL_MS);
+
+    throttle.trigger();
+    vi.advanceTimersByTime(INTERVAL_MS / 2);
+    throttle.trigger();
+    // The call of the burst runs when its interval ends, and starts the next interval.
+    vi.advanceTimersByTime(INTERVAL_MS / 2);
+    expect(action).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(200);
+    throttle.trigger();
+    vi.advanceTimersByTime(INTERVAL_MS - 200 - 1);
+    expect(action).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(1);
+    expect(action).toHaveBeenCalledTimes(3);
+  });
+
+  it('runs a call at once after a quiet interval', () => {
+    const action = vi.fn();
+    const throttle = createThrottle(action, INTERVAL_MS);
+    throttle.trigger();
+    vi.advanceTimersByTime(INTERVAL_MS);
+
+    throttle.trigger();
+
+    expect(action).toHaveBeenCalledTimes(2);
+  });
+
+  it('forgets the call that waits when it is cancelled', () => {
+    const action = vi.fn();
+    const throttle = createThrottle(action, INTERVAL_MS);
+    throttle.trigger();
+    throttle.trigger();
+
+    throttle.cancel();
+    vi.advanceTimersByTime(10 * INTERVAL_MS);
+
+    expect(action).toHaveBeenCalledTimes(1);
+    // The throttle starts again from nothing: the next call runs at once.
+    throttle.trigger();
+    expect(action).toHaveBeenCalledTimes(2);
   });
 });

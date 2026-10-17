@@ -1,8 +1,9 @@
 /**
  * Banner of the synchronisation, above the match list: when the history was last synchronised,
- * whether it is complete, why it is not up to date, and a button to synchronise now. While it is
- * shown, every synchronisation (started by the button, the schedule or the startup) refreshes the
- * status and the matches.
+ * whether it is complete, why it is not up to date, how far the archive of the Paige match details
+ * is, and a button to synchronise now. While it is shown, every synchronisation (started by the
+ * button, the schedule or the startup) refreshes the status and the matches, and the progress of
+ * the detail queue refreshes the counts of the details and the matches as it goes.
  *
  * Milestone M2a ships it as a plain banner; the screens milestone (M5) gives it its final design.
  *
@@ -13,7 +14,14 @@ import { RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toAppError } from '../../../core/errors/app-error';
 import type { SyncStatus } from '../../../core/sync/sync-status';
-import { useRefreshOnSync, useSyncNow, useSyncRunning, useSyncStatus } from './use-matches';
+import type { DetailSummary } from '../../../services/match-detail.service';
+import {
+  useDetailSummary,
+  useRefreshOnSync,
+  useSyncNow,
+  useSyncRunning,
+  useSyncStatus,
+} from './use-matches';
 
 /**
  * Build the sentences describing a synchronisation status.
@@ -66,6 +74,29 @@ function describeStatus(
 }
 
 /**
+ * Build the line about the progress of the match details: how many are archived, waiting for their
+ * download or for a new attempt, and unavailable, then how many are invalid, if any.
+ *
+ * @param summary - The counts of the details; `null` when no account is linked, and `undefined`
+ *   until they are read.
+ * @param t - Translation function.
+ * @returns The line, or `null` when there is nothing to say: the counts are not known, or no match
+ *   is eligible for an archive yet (the banner would only say "0, 0, 0").
+ */
+function describeDetails(summary: DetailSummary | null | undefined, t: TFunction): string | null {
+  if (summary === null || summary === undefined) {
+    return null;
+  }
+  const { archived, waiting, unavailable, invalid } = summary;
+  if (archived + waiting + unavailable + invalid === 0) {
+    return null;
+  }
+  const line = t('matches.sync.details', { archived, waiting, unavailable });
+  // Invalid details are final and rare: they are only worth a mention when there are some.
+  return invalid > 0 ? `${line} ${t('matches.sync.detailsInvalid', { count: invalid })}` : line;
+}
+
+/**
  * Synchronisation banner.
  *
  * @returns The banner.
@@ -73,6 +104,7 @@ function describeStatus(
 export function SyncBanner() {
   const { t, i18n } = useTranslation();
   const status = useSyncStatus();
+  const detailSummary = useDetailSummary();
   const running = useSyncRunning();
   const syncNow = useSyncNow();
   useRefreshOnSync();
@@ -87,16 +119,25 @@ export function SyncBanner() {
   } else if (status.data !== undefined) {
     sentences = describeStatus(status.data, t, (time) => dateTime.format(time));
   }
+  // A failed read of the counts only hides their line: the query client logs the failure, and the
+  // status above already says when the local data cannot be read.
+  const detailsLine = describeDetails(detailSummary.data, t);
   const hint = status.data?.missingAccountHint ?? null;
 
   return (
     <section className="mb-6 flex items-start justify-between gap-6 rounded-xl border border-border bg-surface p-4">
-      {/* Read again by screen readers whenever the status changes. */}
-      <div aria-live="polite" className="space-y-1 text-sm">
-        {sentences.map((sentence) => (
-          <p key={sentence}>{sentence}</p>
-        ))}
-        {hint !== null && <p className="font-mono text-xs text-fg-muted">{hint}</p>}
+      <div className="space-y-1 text-sm">
+        {/* Read again by screen readers whenever the status changes. */}
+        <div aria-live="polite" className="space-y-1">
+          {sentences.map((sentence) => (
+            <p key={sentence}>{sentence}</p>
+          ))}
+          {hint !== null && <p className="font-mono text-xs text-fg-muted">{hint}</p>}
+        </div>
+        {/* Outside the live region: the queue updates the counts up to once a second, and a screen
+            reader would read them out at every change. (The hint above only shows without an
+            account, when there is no line.) */}
+        {detailsLine !== null && <p>{detailsLine}</p>}
       </div>
       <button
         type="button"

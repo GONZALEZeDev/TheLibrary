@@ -1,6 +1,6 @@
 # `src/services` — use cases
 
-A service implements the use cases of one area (settings, synchronisation, matches and hero names today; analysis in a later milestone). It orchestrates the pure logic of `core/` and the side effects behind `ports/`.
+A service implements the use cases of one area (settings, synchronisation, matches, hero names and the match detail archive today; analysis in a later milestone). It orchestrates the pure logic of `core/` and the side effects behind `ports/`.
 
 ## Rules
 

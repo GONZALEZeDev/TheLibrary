@@ -20,6 +20,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "canary": "vitest run --config vitest.canary.config.ts",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test",
     "dev:desktop": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "check:dev-code": "node scripts/check-dev-code.ts"

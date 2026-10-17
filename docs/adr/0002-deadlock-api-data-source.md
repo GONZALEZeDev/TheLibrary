@@ -16,7 +16,7 @@ Use the community-run **deadlock-api.com** (MIT): match history, full match meta
 
 - No backend and no API key to operate or protect.
 - deadlock-api.com sees the IP address of each user and the `account_id` they track, as for any client of the service; TheLibrary itself sends no telemetry.
-- The app depends on an unofficial service without SLA: responses are validated (Zod), matches are archived locally (ADR 0003), and a weekly CI canary will validate a fresh match against our schemas.
+- The app depends on an unofficial service without SLA: responses are validated (Zod), matches are archived locally (ADR 0003), and a weekly CI canary (`pnpm canary`, every Monday) runs a fresh Paige match detail through the app's schemas, pruning and archive.
 - History is complete and fresh only when the player's Steam account is friends with a deadlock-api bot, which requires a deadlock-api Patreon membership (verified 2026-10-14). Each history response says whether it was refreshed from Steam (`Called-Steam` header), and the app shows when the history may be incomplete.
 - Players who opted out of deadlock-api (data-privacy feature) get no data; the app will say so.
 

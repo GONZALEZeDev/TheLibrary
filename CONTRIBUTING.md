@@ -5,24 +5,27 @@ Thanks for your interest! This guide explains how the code is organised and the 
 ## Architecture in one picture
 
 ```text
-ui/  ──►  services/  ──►  core/
+ui/  ──►  services/  ──►  core/  ◄──  workers/   (Web Workers)
                │
                ▼
-            ports/  ◄──  adapters/tauri/   (desktop app)
-                    ◄──  adapters/dev/     (tests and development modes)
+            ports/  ◄──  adapters/tauri/     (desktop app)
+                    ◄──  adapters/browser/   (browser APIs that ship in releases)
+                    ◄──  adapters/dev/       (tests and development modes)
 ```
 
-| Folder          | Role                                                                                                     | May import               |
-| --------------- | -------------------------------------------------------------------------------------------------------- | ------------------------ |
-| `src/core/`     | Domain model and pure logic (no side effects)                                                            | `core/` only, plus `zod` |
-| `src/ports/`    | Interfaces describing side effects (logging, storage, HTTP…)                                             | `core/`                  |
-| `src/services/` | Use cases orchestrating `core/` and ports                                                                | `core/`, `ports/`        |
-| `src/adapters/` | Port implementations: Tauri plugins, or memory, browser storage, sql.js and synthetic data for tests/dev | `core/`, `ports/`        |
-| `src/ui/`       | React routes, components, i18n, theme                                                                    | `core/`, `services/`     |
-| `src/test/`     | Shared test helpers (services on the development adapters…)                                              | everything               |
-| `src/main.tsx`  | Composition root: picks the adapters and builds the services                                             | everything               |
+| Folder                  | Role                                                                                                                            | May import                 |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `src/core/`             | Domain model and pure logic (no side effects)                                                                                   | `core/` only, plus `zod`   |
+| `src/ports/`            | Interfaces describing side effects (logging, storage, HTTP, the archive files…)                                                 | `core/`                    |
+| `src/services/`         | Use cases orchestrating `core/` and ports                                                                                       | `core/`, `ports/`          |
+| `src/adapters/`         | Port implementations: Tauri plugins, or memory (the archive included), browser storage, sql.js and synthetic data for tests/dev | `core/`, `ports/`          |
+| `src/adapters/browser/` | Port implementations on browser APIs that ship in releases, such as the Web Worker that compresses the archive                  | `core/`, `ports/`          |
+| `src/workers/`          | Web Workers: pure CPU work off the main thread (zstd compression), talking to the page by messages only                         | `core/`, plus npm packages |
+| `src/ui/`               | React routes, components, i18n, theme                                                                                           | `core/`, `services/`       |
+| `src/test/`             | Shared test helpers (services on the development adapters…)                                                                     | everything                 |
+| `src/main.tsx`          | Composition root: picks the adapters and builds the services                                                                    | everything                 |
 
-These rules are enforced by ESLint: a forbidden import fails `pnpm lint` and CI. Test files follow the rules of their folder, and may additionally use `src/adapters/dev/` and `src/test/`. Only `src/adapters/tauri/` and `src/main.tsx` may import `@tauri-apps/*`. Every file of `src/` must belong to a folder declared in `eslint.config.js` (rule `boundaries/no-unknown-files`): a new top-level folder of `src/` is declared there first. Each layer folder (`core`, `ports`, `services`, `adapters`, `ui`) has a short `README.md` with its own rules.
+These rules are enforced by ESLint: a forbidden import fails `pnpm lint` and CI. Test files follow the rules of their folder, and may additionally use `src/adapters/dev/`, `src/adapters/browser/` and `src/test/`. Only `src/adapters/tauri/` and `src/main.tsx` may import `@tauri-apps/*`. Every file of `src/` must belong to a folder declared in `eslint.config.js` (rule `boundaries/no-unknown-files`): a new top-level folder of `src/` is declared there first. Each layer folder (`core`, `ports`, `services`, `adapters`, `workers`, `ui`) has a short `README.md` with its own rules.
 
 ## Conventions
 
@@ -40,7 +43,7 @@ These rules are enforced by ESLint: a forbidden import fails `pnpm lint` and CI.
 - **Errors**: throw `AppError` (`src/core/errors/app-error.ts`) with the right `kind`; never show raw error messages to users.
 - **Logging**: use the `Logger` port; `console` is only allowed in `src/adapters/dev/`. Never log an account id: endpoints are logged as templates (`/v1/players/{account_id}/…`).
 - **Database**: the schema changes only through a new file in `migrations/` — never edit a released migration (see [migrations/README.md](migrations/README.md)).
-- **Development-only code** (synthetic data, sql.js, the development account, devtools) is only loaded through the `import.meta.env.DEV`-guarded imports of `src/main.tsx`: never import it statically from production code ([ADR 0006](docs/adr/0006-development-code-out-of-releases.md)). `pnpm check:dev-code` proves it after `pnpm build`.
+- **Development-only code** (synthetic data, sql.js, the in-memory archive store, the development account, devtools) is only loaded through the `import.meta.env.DEV`-guarded imports of `src/main.tsx`: never import it statically from production code ([ADR 0006](docs/adr/0006-development-code-out-of-releases.md)). `pnpm check:dev-code` proves it after `pnpm build`.
 
 ## Workflow
 
@@ -53,10 +56,11 @@ These rules are enforced by ESLint: a forbidden import fails `pnpm lint` and CI.
 
 | Command                                | What it does                                                                                                  |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `pnpm dev`                             | UI only in the browser, on synthetic data (no network, in-memory database)                                    |
+| `pnpm dev`                             | UI only in the browser, on synthetic data (no network, in-memory database and archive)                        |
 | `pnpm dev:desktop`                     | Full desktop app with hot reload, with its own data folders (see below)                                       |
 | `pnpm check:dev-code`                  | After `pnpm build`: proves the build contains no development-only code                                        |
 | `pnpm test` / `pnpm test:watch`        | Unit and integration tests                                                                                    |
+| `pnpm canary`                          | The weekly API canary: calls the real deadlock-api; GitHub Actions also runs it every Monday                  |
 | `pnpm lint` / `pnpm format`            | Lint / format everything                                                                                      |
 | `pnpm tauri build --debug --no-bundle` | Production-mode executable (CSP enforced) without installer; it uses the data folders of an installed release |
 
@@ -68,6 +72,10 @@ Until the Steam sign-in exists, the desktop app synchronises the account named i
 2. Create `.env.development.local` at the root of the repository (git-ignored, never commit it) with the line `VITE_DEV_ACCOUNT_ID=N`. Put it in no other `.env` file: Vite reads `.env` and `.env.local` in every mode.
 3. Run `pnpm dev:desktop` (restart it after editing the file). The app synchronises your match history at startup and every 13 minutes. Without the file, the synchronisation banner shows how to create it.
 
-`pnpm dev:desktop` runs the app under a separate identifier (`src-tauri/tauri.dev.conf.json`): its settings and database live in `%APPDATA%\io.github.gonzalezedev.thelibrary.dev`, its logs and WebView data in `%LOCALAPPDATA%\io.github.gonzalezedev.thelibrary.dev`, and they never touch an installed release. Delete those two folders to start from scratch. Do not run `pnpm tauri dev` directly: it would use the release identifier, and so the folders of an installed release. Release builds never read this file and never contain this code ([ADR 0006](docs/adr/0006-development-code-out-of-releases.md)).
+`pnpm dev:desktop` runs the app under a separate identifier (`src-tauri/tauri.dev.conf.json`): its settings and database live in `%APPDATA%\io.github.gonzalezedev.thelibrary.dev`, its logs, archives and WebView data in `%LOCALAPPDATA%\io.github.gonzalezedev.thelibrary.dev`, and they never touch an installed release. Delete those two folders to start from scratch. Do not run `pnpm tauri dev` directly: it would use the release identifier, and so the folders of an installed release. Release builds never read this file and never contain this code ([ADR 0006](docs/adr/0006-development-code-out-of-releases.md)).
 
 Your history is complete only if your Steam account is friends with one of deadlock-api's bots, which requires a [deadlock-api Patreon membership](https://deadlock-api.com/patron); otherwise deadlock-api only knows the matches it collected by itself.
+
+## Where the match archives live
+
+The detail of each normal-mode Paige match of the last 90 days is downloaded after the history, pruned to the tracked player, compressed with zstd and kept as one file per match ([ADR 0003](docs/adr/0003-user-centric-archive-zstd.md)). The files live in `%LOCALAPPDATA%\<identifier>\archive\`, in a folder per account; under `pnpm dev:desktop` that is `%LOCALAPPDATA%\io.github.gonzalezedev.thelibrary.dev\archive\`. Deleting the folder is safe for the matches of the last 90 days: the app notices a missing archive when you open its match, puts the match back in the download queue, and fetches it again at the next synchronisation. An older match is not downloaded again: its archive is lost for good. The responses the app could not use are kept in `archive\quarantine\` (the 20 most recent). In the browser dev mode (`pnpm dev`) the archive is an in-memory store, gone when the page reloads.

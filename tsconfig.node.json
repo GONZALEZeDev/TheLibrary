@@ -26,5 +26,5 @@
     "noFallthroughCasesInSwitch": true,
     "erasableSyntaxOnly": true
   },
-  "include": ["vite.config.ts", "eslint.config.js", "types", "scripts"]
+  "include": ["vite.config.ts", "vitest.canary.config.ts", "eslint.config.js", "types", "scripts"]
 }

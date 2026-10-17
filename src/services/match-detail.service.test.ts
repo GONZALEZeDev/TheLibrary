@@ -1220,18 +1220,40 @@ describe('MatchDetailService.runQueue', () => {
     ]);
   });
 
-  it('stops the run, before any request, when the leftovers cannot be removed', async () => {
-    const { service, repository, archive, http } = await setUp();
-    vi.spyOn(archive, 'removeTemporaryFiles').mockRejectedValue(new Error('Access is denied'));
-    const nextDue = vi.spyOn(repository, 'nextDue');
-
-    await expect(service.runQueue(ACCOUNT, RUN)).resolves.toEqual({
-      ...NOTHING,
-      stoppedBy: 'storage',
+  it('carries on, with a warning, when the leftovers cannot be removed', async () => {
+    const { service, repository, archive, logger } = await setUp({
+      matches: summariesOf([SERVED]),
     });
+    const removal = vi
+      .spyOn(archive, 'removeTemporaryFiles')
+      .mockRejectedValue(
+        new Error(`Access is denied to archive/${String(ACCOUNT)}/108600000.json.zst.tmp`),
+      );
 
-    expect(nextDue).not.toHaveBeenCalled();
-    expect(http.requests).toHaveLength(0);
+    const report = await service.runQueue(ACCOUNT, RUN);
+
+    // A leftover is harmless (the next write of its match replaces it): the run is not stopped, and
+    // the due match is archived as usual.
+    expect(removal).toHaveBeenCalledTimes(1);
+    expect(report).toEqual({ ...NOTHING, archived: 1 });
+    expect(archive.files.has(archivePath(ACCOUNT, matchOf(SERVED)))).toBe(true);
+    await expect(storedDetail(repository, SERVED)).resolves.toMatchObject({ status: 'ready' });
+    expect(stopLines(logger)).toEqual([]);
+    // One warning, with the cause (the account id replaced) and the stack of a failure of the disk.
+    const warnings = linesAt(logger, 'warn');
+    expect(warnings).toMatchObject([
+      {
+        scope: 'detail',
+        message: 'Leftover temporary files could not be removed',
+        context: {
+          syncRunId: RUN,
+          kind: 'storage',
+          cause: 'Access is denied to archive/{account_id}/108600000.json.zst.tmp',
+        },
+      },
+    ]);
+    expect(warnings[0]?.context).toHaveProperty('stack');
+    expect(JSON.stringify(logger.entries)).not.toContain(String(ACCOUNT));
   });
 
   it('keeps the quarantine to the 20 most recent responses', async () => {

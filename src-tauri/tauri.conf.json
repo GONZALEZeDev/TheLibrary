@@ -26,6 +26,7 @@
     }
   },
   "plugins": {
+    "fs": { "scopeDroppedPaths": false },
     "http": { "scopeRedirects": true },
     "sql": { "preload": ["sqlite:thelibrary.db"] }
   },

@@ -37,6 +37,12 @@ export default defineConfig({
       ignored: ['**/src-tauri/**'],
     },
   },
+  optimizeDeps: {
+    // Only the zstd worker imports this library, and the dependency scan does not follow
+    // `new Worker(new URL(...))`: without this line the dev server discovers it on the first
+    // compression and reloads the page, which wipes the in-memory database of the browser mode.
+    include: ['@hpcc-js/wasm-zstd'],
+  },
   // `envPrefix` keeps Vite's default (VITE_*). The only variable read is VITE_DEV_ACCOUNT_ID, by
   // development builds only (src/adapters/dev/dev-environment.ts): Vite reads the
   // `.env.development.*` files in development mode only. (Tauri's guide adds 'TAURI_ENV_*', but

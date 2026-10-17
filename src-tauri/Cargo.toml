@@ -29,14 +29,26 @@ tauri-plugin-log = "2.10.0"
 tauri-plugin-store = "2.5.0"
 # HTTP client of the webview (deadlock-api). Default features minus `cookies`: the API needs no
 # cookie, so none is ever kept. `gzip` lets the server compress its responses (the hero catalogue
-# weighs about 1.4 MB uncompressed).
+# weighs about 1.4 MB uncompressed). TLS trusts the union of two root sets, because each one covers
+# a case the other misses:
+# - `rustls-tls-native-roots` (the Windows certificate store): antivirus software and corporate
+#   proxies that inspect HTTPS install their own root there, and the bundled list does not know it,
+#   so without it every request would fail behind them.
+# - `rustls-tls` (the root list bundled with webpki): Windows adds most trusted roots to its store
+#   only the first time a program needs them, so a store that never fetched the root of the API
+#   would reject it; the same holds if `SSL_CERT_FILE`/`SSL_CERT_DIR` replaces the store.
 tauri-plugin-http = { version = "2.8.2", default-features = false, features = [
   "rustls-tls",
+  "rustls-tls-native-roots",
   "http2",
   "charset",
   "system-proxy",
   "gzip",
 ] }
+# File access of the webview. The capability (`capabilities/default.json`) restricts it to the
+# match archive folder. 2.7.1 matches `@tauri-apps/plugin-fs` (the Tauri CLI compares both), and
+# 2.7.0 or later is required: it fixes the scope check of symlinked ancestors.
+tauri-plugin-fs = "2.7.1"
 # SQLite database of the app; the only database driver compiled in.
 tauri-plugin-sql = { version = "2.5.0", features = ["sqlite"] }
 log = "0.4"

@@ -75,6 +75,12 @@ pub fn run() {
         .plugin(settings_store_plugin())
         // HTTP requests of the webview, limited to the hosts allowed in `capabilities/default.json`.
         .plugin(tauri_plugin_http::init())
+        // File access of the webview, for the match archive only. The plugin itself allows
+        // nothing: the window may touch the archive folder and nothing else because the scope
+        // lives in `capabilities/default.json` (`fs:scope`, `$APPLOCALDATA/archive`) and
+        // `fs:default` is never granted. `plugins.fs.scopeDroppedPaths` is `false` in
+        // `tauri.conf.json`, so a file dropped on the window never joins that scope.
+        .plugin(tauri_plugin_fs::init())
         // Opens the database and applies its pending migrations, also before any window exists.
         .plugin(sql_plugin());
 
@@ -371,6 +377,14 @@ mod tests {
         parse_json(include_str!("../tauri.conf.json"), "tauri.conf.json")
     }
 
+    /// `tauri.dev.conf.json`, merged over the release configuration in development builds.
+    fn dev_config() -> serde_json::Value {
+        parse_json(
+            include_str!("../tauri.dev.conf.json"),
+            "tauri.dev.conf.json",
+        )
+    }
+
     /// `capabilities/default.json`, the permissions of the main window.
     fn default_capability() -> serde_json::Value {
         parse_json(
@@ -435,9 +449,32 @@ mod tests {
                     "allow": [{ "url": "https://api.deadlock-api.com/*" }]
                 },
                 "sql:allow-select",
-                "sql:allow-execute"
+                "sql:allow-execute",
+                "fs:allow-mkdir",
+                "fs:allow-write-file",
+                "fs:allow-read-file",
+                "fs:allow-exists",
+                "fs:allow-read-dir",
+                "fs:allow-remove",
+                "fs:allow-rename",
+                {
+                    "identifier": "fs:scope",
+                    "allow": [
+                        { "path": "$APPLOCALDATA/archive" },
+                        { "path": "$APPLOCALDATA/archive/**" }
+                    ]
+                }
             ])
         );
+    }
+
+    /// The identifier of a permission entry of a capability: the entry itself when it is a plain
+    /// string, its `identifier` field when it is an object (a permission that carries a scope).
+    fn permission_identifier(permission: &serde_json::Value) -> &str {
+        permission
+            .as_str()
+            .or_else(|| permission["identifier"].as_str())
+            .expect("a permission must be a string or an object with an identifier")
     }
 
     #[test]
@@ -449,10 +486,7 @@ mod tests {
             .as_array()
             .expect("permissions must be a list");
         for permission in permissions {
-            let identifier = permission
-                .as_str()
-                .or_else(|| permission["identifier"].as_str())
-                .expect("a permission must be a string or an object with an identifier");
+            let identifier = permission_identifier(permission);
             if identifier.starts_with("sql:") {
                 assert!(
                     ["sql:allow-select", "sql:allow-execute"].contains(&identifier),
@@ -461,6 +495,77 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn main_window_files_stay_in_the_archive_folder() {
+        // The match archive is the only place the webview may touch. `fs:default` reads the
+        // config, data, local-data, cache and log folders recursively, and the `fs:scope-*` or
+        // `fs:allow-*-recursive` sets and any extra path widen the scope the same way: none of
+        // them may be granted. The scope below has two entries because `archive/**` does not match
+        // the folder `archive` itself.
+        const ALLOWED_FS_PERMISSIONS: [&str; 8] = [
+            "fs:allow-mkdir",
+            "fs:allow-write-file",
+            "fs:allow-read-file",
+            "fs:allow-exists",
+            "fs:allow-read-dir",
+            "fs:allow-remove",
+            "fs:allow-rename",
+            "fs:scope",
+        ];
+        let capability = default_capability();
+        let permissions = capability["permissions"]
+            .as_array()
+            .expect("permissions must be a list");
+        let mut scopes = Vec::new();
+        for permission in permissions {
+            let identifier = permission_identifier(permission);
+            if !identifier.starts_with("fs:") {
+                continue;
+            }
+            assert!(
+                ALLOWED_FS_PERMISSIONS.contains(&identifier),
+                "{identifier} is not one of the reviewed fs permissions: only the seven \
+                 `fs:allow-*` permissions of the archive and its `fs:scope` are allowed, and any \
+                 other one needs a new review (`fs:default` and the broad sets reach the config, \
+                 data, cache and log folders)"
+            );
+            if identifier == "fs:scope" {
+                scopes.push(permission);
+            } else {
+                // A command permission written as an object could carry its own `allow` paths and
+                // widen the scope without touching the `fs:scope` entry.
+                assert!(
+                    permission.is_string(),
+                    "{identifier} must be a plain permission: a scope belongs in `fs:scope` only"
+                );
+            }
+        }
+        // Exactly one scope entry, with exactly the two archive paths and no other key (a `deny`
+        // list included: the scope is reviewed as a whole).
+        assert_eq!(
+            scopes,
+            [&serde_json::json!({
+                "identifier": "fs:scope",
+                "allow": [
+                    { "path": "$APPLOCALDATA/archive" },
+                    { "path": "$APPLOCALDATA/archive/**" }
+                ]
+            })]
+        );
+    }
+
+    #[test]
+    fn dropped_files_never_join_the_file_scope() {
+        // By default a file dropped on the window is added to the `fs` scope, so a file dragged
+        // from anywhere would become readable and writable by the webview. In development builds
+        // `tauri.dev.conf.json` is merged over this file and could bring the default back:
+        // `development_config_only_renames_the_app` pins its keys.
+        assert_eq!(
+            release_config()["plugins"]["fs"]["scopeDroppedPaths"],
+            serde_json::json!(false)
+        );
     }
 
     #[test]
@@ -499,14 +604,29 @@ mod tests {
     }
 
     #[test]
+    fn development_config_only_renames_the_app() {
+        // `tauri.dev.conf.json` is merged over `tauri.conf.json` in development builds (RFC 7396
+        // merge patch: a value replaces the release one, a `null` deletes it). Any key besides the
+        // three below would override the reviewed release configuration, the CSP, the
+        // capabilities, the plugins and their scopes included, in the builds the owner runs every
+        // day, with no other test noticing: it must be reviewed first, then added here on purpose.
+        let dev = dev_config();
+        let mut keys: Vec<&str> = dev
+            .as_object()
+            .expect("tauri.dev.conf.json must be an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["$schema", "identifier", "productName"]);
+    }
+
+    #[test]
     fn dev_app_never_shares_the_data_folders_of_the_release() {
         // Same identifier or product name: the dev build would read and migrate the database
         // and the settings of an installed release.
         let release = release_config();
-        let dev = parse_json(
-            include_str!("../tauri.dev.conf.json"),
-            "tauri.dev.conf.json",
-        );
+        let dev = dev_config();
         let release_identifier = release["identifier"]
             .as_str()
             .expect("tauri.conf.json must have an identifier");

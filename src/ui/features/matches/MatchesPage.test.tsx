@@ -27,6 +27,13 @@ import { createI18n } from '../../i18n/i18n';
 const NOW = Date.UTC(2026, 9, 14, 12, 0, 0);
 
 /**
+ * Size of the synthetic history of the tests that do not need a long one. A synchronisation also
+ * downloads and archives the details of its Paige matches, which a longer history makes slow (two
+ * seconds for the default 240 matches); this one has four of them.
+ */
+const MATCH_COUNT = 12;
+
+/**
  * Render the application on the matches page.
  *
  * @param options - Options of the test services; the clock is fixed at {@link NOW}.
@@ -86,7 +93,9 @@ describe('MatchesPage', () => {
 
   it('keeps the matches shown when a later refresh fails', async () => {
     const user = userEvent.setup();
-    const { services, logger } = await renderMatchesPage();
+    const { services, logger } = await renderMatchesPage({
+      handler: createFixtureApi({ now: NOW, matchCount: MATCH_COUNT }),
+    });
     await clickSyncNow(user);
     expect(await screen.findByRole('table', { name: 'Most recent matches' })).toBeInTheDocument();
 
@@ -108,7 +117,8 @@ describe('MatchesPage', () => {
       );
     });
     const table = screen.getByRole('table', { name: 'Most recent matches' });
-    expect(within(table).getAllByRole('row')).toHaveLength(101); // The header and the 100 matches.
+    // The header and the matches.
+    expect(within(table).getAllByRole('row')).toHaveLength(MATCH_COUNT + 1);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
@@ -131,13 +141,23 @@ describe('MatchesPage', () => {
 
   it('lists the 100 most recent matches with the hero names once synchronised', async () => {
     const user = userEvent.setup();
-    await renderMatchesPage();
+    // One match more than the list shows: the smallest history that proves the limit. The test is
+    // about the list, so deadlock-api serves the history only: every match detail is a 404, which
+    // keeps the synchronisation from compressing and archiving them (seconds of work, whose
+    // duration would depend on the machine, against a test timeout of 5 s).
+    const fixtures = createFixtureApi({ now: NOW, matchCount: 101 });
+    await renderMatchesPage({
+      handler: (request) =>
+        /\/v1\/matches\/\d+\/metadata/.test(request.url)
+          ? jsonResponse({ status: 404, error: 'Match not found' }, 404)
+          : fixtures(request),
+    });
 
     await clickSyncNow(user);
 
     const table = await screen.findByRole('table', { name: 'Most recent matches' });
     expect(within(table).getAllByRole('row')).toHaveLength(101);
-    expect(screen.getByText('The 100 most recent of your 240 matches.')).toBeInTheDocument();
+    expect(screen.getByText('The 100 most recent of your 101 matches.')).toBeInTheDocument();
     expect(within(table).getAllByText('Paige').length).toBeGreaterThan(0);
     expect(within(table).getAllByText(/^(Win|Loss)$/)).toHaveLength(100);
   });
@@ -155,7 +175,7 @@ describe('MatchesPage', () => {
 
   it('links each match to its detail page', async () => {
     const user = userEvent.setup();
-    await renderMatchesPage();
+    await renderMatchesPage({ handler: createFixtureApi({ now: NOW, matchCount: MATCH_COUNT }) });
     await clickSyncNow(user);
     const table = await screen.findByRole('table', { name: 'Most recent matches' });
 
@@ -168,7 +188,7 @@ describe('MatchesPage', () => {
 
   it('shows heroes by their id when the catalogue is unavailable', async () => {
     const user = userEvent.setup();
-    const fixtures = createFixtureApi({ now: NOW });
+    const fixtures = createFixtureApi({ now: NOW, matchCount: MATCH_COUNT });
     await renderMatchesPage({
       handler: (request) =>
         request.url.includes('/assets/heroes') ? jsonResponse({}, 500) : fixtures(request),
@@ -182,7 +202,10 @@ describe('MatchesPage', () => {
 
   it('speaks French, but keeps the hero names in English', async () => {
     const user = userEvent.setup();
-    await renderMatchesPage({}, 'fr');
+    await renderMatchesPage(
+      { handler: createFixtureApi({ now: NOW, matchCount: MATCH_COUNT }) },
+      'fr',
+    );
 
     await clickSyncNow(user, 'Synchroniser');
 

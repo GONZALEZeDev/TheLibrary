@@ -5,8 +5,9 @@
  * one match, and the retry of a match that failed.
  *
  * A run (`MatchDetailService.runQueue`) starts by removing the temporary files an interrupted write
- * left behind, then two pullers take the matches `MatchDetailRepository.nextDue` offers, most recent
- * first, until none is due. For one match the steps are, in this order:
+ * left behind (a file that cannot be removed is logged and does not stop the run: the next write of
+ * its match replaces it), then two pullers take the matches `MatchDetailRepository.nextDue` offers,
+ * most recent first, until none is due. For one match the steps are, in this order:
  * download, validate (for the match that was asked for), find the tracked player, prune, wrap in an
  * envelope, read the facts of the match page back from it (the door check), encode, compress, write
  * the archive, and only then record the match as archived. The record comes last: if anything
@@ -218,16 +219,16 @@ export class MatchDetailService {
       // An interrupted write left a temporary file: it is useless, and the next write replaces it.
       await this.#archive.removeTemporaryFiles(accountId);
     } catch (error) {
-      this.#stop(run, 'storage', error, accountId, syncRunId);
+      // Not a reason to stop: a leftover is harmless, so a file that cannot be deleted (held open by
+      // another program, say) must not keep the matches from being archived, run after run.
+      this.#logLeftoversKept(accountId, syncRunId, error);
     }
-    if (run.stoppedBy === null) {
-      // The matches the pullers hold or held in this run. A match is tried once per run, whatever
-      // becomes of it, and this is how the pullers keep from taking the same match.
-      const taken = new Set<MatchId>();
-      await Promise.all(
-        Array.from({ length: PULLER_COUNT }, () => this.#pull(accountId, syncRunId, run, taken)),
-      );
-    }
+    // The matches the pullers hold or held in this run. A match is tried once per run, whatever
+    // becomes of it, and this is how the pullers keep from taking the same match.
+    const taken = new Set<MatchId>();
+    await Promise.all(
+      Array.from({ length: PULLER_COUNT }, () => this.#pull(accountId, syncRunId, run, taken)),
+    );
     const report: DetailRunReport = {
       archived: run.archived,
       retried: run.retried,
@@ -681,6 +682,22 @@ export class MatchDetailService {
       ...describeErrorForLog(error, accountId, !isAppError(error)),
       matchId,
       step,
+    });
+  }
+
+  /**
+   * Log the temporary files that could not be removed at the start of a run, as a warning. The line
+   * holds the codes and the cause of the failure with the account id replaced, and its stack, like
+   * the other failures of the disk.
+   *
+   * @param accountId - The tracked account, kept out of the log.
+   * @param syncRunId - Id of the run in the logs.
+   * @param error - What was caught.
+   */
+  #logLeftoversKept(accountId: AccountId, syncRunId: string, error: unknown): void {
+    this.#logger.log('warn', LOG_SCOPE, 'Leftover temporary files could not be removed', {
+      ...describeErrorForLog(error, accountId, !isAppError(error)),
+      syncRunId,
     });
   }
 

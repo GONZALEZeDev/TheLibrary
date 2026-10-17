@@ -8,6 +8,8 @@
  * @packageDocumentation
  */
 import type { AccountSource } from '../ports/account-source.port';
+import type { ArchiveStore } from '../ports/archive-store.port';
+import type { Compressor } from '../ports/compressor.port';
 import type { Database } from '../ports/database.port';
 import type { HttpClient } from '../ports/http-client.port';
 import type { Logger } from '../ports/logger.port';
@@ -16,6 +18,8 @@ import { ApiCacheRepository } from './api-cache.repository';
 import type { AppServices } from './app-services';
 import { DeadlockApiService } from './deadlock-api.service';
 import { HeroCatalogService } from './hero-catalog.service';
+import { MatchDetailRepository } from './match-detail.repository';
+import { MatchDetailService } from './match-detail.service';
 import { MatchesRepository } from './matches.repository';
 import { MatchesService } from './matches.service';
 import { SettingsService } from './settings.service';
@@ -29,6 +33,10 @@ export interface AppAdapters {
   readonly http: HttpClient;
   readonly database: Database;
   readonly accountSource: AccountSource;
+  /** Where the archives of the match details are kept. */
+  readonly archiveStore: ArchiveStore;
+  /** Compresses the archives of the match details. */
+  readonly compressor: Compressor;
 }
 
 /** Options of {@link createAppServices}. */
@@ -37,6 +45,11 @@ export interface AppServicesOptions {
   readonly appVersion: string;
   /** Current time (Unix ms); `Date.now` by default, controlled by tests. */
   readonly now?: () => number;
+  /**
+   * Wait for a delay in milliseconds when a match detail request has to wait for the next slot of
+   * the rate limit; a timer by default, controlled by tests.
+   */
+  readonly sleep?: (ms: number) => Promise<void>;
 }
 
 /**
@@ -47,12 +60,26 @@ export interface AppServicesOptions {
  * @returns The services.
  */
 export function createAppServices(adapters: AppAdapters, options: AppServicesOptions): AppServices {
-  const { logger, settingsStore, http, database, accountSource } = adapters;
+  const { logger, settingsStore, http, database, accountSource, archiveStore, compressor } =
+    adapters;
   const now = options.now ?? Date.now;
   const syncState = new SyncStateRepository(database, logger, now);
   const matches = new MatchesRepository(database, now);
+  // One API service for the whole app: the history, the heroes and the match details all go
+  // through the same rate limit, the same in-flight limit and the same shared pause.
   const api = new DeadlockApiService(http, syncState, logger, {
     appVersion: options.appVersion,
+    now,
+    // Left out, not passed as `undefined`: the service then uses its own timer.
+    ...(options.sleep === undefined ? {} : { sleep: options.sleep }),
+  });
+  const details = new MatchDetailService({
+    accountSource,
+    api,
+    repository: new MatchDetailRepository(database),
+    archive: archiveStore,
+    compressor,
+    logger,
     now,
   });
   return {
@@ -60,6 +87,8 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     settings: new SettingsService(settingsStore, logger),
     matches: new MatchesService(accountSource, matches),
     heroes: new HeroCatalogService(api, new ApiCacheRepository(database), logger, now),
-    sync: new SyncService({ accountSource, api, matches, syncState, logger, now }),
+    details,
+    // The synchronisation runs the detail queue after the history: it gets the one `details`.
+    sync: new SyncService({ accountSource, api, details, matches, syncState, logger, now }),
   };
 }

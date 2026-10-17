@@ -12,15 +12,18 @@ import {
 } from '../adapters/dev/fixture-http-client.adapter';
 import { FIXTURE_ACCOUNT_ID } from '../adapters/dev/fixtures/match-history.fixture';
 import { LocalStorageSettingsStore } from '../adapters/dev/local-storage-settings-store.adapter';
+import { MemoryArchiveStore } from '../adapters/dev/memory-archive-store.adapter';
 import { MemoryLogger } from '../adapters/dev/memory-logger.adapter';
 import { StaticAccountSource } from '../adapters/dev/static-account-source.adapter';
 import type { AccountId } from '../core/domain/account';
+import type { Compressor } from '../ports/compressor.port';
 import type { Database } from '../ports/database.port';
 import type { Logger } from '../ports/logger.port';
 import type { SettingsStore } from '../ports/settings-store.port';
 import type { AppServices } from '../services/app-services';
 import { createAppServices } from '../services/create-app-services';
 import { createQueryClient } from '../ui/app/query-client';
+import { DirectCompressor } from './direct-compressor';
 import { createTestDatabase } from './test-data';
 
 /** Options of {@link createTestServices}. */
@@ -38,7 +41,19 @@ export interface TestServicesOptions {
    * a restart of the app, or one of your own to make the storage fail.
    */
   readonly database?: Database;
-  /** Current time (Unix ms); `Date.now` by default. */
+  /**
+   * Where the archives of the match details are kept; a fresh in-memory store by default. Pass the
+   * store of an earlier call to simulate a restart of the app, or a subclass of your own to make the
+   * files fail (`failNextWrite` already does it for a write).
+   */
+  readonly archiveStore?: MemoryArchiveStore;
+  /** Compresses the archives; a {@link DirectCompressor} (no worker under jsdom) by default. */
+  readonly compressor?: Compressor;
+  /**
+   * The clock the services start from (Unix ms); `Date.now` by default. The services read it plus
+   * the time they skipped instead of waiting (see {@link TestServices.skippedMs}), so a test that
+   * fixes it sees the time only move forward when the services wait.
+   */
   readonly now?: () => number;
 }
 
@@ -49,22 +64,54 @@ export interface TestServices {
   readonly http: FixtureHttpClient;
   /** The database the services use: the one given in the options, or the fresh one. */
   readonly database: Database;
+  /**
+   * The archive store the services use: the one given in the options, or the fresh one. Its test
+   * helpers (`failNextWrite`, `addTemporaryFile`) and its `files` are available.
+   */
+  readonly archiveStore: MemoryArchiveStore;
+  /**
+   * The time, in milliseconds, the services skipped so far instead of waiting: it is what the
+   * services' clock is ahead of `TestServicesOptions.now`. It grows when the detail queue waits
+   * for a request slot (5 per second), so a first synchronisation of a hundred details is
+   * ahead by about twenty seconds. A test that compares a time the services wrote with its own
+   * clock adds it.
+   */
+  readonly skippedMs: () => number;
 }
 
 /**
  * Build the application services on the development adapters: Web Storage settings, synthetic
- * deadlock-api, in-memory database, memory logger. jsdom's `localStorage` is cleared after each
- * test (see `setup.ts`) and each call gets a fresh database unless one is given, so every test
- * starts from a first launch.
+ * deadlock-api, in-memory database and archive store, memory logger, and the zstd codec on the test
+ * thread. jsdom's `localStorage` is cleared after each test (see `setup.ts`) and each call gets a
+ * fresh database and archive unless some are given, so every test starts from a first launch.
+ *
+ * The services run on a virtual clock: when the detail queue must wait for the rate limit of
+ * deadlock-api (5 requests per second), the wait is skipped, not slept, and the clock the services
+ * read moves forward by that time. The limit is honoured in the services' time, and a first
+ * synchronisation of about a hundred details takes no more of the test's time than the work itself.
  *
  * @param options - See {@link TestServicesOptions}.
  * @returns The services and their adapters.
  */
 export function createTestServices(options: TestServicesOptions = {}): TestServices {
-  const now = options.now ?? Date.now;
+  const baseNow = options.now ?? Date.now;
+  let skipped = 0;
+  // The clock of every service: the base clock, moved forward by the waits that were skipped.
+  const now = (): number => baseNow() + skipped;
+  /**
+   * Skip a wait: the clock moves forward by the delay and the wait ends at once.
+   *
+   * @param ms - The delay the service asked for.
+   * @returns A promise already resolved.
+   */
+  const sleep = (ms: number): Promise<void> => {
+    skipped += ms;
+    return Promise.resolve();
+  };
   const logger = new MemoryLogger();
   const http = new FixtureHttpClient(options.handler ?? createFixtureApi({ now: now() }));
   const database = options.database ?? createTestDatabase();
+  const archiveStore = options.archiveStore ?? new MemoryArchiveStore();
   const services = createAppServices(
     {
       logger,
@@ -75,10 +122,12 @@ export function createTestServices(options: TestServicesOptions = {}): TestServi
         options.accountId === undefined ? FIXTURE_ACCOUNT_ID : options.accountId,
         options.missingAccountHint,
       ),
+      archiveStore,
+      compressor: options.compressor ?? new DirectCompressor(),
     },
-    { appVersion: '0.0.0-test', now },
+    { appVersion: '0.0.0-test', now, sleep },
   );
-  return { services, logger, http, database };
+  return { services, logger, http, database, archiveStore, skippedMs: () => skipped };
 }
 
 /**

@@ -43,10 +43,12 @@ export interface ArchiveStore {
    * Delete the temporary files an interrupted write left in the folder of an account.
    *
    * Archives and the files of other accounts are never touched. A missing folder is not an error:
-   * there is nothing to remove.
+   * there is nothing to remove. Every leftover is tried even when one cannot be deleted, and the
+   * first failure is reported once all have been tried.
    *
    * @param accountId - The account whose leftovers are removed.
    * @returns A promise resolved once the leftovers are gone.
+   * @throws The first deletion failure, after every leftover was tried.
    */
   removeTemporaryFiles(accountId: AccountId): Promise<void>;
 

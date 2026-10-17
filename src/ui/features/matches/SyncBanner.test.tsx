@@ -30,6 +30,13 @@ import { SyncBanner } from './SyncBanner';
 /** Time of the tests: the synthetic history ends 2 hours before it. */
 const NOW = Date.UTC(2026, 9, 14, 12, 0, 0);
 
+/**
+ * Size of the synthetic history of the tests that do not care about it. A synchronisation also
+ * downloads and archives the details of its Paige matches, which a longer history makes slow (two
+ * seconds for the default 240 matches); this one has four of them.
+ */
+const MATCH_COUNT = 12;
+
 /** Said when the history was just downloaded and refreshed from Steam. */
 const REFRESHED_SENTENCE = 'History refreshed from Steam.';
 
@@ -144,16 +151,21 @@ describe('SyncBanner', () => {
 
   it('synchronises on demand and reports the outcome', async () => {
     const user = userEvent.setup();
-    const { http } = await renderBanner();
+    const { http } = await renderBanner({
+      handler: createFixtureApi({ now: NOW, matchCount: MATCH_COUNT }),
+    });
 
     await clickSyncNow(user);
 
     expect(
       await screen.findByText(`Last synchronisation: ${formatTime(NOW)}.`),
     ).toBeInTheDocument();
-    expect(screen.getByText('New matches: 240.')).toBeInTheDocument();
+    expect(screen.getByText(`New matches: ${String(MATCH_COUNT)}.`)).toBeInTheDocument();
     expect(screen.getByText(REFRESHED_SENTENCE)).toBeInTheDocument();
-    expect(http.requests).toHaveLength(1);
+    // One request for the history: the others, if any, are for the details of the matches.
+    expect(http.requests.filter((request) => request.url.endsWith('/match-history'))).toHaveLength(
+      1,
+    );
   });
 
   it('shows the running synchronisation, whoever started it', async () => {
@@ -162,7 +174,7 @@ describe('SyncBanner', () => {
     const answered = new Promise<void>((resolve) => {
       gate.release = resolve;
     });
-    const fixtures = createFixtureApi({ now: NOW });
+    const fixtures = createFixtureApi({ now: NOW, matchCount: MATCH_COUNT });
     const { services } = await renderBanner({
       handler: async (request) => {
         await answered;
@@ -176,7 +188,7 @@ describe('SyncBanner', () => {
     expect(await screen.findByRole('button', { name: 'Syncing…' })).toBeDisabled();
     gate.release?.();
     await sync;
-    expect(await screen.findByText('New matches: 240.')).toBeInTheDocument();
+    expect(await screen.findByText(`New matches: ${String(MATCH_COUNT)}.`)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sync now' })).toBeEnabled();
   });
 
@@ -225,7 +237,9 @@ describe('SyncBanner', () => {
   });
 
   it('says when the request limit is reached, with the time of the last download', async () => {
-    const { services, http } = await renderBanner();
+    const { services, http } = await renderBanner({
+      handler: createFixtureApi({ now: NOW, matchCount: MATCH_COUNT }),
+    });
     await screen.findByText('Not synchronised yet.');
 
     await synchroniseBeyondTheBudget(services);
@@ -235,8 +249,10 @@ describe('SyncBanner', () => {
         `Request limit reached for now. History last downloaded: ${formatTime(NOW)}.`,
       ),
     ).toBeInTheDocument();
-    // The refused synchronisation sent nothing: only the allowed ones reached deadlock-api.
-    expect(http.requests).toHaveLength(HISTORY_RATE_LIMIT.limit);
+    // The refused synchronisation asked for no history: only the allowed ones reached deadlock-api.
+    expect(http.requests.filter((request) => request.url.endsWith('/match-history'))).toHaveLength(
+      HISTORY_RATE_LIMIT.limit,
+    );
   });
 
   it('says the history will come later when the limit is reached before any download', async () => {
@@ -254,7 +270,7 @@ describe('SyncBanner', () => {
 
   it('no longer says the history was refreshed from Steam once a later synchronisation failed', async () => {
     const user = userEvent.setup();
-    const answers = changingHandler(createFixtureApi({ now: NOW }));
+    const answers = changingHandler(createFixtureApi({ now: NOW, matchCount: MATCH_COUNT }));
     await renderBanner({ handler: answers.handler });
     await clickSyncNow(user);
     expect(await screen.findByText(REFRESHED_SENTENCE)).toBeInTheDocument();
@@ -268,7 +284,7 @@ describe('SyncBanner', () => {
 
   it('no longer says the history was refreshed from Steam once a later synchronisation was paused', async () => {
     const user = userEvent.setup();
-    const answers = changingHandler(createFixtureApi({ now: NOW }));
+    const answers = changingHandler(createFixtureApi({ now: NOW, matchCount: MATCH_COUNT }));
     await renderBanner({ handler: answers.handler });
     await clickSyncNow(user);
     expect(await screen.findByText(REFRESHED_SENTENCE)).toBeInTheDocument();
@@ -310,10 +326,12 @@ describe('SyncBanner', () => {
 
   it('speaks French', async () => {
     const user = userEvent.setup();
-    await renderBanner({}, 'fr');
+    await renderBanner({ handler: createFixtureApi({ now: NOW, matchCount: MATCH_COUNT }) }, 'fr');
 
     await clickSyncNow(user, 'Synchroniser');
 
-    expect(await screen.findByText('Nouvelles parties : 240.')).toBeInTheDocument();
+    expect(
+      await screen.findByText(`Nouvelles parties : ${String(MATCH_COUNT)}.`),
+    ).toBeInTheDocument();
   });
 });

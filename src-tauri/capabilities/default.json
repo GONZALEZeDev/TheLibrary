@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Least-privilege permissions of the main window: logging through the log plugin; read/write access to the settings store and to the database that the shell opened at startup (the window can use them but cannot open another connection); HTTPS requests to deadlock-api only. Nothing else is exposed to the webview.",
+  "description": "Least-privilege permissions of the main window: logging through the log plugin; read/write access to the settings store and to the database that the shell opened at startup (the window can use them but cannot open another connection); HTTPS requests to deadlock-api only; read/write access to the match archive folder only (the app local data folder, archive/), never to any other file. Nothing else is exposed to the webview.",
   "windows": ["main"],
   "permissions": [
     "log:default",
@@ -14,6 +14,20 @@
       "allow": [{ "url": "https://api.deadlock-api.com/*" }]
     },
     "sql:allow-select",
-    "sql:allow-execute"
+    "sql:allow-execute",
+    "fs:allow-mkdir",
+    "fs:allow-write-file",
+    "fs:allow-read-file",
+    "fs:allow-exists",
+    "fs:allow-read-dir",
+    "fs:allow-remove",
+    "fs:allow-rename",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        { "path": "$APPLOCALDATA/archive" },
+        { "path": "$APPLOCALDATA/archive/**" }
+      ]
+    }
   ]
 }

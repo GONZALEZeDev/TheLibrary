@@ -7,10 +7,10 @@
  * application, then starts the synchronisation. It also logs every error nothing else reports:
  * errors outside a route, unhandled promise rejections, uncaught render errors.
  *
- * Development-only code (the browser adapters, the development account of the desktop build, the
- * TanStack devtools) is only reached through dynamic `import()`s guarded by
- * `import.meta.env.DEV`. Vite replaces that flag with `false` in production builds and leaves
- * those modules out; `scripts/check-dev-code.ts` proves it in CI.
+ * Development-only code (the browser adapters, with their in-memory archive store, the development
+ * account of the desktop build, the TanStack devtools) is only reached through dynamic `import()`s
+ * guarded by `import.meta.env.DEV`. Vite replaces that flag with `false` in production builds and
+ * leaves those modules out; `scripts/check-dev-code.ts` proves it in CI.
  *
  * @packageDocumentation
  */
@@ -18,6 +18,8 @@ import { RouterProvider } from '@tanstack/react-router';
 import { isTauri } from '@tauri-apps/api/core';
 import { lazy, StrictMode, Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
+import { WorkerCompressor } from './adapters/browser/worker-compressor.adapter';
+import { TauriArchiveStore } from './adapters/tauri/tauri-archive-store.adapter';
 import { TauriDatabase } from './adapters/tauri/tauri-database.adapter';
 import { TauriHttpClient } from './adapters/tauri/tauri-http-client.adapter';
 import { TauriLogger } from './adapters/tauri/tauri-logger.adapter';
@@ -52,6 +54,10 @@ const DevTools = import.meta.env.DEV
  *   the browser.
  */
 async function createAdapters(desktop: boolean): Promise<AppAdapters> {
+  // The compressor is the same in the desktop app and in the browser dev mode, and the app has
+  // one: it starts its zstd worker on the first use, so creating it here costs nothing even when
+  // the adapters below turn out to be unavailable.
+  const compressor = new WorkerCompressor();
   if (desktop) {
     const logger = new TauriLogger();
     return {
@@ -59,6 +65,8 @@ async function createAdapters(desktop: boolean): Promise<AppAdapters> {
       settingsStore: new TauriSettingsStore(),
       http: new TauriHttpClient(),
       database: new TauriDatabase(),
+      archiveStore: new TauriArchiveStore(),
+      compressor,
       // Release builds link no account until the Steam sign-in exists; development builds read
       // the developer's own account from the git-ignored .env.development.local file.
       accountSource: import.meta.env.DEV
@@ -67,7 +75,11 @@ async function createAdapters(desktop: boolean): Promise<AppAdapters> {
     };
   }
   if (import.meta.env.DEV) {
-    return (await import('./adapters/dev/dev-environment')).createBrowserDevAdapters();
+    // The in-memory archive store comes with the browser dev adapters, never from a static import.
+    return {
+      ...(await import('./adapters/dev/dev-environment')).createBrowserDevAdapters(),
+      compressor,
+    };
   }
   throw new Error('Outside development, TheLibrary only runs in its desktop app');
 }

@@ -9,6 +9,7 @@
  */
 import type { Logger } from '../ports/logger.port';
 import type { HeroCatalogService } from './hero-catalog.service';
+import type { MatchDetailService } from './match-detail.service';
 import type { MatchesService } from './matches.service';
 import type { SettingsService } from './settings.service';
 import type { SyncService } from './sync.service';
@@ -23,6 +24,8 @@ export interface AppServices {
   readonly matches: MatchesService;
   /** Hero names. */
   readonly heroes: HeroCatalogService;
+  /** Detail of the Paige matches: download, archive, and what the match page shows of it. */
+  readonly details: MatchDetailService;
   /** Synchronisation of the match history with deadlock-api. */
   readonly sync: SyncService;
 }

@@ -29,6 +29,21 @@ export const AUTOMATIC_HISTORY_RATE_LIMIT: RateLimit = { limit: 6, windowMs: HOU
 export const ASSETS_RATE_LIMIT: RateLimit = { limit: 2, windowMs: 1_000 };
 
 /**
+ * Steam profile requests: 10 per minute. The app only needs the profile of one account at a time,
+ * so a few requests a minute are already a lot; 10 is a ceiling that keeps a bug from hammering
+ * deadlock-api, not a rate the app aims at.
+ */
+export const PROFILE_RATE_LIMIT: RateLimit = { limit: 10, windowMs: 60_000 };
+
+/**
+ * Steam profile requests sent with `refresh=true`: 3 per hour. deadlock-api allows 3 per minute and
+ * 15 per hour and per IP for them; staying at 3 an hour leaves a wide margin for the other apps of
+ * the same network. It counts on top of {@link PROFILE_RATE_LIMIT}: a refresh is also a profile
+ * request.
+ */
+export const PROFILE_REFRESH_RATE_LIMIT: RateLimit = { limit: 3, windowMs: HOUR_MS };
+
+/**
  * Match detail requests: 5 per second. deadlock-api allows 100 per second and per IP when the
  * match is in its cache, but only 100 per 10 seconds (10 per second) when it is read from storage,
  * and the app cannot know which of the two a match needs. 5 per second stays at half of the slower

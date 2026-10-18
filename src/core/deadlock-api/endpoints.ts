@@ -31,9 +31,9 @@ export const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 /**
  * Groups of endpoints sharing a politeness budget: `history` is the match history (its Steam
  * refresh is strictly rate-limited by deadlock-api), `assets` the static game data, `metadata` the
- * detail of one match.
+ * detail of one match, `profile` the Steam profile of a player (name and avatar).
  */
-export type RequestFamily = 'history' | 'assets' | 'metadata';
+export type RequestFamily = 'history' | 'assets' | 'metadata' | 'profile';
 
 /** A request to deadlock-api. */
 export interface ApiRequest {
@@ -103,6 +103,29 @@ export function matchMetadataRequest(matchId: MatchId): ApiRequest {
     url: `${DEADLOCK_API_BASE_URL}/v1/matches/${String(matchId)}/metadata?disable_steam=true`,
     endpoint: '/v1/matches/{match_id}/metadata',
     family: 'metadata',
+  };
+}
+
+/**
+ * The Steam profile of one player (persona name and avatar), as deadlock-api knows it.
+ *
+ * The endpoint takes a list of account ids, but the app only ever asks for the one account it is
+ * signed in with. An unknown player is not an error: deadlock-api answers `200` with an empty list
+ * `[]`, never a 404, so the caller must treat an empty list as "no profile" rather than as a failure.
+ *
+ * With `refresh`, the API fetches the profile from Steam again instead of answering from its cache.
+ * That path is strictly limited by deadlock-api (3 requests a minute and 15 an hour per IP), so the
+ * app budgets it far below the limit (see `PROFILE_REFRESH_RATE_LIMIT`).
+ *
+ * @param accountId - The player.
+ * @param refresh - Whether to ask deadlock-api to read the profile from Steam again.
+ * @returns The request.
+ */
+export function steamProfileRequest(accountId: AccountId, refresh: boolean): ApiRequest {
+  return {
+    url: `${DEADLOCK_API_BASE_URL}/v1/players/steam?account_ids=${String(accountId)}${refresh ? '&refresh=true' : ''}`,
+    endpoint: '/v1/players/steam',
+    family: 'profile',
   };
 }
 

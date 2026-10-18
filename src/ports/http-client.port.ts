@@ -1,9 +1,10 @@
 /**
  * HTTP port.
  *
- * Sends GET requests and returns the response as text. An HTTP error status is a normal response
- * here: what a status means depends on the API (see `core/deadlock-api/api-response.ts`). Only the
- * failures of the transport itself are errors.
+ * Sends GET and form POST requests and returns the response as text, or as bytes for a binary body
+ * such as an image. An HTTP error status is a normal response here: what a status means depends on
+ * the API (see `core/deadlock-api/api-response.ts`). Only the failures of the transport itself are
+ * errors.
  *
  * Unlike the other ports, the adapters report those failures as `AppError`s: only the adapter can
  * tell a timeout from a network failure or an oversized response.
@@ -11,7 +12,7 @@
  * @packageDocumentation
  */
 
-/** A GET request. */
+/** A request: the URL to reach and the limits to respect while doing so. */
 export interface HttpRequest {
   readonly url: string;
   /** Request headers, e.g. `User-Agent`. */
@@ -22,6 +23,12 @@ export interface HttpRequest {
   readonly maxBodyBytes: number;
 }
 
+/** A POST request whose body is a form. */
+export interface HttpFormPost extends HttpRequest {
+  /** `application/x-www-form-urlencoded` body; the client sets the `Content-Type` header. */
+  readonly form: string;
+}
+
 /** A response, whatever its status. */
 export interface HttpResponse {
   readonly status: number;
@@ -29,6 +36,15 @@ export interface HttpResponse {
   readonly headers: Readonly<Record<string, string>>;
   /** The body, decoded as UTF-8. */
   readonly body: string;
+}
+
+/** A response whose body is kept as it was received, whatever its status. */
+export interface HttpBytesResponse {
+  readonly status: number;
+  /** Response headers, with lower-case names. */
+  readonly headers: Readonly<Record<string, string>>;
+  /** The body, undecoded. */
+  readonly body: Uint8Array;
 }
 
 /** Sends HTTP requests. */
@@ -43,4 +59,23 @@ export interface HttpClient {
    *   `maxBodyBytes`.
    */
   get(request: HttpRequest): Promise<HttpResponse>;
+
+  /**
+   * Post a form and read the whole response. No redirect is followed: a 3xx answer is returned as
+   * it is, so the caller can look at where it leads.
+   *
+   * @param request - The request, with the form as its body.
+   * @returns The response, whatever its status.
+   * @throws AppError, as {@link HttpClient.get}.
+   */
+  postForm(request: HttpFormPost): Promise<HttpResponse>;
+
+  /**
+   * Send a GET request and read the whole response as bytes, for a binary body such as an image.
+   *
+   * @param request - The request.
+   * @returns The response, whatever its status.
+   * @throws AppError, as {@link HttpClient.get}.
+   */
+  getBytes(request: HttpRequest): Promise<HttpBytesResponse>;
 }

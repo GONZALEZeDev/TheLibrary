@@ -15,8 +15,10 @@ import { describe, expect, it } from 'vitest';
 import {
   archiveFolder,
   archivePath,
-  quarantineFileName,
-  QUARANTINE_FOLDER,
+  ARCHIVE_ROOT,
+  LEGACY_QUARANTINE_ENTRY,
+  quarantineFolder,
+  quarantinePath,
   QUARANTINE_LIMIT,
   temporaryArchivePath,
 } from '../../core/match-detail/archive-layout';
@@ -173,8 +175,30 @@ function createFakeFs(): FakeFs {
     remove: (path, options) => {
       const target = path.toString();
       return handle({ name: 'remove', path: target, options }, () => {
-        if (!files.delete(target)) {
-          throw new Error(`remove: ${target} is not a file`);
+        if (!folders.has(target)) {
+          // Like the plugin, a missing path is an error, which is why the adapter asks `exists`.
+          if (!files.delete(target)) {
+            throw new Error(`remove: ${target} does not exist`);
+          }
+          return;
+        }
+        const below = `${target}/`;
+        const hasContent =
+          [...files.keys()].some((file) => file.startsWith(below)) ||
+          [...folders].some((folder) => folder.startsWith(below));
+        // Like the plugin: a folder with something in it goes only when the removal is recursive.
+        if (hasContent && options?.recursive !== true) {
+          throw new Error(`remove: ${target} is not empty`);
+        }
+        for (const file of [...files.keys()]) {
+          if (file.startsWith(below)) {
+            files.delete(file);
+          }
+        }
+        for (const folder of [...folders]) {
+          if (folder === target || folder.startsWith(below)) {
+            folders.delete(folder);
+          }
         }
       });
     },
@@ -251,13 +275,14 @@ function bytesOf(fake: FakeFs, path: string): number[] | null {
 }
 
 /**
- * The path of a quarantined response.
+ * The path of a response of `MATCH` quarantined for an account.
  *
  * @param at - When it was quarantined.
- * @returns Its path under the quarantine folder.
+ * @param account - The account it was quarantined for; `ACCOUNT` by default.
+ * @returns Its path under the quarantine folder of that account.
  */
-function quarantinePath(at: number): string {
-  return `${QUARANTINE_FOLDER}/${quarantineFileName(MATCH, at)}`;
+function quarantinedAt(at: number, account = ACCOUNT): string {
+  return quarantinePath(account, MATCH, at);
 }
 
 /**
@@ -404,11 +429,13 @@ describe('TauriArchiveStore', () => {
     const store = new TauriArchiveStore(fake.functions);
     await store.write(ACCOUNT, MATCH, new Uint8Array([1]));
     await store.write(LONGER_ACCOUNT, MATCH, new Uint8Array([2]));
-    await store.quarantine(MATCH, QUARANTINE_START, new Uint8Array([3]));
+    await store.quarantine(ACCOUNT, MATCH, QUARANTINE_START, new Uint8Array([3]));
     seedFile(fake, temporaryArchivePath(ACCOUNT, OTHER_MATCH));
     seedFile(fake, temporaryArchivePath(LONGER_ACCOUNT, OTHER_MATCH));
     // A folder with the name of a temporary file is not a leftover of a write.
     seedFolder(fake, `${archiveFolder(ACCOUNT)}/nested.json.zst.tmp`);
+    // Nor is a file named like one inside the quarantine folder, which sits in the listed folder.
+    seedFile(fake, `${quarantineFolder(ACCOUNT)}/stray.json.zst.tmp`);
     fake.calls.length = 0;
 
     await store.removeTemporaryFiles(ACCOUNT);
@@ -420,13 +447,19 @@ describe('TauriArchiveStore', () => {
         archivePath(ACCOUNT, MATCH),
         archivePath(LONGER_ACCOUNT, MATCH),
         temporaryArchivePath(LONGER_ACCOUNT, OTHER_MATCH),
-        quarantinePath(QUARANTINE_START),
+        quarantinedAt(QUARANTINE_START),
+        `${quarantineFolder(ACCOUNT)}/stray.json.zst.tmp`,
       ].sort(),
     );
     expect(fake.folders.has(`${archiveFolder(ACCOUNT)}/nested.json.zst.tmp`)).toBe(true);
-    // Only the folder of the account is listed.
+    // The quarantine folder is an entry of the listed folder: it is a folder, so it is left alone.
+    expect(fake.folders.has(quarantineFolder(ACCOUNT))).toBe(true);
+    // Only the folder of the account is listed, and the one file removed is the leftover.
     expect(fake.calls.filter((call) => call.name === 'readDir').map((call) => call.path)).toEqual([
       archiveFolder(ACCOUNT),
+    ]);
+    expect(fake.calls.filter((call) => call.name === 'remove').map((call) => call.path)).toEqual([
+      temporaryArchivePath(ACCOUNT, OTHER_MATCH),
     ]);
   });
 
@@ -468,6 +501,7 @@ describe('TauriArchiveStore', () => {
     const fake = createFakeFs();
 
     await new TauriArchiveStore(fake.functions).quarantine(
+      ACCOUNT,
       MATCH,
       QUARANTINE_START,
       new Uint8Array([7, 8]),
@@ -476,65 +510,223 @@ describe('TauriArchiveStore', () => {
     // Folder, file, listing for the trim. A half-written quarantined file is harmless (it is never
     // read back), so there is no temporary file and no rename.
     expect(callLines(fake)).toEqual([
-      `mkdir ${QUARANTINE_FOLDER}`,
-      `writeFile ${quarantinePath(QUARANTINE_START)}`,
-      `readDir ${QUARANTINE_FOLDER}`,
+      `mkdir ${quarantineFolder(ACCOUNT)}`,
+      `writeFile ${quarantinedAt(QUARANTINE_START)}`,
+      `readDir ${quarantineFolder(ACCOUNT)}`,
     ]);
     expect(fake.calls[0]?.options).toMatchObject({ recursive: true });
-    expect(bytesOf(fake, quarantinePath(QUARANTINE_START))).toEqual([7, 8]);
+    expect(bytesOf(fake, quarantinedAt(QUARANTINE_START))).toEqual([7, 8]);
   });
 
-  it('keeps the 20 most recent quarantined responses', async () => {
+  it('quarantines under the folder of the account and keeps the 20 most recent', async () => {
     const fake = createFakeFs();
     const store = new TauriArchiveStore(fake.functions);
     const writes = QUARANTINE_LIMIT + 5;
     for (let index = 0; index < writes; index += 1) {
-      await store.quarantine(MATCH, QUARANTINE_START + index, new Uint8Array([index]));
+      await store.quarantine(ACCOUNT, MATCH, QUARANTINE_START + index, new Uint8Array([index]));
+    }
+    // Another account has fewer responses than the limit, written after those of the first one.
+    for (let index = 0; index < 3; index += 1) {
+      await store.quarantine(
+        LONGER_ACCOUNT,
+        MATCH,
+        QUARANTINE_START + index,
+        new Uint8Array([100 + index]),
+      );
     }
 
-    // The 5 oldest are gone, the 20 last remain.
-    const expectedPaths = Array.from({ length: QUARANTINE_LIMIT }, (_, offset) =>
-      quarantinePath(QUARANTINE_START + (writes - QUARANTINE_LIMIT) + offset),
-    );
-    expect([...fake.files.keys()].sort()).toEqual(expectedPaths);
+    // Everything is under the account folders, none in a quarantine folder shared by all.
+    expect(fake.folders.has(`${ARCHIVE_ROOT}/${LEGACY_QUARANTINE_ENTRY}`)).toBe(false);
+    // The 5 oldest of the first account are gone, the 20 last remain. The other account keeps its 3:
+    // the limit is per account, and trimming one folder never touches the other.
+    const expectedPaths = [
+      ...Array.from({ length: QUARANTINE_LIMIT }, (_, offset) =>
+        quarantinedAt(QUARANTINE_START + (writes - QUARANTINE_LIMIT) + offset),
+      ),
+      ...Array.from({ length: 3 }, (_, offset) =>
+        quarantinedAt(QUARANTINE_START + offset, LONGER_ACCOUNT),
+      ),
+    ];
+    expect([...fake.files.keys()].sort()).toEqual(expectedPaths.sort());
     // The bytes of a kept response are the ones that were quarantined.
-    expect(bytesOf(fake, quarantinePath(QUARANTINE_START + writes - 1))).toEqual([writes - 1]);
+    expect(bytesOf(fake, quarantinedAt(QUARANTINE_START + writes - 1))).toEqual([writes - 1]);
+    expect(bytesOf(fake, quarantinedAt(QUARANTINE_START, LONGER_ACCOUNT))).toEqual([100]);
   });
 
   it('leaves the other entries of the quarantine folder alone when trimming', async () => {
     const fake = createFakeFs();
     const store = new TauriArchiveStore(fake.functions);
+    const folder = quarantineFolder(ACCOUNT);
     // A full folder, plus entries that are not quarantined responses and sort before all of them.
     for (let index = 0; index < QUARANTINE_LIMIT; index += 1) {
-      seedFile(fake, quarantinePath(QUARANTINE_START + index));
+      seedFile(fake, quarantinedAt(QUARANTINE_START + index));
     }
-    seedFile(fake, `${QUARANTINE_FOLDER}/000-notes.txt`);
-    seedFolder(fake, `${QUARANTINE_FOLDER}/000000000000000-1.json.zst`);
+    seedFile(fake, `${folder}/000-notes.txt`);
+    seedFolder(fake, `${folder}/000000000000000-1.json.zst`);
 
-    await store.quarantine(MATCH, QUARANTINE_START + QUARANTINE_LIMIT, new Uint8Array([1]));
+    await store.quarantine(
+      ACCOUNT,
+      MATCH,
+      QUARANTINE_START + QUARANTINE_LIMIT,
+      new Uint8Array([1]),
+    );
 
     // Exactly one quarantined response went: the oldest of the 21. The foreign entries stayed.
-    expect(fake.files.has(quarantinePath(QUARANTINE_START))).toBe(false);
-    expect(fake.files.has(quarantinePath(QUARANTINE_START + 1))).toBe(true);
-    expect(fake.files.has(quarantinePath(QUARANTINE_START + QUARANTINE_LIMIT))).toBe(true);
-    expect(fake.files.has(`${QUARANTINE_FOLDER}/000-notes.txt`)).toBe(true);
-    expect(fake.folders.has(`${QUARANTINE_FOLDER}/000000000000000-1.json.zst`)).toBe(true);
+    expect(fake.files.has(quarantinedAt(QUARANTINE_START))).toBe(false);
+    expect(fake.files.has(quarantinedAt(QUARANTINE_START + 1))).toBe(true);
+    expect(fake.files.has(quarantinedAt(QUARANTINE_START + QUARANTINE_LIMIT))).toBe(true);
+    expect(fake.files.has(`${folder}/000-notes.txt`)).toBe(true);
+    expect(fake.folders.has(`${folder}/000000000000000-1.json.zst`)).toBe(true);
     expect(fake.calls.filter((call) => call.name === 'remove')).toHaveLength(1);
+  });
+
+  it('lists what the archive folder holds', async () => {
+    const fake = createFakeFs();
+    const store = new TauriArchiveStore(fake.functions);
+
+    // Before the first write the folder does not exist: nothing to list, and `readDir` (which
+    // throws on a missing folder) is never called.
+    await expect(store.listEntries()).resolves.toEqual([]);
+    expect(callLines(fake)).toEqual([`exists ${ARCHIVE_ROOT}`]);
+
+    await store.write(ACCOUNT, MATCH, new Uint8Array([1]));
+    await store.write(LONGER_ACCOUNT, MATCH, new Uint8Array([2]));
+    // The folder of the first archive layout, and a file that is not the app's: both are entries.
+    seedFolder(fake, `${ARCHIVE_ROOT}/${LEGACY_QUARANTINE_ENTRY}`);
+    seedFile(fake, `${ARCHIVE_ROOT}/notes.txt`);
+    fake.calls.length = 0;
+
+    const entries = await store.listEntries();
+
+    // Folders and files, by name; what the folders hold is not listed. The order is the plugin's.
+    expect([...entries].sort()).toEqual([
+      String(ACCOUNT),
+      String(LONGER_ACCOUNT),
+      'notes.txt',
+      LEGACY_QUARANTINE_ENTRY,
+    ]);
+    expect(callLines(fake)).toEqual([`exists ${ARCHIVE_ROOT}`, `readDir ${ARCHIVE_ROOT}`]);
+  });
+
+  it('removes an entry with everything in it', async () => {
+    const fake = createFakeFs();
+    const store = new TauriArchiveStore(fake.functions);
+    await store.write(ACCOUNT, MATCH, new Uint8Array([1]));
+    await store.quarantine(ACCOUNT, MATCH, QUARANTINE_START, new Uint8Array([2]));
+    seedFile(fake, temporaryArchivePath(ACCOUNT, OTHER_MATCH));
+    // An account whose id starts with the same digits is another entry.
+    await store.write(LONGER_ACCOUNT, MATCH, new Uint8Array([3]));
+    await store.quarantine(LONGER_ACCOUNT, MATCH, QUARANTINE_START, new Uint8Array([4]));
+
+    await store.removeEntry(String(ACCOUNT));
+
+    // The folder of the account, its archives, its leftovers and its quarantine are gone...
+    expect(fake.folders.has(archiveFolder(ACCOUNT))).toBe(false);
+    expect(fake.folders.has(quarantineFolder(ACCOUNT))).toBe(false);
+    // ...and nothing else.
+    expect([...fake.files.keys()].sort()).toEqual(
+      [archivePath(LONGER_ACCOUNT, MATCH), quarantinedAt(QUARANTINE_START, LONGER_ACCOUNT)].sort(),
+    );
+    await expect(store.listEntries()).resolves.toEqual([String(LONGER_ACCOUNT)]);
+  });
+
+  it('removes a file that is directly under the archive folder', async () => {
+    const fake = createFakeFs();
+    seedFile(fake, `${ARCHIVE_ROOT}/notes.txt`);
+    seedFile(fake, `${ARCHIVE_ROOT}/notes.txt.bak`);
+
+    await new TauriArchiveStore(fake.functions).removeEntry('notes.txt');
+
+    expect([...fake.files.keys()]).toEqual([`${ARCHIVE_ROOT}/notes.txt.bak`]);
+  });
+
+  it('removes recursively, after checking the entry exists', async () => {
+    const fake = createFakeFs();
+    const store = new TauriArchiveStore(fake.functions);
+    await store.write(ACCOUNT, MATCH, new Uint8Array([1]));
+    fake.calls.length = 0;
+
+    await store.removeEntry(String(ACCOUNT));
+
+    // The plugin errors on a missing path, so the adapter asks `exists` first. The removal is
+    // recursive: it empties the folder of an account in one call, without following links.
+    expect(callLines(fake)).toEqual([
+      `exists ${archiveFolder(ACCOUNT)}`,
+      `remove ${archiveFolder(ACCOUNT)}`,
+    ]);
+    expect(fake.calls[1]?.options).toMatchObject({
+      baseDir: BaseDirectory.AppLocalData,
+      recursive: true,
+    });
+  });
+
+  it('does nothing for an entry that does not exist', async () => {
+    const fake = createFakeFs();
+    const store = new TauriArchiveStore(fake.functions);
+    await store.write(LONGER_ACCOUNT, MATCH, new Uint8Array([1]));
+    fake.calls.length = 0;
+
+    // Neither the account of another id nor an archive folder that was never made is an error.
+    await expect(store.removeEntry(String(ACCOUNT))).resolves.toBeUndefined();
+
+    // `remove` throws on a missing path: the adapter asks `exists` first and never removes.
+    expect(callLines(fake)).toEqual([`exists ${archiveFolder(ACCOUNT)}`]);
+    expect([...fake.files.keys()]).toEqual([archivePath(LONGER_ACCOUNT, MATCH)]);
+  });
+
+  it.each([
+    '',
+    '.',
+    '..',
+    'a/b',
+    '../1234',
+    '/1234',
+    'a\\b',
+    'c:',
+    '.. ',
+    '... ',
+    'x.',
+    'x ',
+    'a\u0001b',
+    'a\0b',
+  ])('refuses the entry name "%s", which is not a single name', async (name) => {
+    const fake = createFakeFs();
+    const store = new TauriArchiveStore(fake.functions);
+    await store.write(ACCOUNT, MATCH, new Uint8Array([1]));
+    fake.calls.length = 0;
+
+    await expect(store.removeEntry(name)).rejects.toThrow(Error);
+
+    // A programming error: it is refused before the plugin is called, so nothing was touched.
+    expect(fake.calls).toEqual([]);
+    expect([...fake.files.keys()]).toEqual([archivePath(ACCOUNT, MATCH)]);
+  });
+
+  it('does not put the refused entry name in the error', async () => {
+    const fake = createFakeFs();
+    // The name of an entry can be an account id, which never goes in a message.
+    const name = `${String(LONGER_ACCOUNT)}/..`;
+
+    const refusal = new TauriArchiveStore(fake.functions).removeEntry(name);
+
+    await expect(refusal).rejects.not.toThrow(String(LONGER_ACCOUNT));
   });
 
   it('uses the local application data folder for every call', async () => {
     const fake = createFakeFs();
     const store = new TauriArchiveStore(fake.functions);
-    // Every function of the plugin gets called: writing, reading, cleaning and quarantining
-    // (twenty-one responses, so that the trim removes one).
+    // Every function of the plugin gets called: writing, reading, cleaning, quarantining
+    // (twenty-one responses, so that the trim removes one), listing and removing an entry.
     await store.write(ACCOUNT, MATCH, new Uint8Array([1]));
     await store.read(ACCOUNT, MATCH);
     await store.read(ACCOUNT, OTHER_MATCH);
     seedFile(fake, temporaryArchivePath(ACCOUNT, OTHER_MATCH));
     await store.removeTemporaryFiles(ACCOUNT);
     for (let index = 0; index <= QUARANTINE_LIMIT; index += 1) {
-      await store.quarantine(MATCH, QUARANTINE_START + index, new Uint8Array([index]));
+      await store.quarantine(ACCOUNT, MATCH, QUARANTINE_START + index, new Uint8Array([index]));
     }
+    await store.listEntries();
+    await store.removeEntry(String(ACCOUNT));
 
     const names = new Set(fake.calls.map((call) => call.name));
     expect([...names].sort()).toEqual(

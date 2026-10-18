@@ -1,9 +1,8 @@
 /**
  * Proves that the production build contains no development-only code.
  *
- * Development-only modules (the browser adapters with their synthetic data, the development
- * account of the desktop build, the TanStack devtools) each write a marker in a log line. This
- * script:
+ * Development-only modules (the browser adapters with their synthetic data, the TanStack devtools)
+ * each write a marker in a log line. This script:
  * 1. scans the production build (`dist/`, made by `pnpm build`): no marker may appear;
  * 2. builds the frontend in development mode into a temporary folder and scans it: every marker
  *    must appear. Without this second step the check could pass forever while proving nothing,
@@ -18,14 +17,8 @@ import { readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { build } from 'vite';
 
-/** Environment variable holding the developer's account id in the desktop development build. */
-const DEV_ACCOUNT_VARIABLE = 'VITE_DEV_ACCOUNT_ID';
-
-/**
- * Texts that only development-only code contains: the marker of its log lines, and the name of the
- * variable holding the developer's account id (quoted in the hint shown when it is missing).
- */
-const MARKERS = ['thelibrary-dev-only', DEV_ACCOUNT_VARIABLE];
+/** Texts that only development-only code contains: the marker of its log lines. */
+const MARKERS = ['thelibrary-dev-only'];
 
 /** Production build, made by `pnpm build`. */
 const PRODUCTION_DIR = 'dist';
@@ -70,13 +63,10 @@ async function scanDevelopmentBuild(): Promise<Map<string, string[]>> {
     await build({
       mode: 'development',
       logLevel: 'warn',
-      // The markers need no env value, and the developer's account id must never land on disk, even
-      // in this temporary folder (it stays there if the process is killed). `envDir: false` stops
-      // Vite loading the `.env*` files (`.env.development.local` included), but it still exposes
-      // the `VITE_*` variables of `process.env`: the account variable is replaced by `undefined`
-      // (also in the whole `import.meta.env` object, should one be built).
+      // The markers need no env value: no `.env*` file is ever read into this build, so the files
+      // of the developer's machine never land in this temporary folder (it stays on disk if the
+      // process is killed).
       envDir: false,
-      define: { [`import.meta.env.${DEV_ACCOUNT_VARIABLE}`]: 'undefined' },
       build: { outDir: DEVELOPMENT_DIR, emptyOutDir: true },
     });
     return await findMarkers(DEVELOPMENT_DIR);

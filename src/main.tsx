@@ -7,10 +7,10 @@
  * application, then starts the synchronisation. It also logs every error nothing else reports:
  * errors outside a route, unhandled promise rejections, uncaught render errors.
  *
- * Development-only code (the browser adapters, with their in-memory archive store, the development
- * account of the desktop build, the TanStack devtools) is only reached through dynamic `import()`s
- * guarded by `import.meta.env.DEV`. Vite replaces that flag with `false` in production builds and
- * leaves those modules out; `scripts/check-dev-code.ts` proves it in CI.
+ * Development-only code (the browser adapters, with their in-memory archive store, and the TanStack
+ * devtools) is only reached through dynamic `import()`s guarded by `import.meta.env.DEV`. Vite
+ * replaces that flag with `false` in production builds and leaves those modules out;
+ * `scripts/check-dev-code.ts` proves it in CI.
  *
  * @packageDocumentation
  */
@@ -59,19 +59,15 @@ async function createAdapters(desktop: boolean): Promise<AppAdapters> {
   // the adapters below turn out to be unavailable.
   const compressor = new WorkerCompressor();
   if (desktop) {
-    const logger = new TauriLogger();
     return {
-      logger,
+      logger: new TauriLogger(),
       settingsStore: new TauriSettingsStore(),
       http: new TauriHttpClient(),
       database: new TauriDatabase(),
       archiveStore: new TauriArchiveStore(),
       compressor,
-      // Release builds link no account until the Steam sign-in exists; development builds read
-      // the developer's own account from the git-ignored .env.development.local file.
-      accountSource: import.meta.env.DEV
-        ? (await import('./adapters/dev/dev-environment')).createDesktopDevAccountSource(logger)
-        : new UnlinkedAccountSource(),
+      // No account is linked yet: the Steam sign-in replaces this source later in this milestone.
+      accountSource: new UnlinkedAccountSource(),
     };
   }
   if (import.meta.env.DEV) {

@@ -31,7 +31,7 @@ const DAY_MS = 24 * 60 * 60_000;
  * @returns The account source.
  */
 function accountSource(accountId: AccountId | null): AccountSource {
-  return { currentAccountId: () => Promise.resolve(accountId), missingAccountHint: null };
+  return { currentAccountId: () => Promise.resolve(accountId) };
 }
 
 /**

@@ -42,7 +42,8 @@ export interface ArchiveStore {
   /**
    * Delete the temporary files an interrupted write left in the folder of an account.
    *
-   * Archives and the files of other accounts are never touched. A missing folder is not an error:
+   * Archives, the quarantine folder that the account folder holds and the files of other accounts
+   * are never touched. A missing folder is not an error:
    * there is nothing to remove. Every leftover is tried even when one cannot be deleted, and the
    * first failure is reported once all have been tried.
    *
@@ -55,13 +56,43 @@ export interface ArchiveStore {
   /**
    * Keep a response that could not be used, for a look when diagnosing.
    *
-   * Only the most recent ones stay (`QUARANTINE_LIMIT` in `archive-layout.ts`): once the folder
-   * is over that number, the oldest are deleted. A quarantined file is never read back by the app.
+   * The response goes to the quarantine folder of the account, inside the folder of its archives:
+   * it is deleted with the account's data, and the folder never holds the response of another
+   * account. Only the most recent ones of an account stay (`QUARANTINE_LIMIT` in
+   * `archive-layout.ts`): once its folder is over that number, the oldest are deleted. A
+   * quarantined file is never read back by the app.
    *
+   * @param accountId - The account the response was fetched for.
    * @param matchId - The match the response was fetched for.
    * @param at - When the response was quarantined, in Unix milliseconds.
    * @param bytes - The response, zstd-compressed (the caller compresses it, as it does an archive).
    * @returns A promise resolved once the response is kept and the folder is trimmed.
    */
-  quarantine(matchId: MatchId, at: number, bytes: Uint8Array): Promise<void>;
+  quarantine(accountId: AccountId, matchId: MatchId, at: number, bytes: Uint8Array): Promise<void>;
+
+  /**
+   * List what the archive folder holds directly: the folder of each account, and anything else put
+   * there (the quarantine folder of the first layout, a file of the user). Only the names of the
+   * entries are returned, never what the folders hold. The order is the one the platform gives.
+   *
+   * @returns The names of the entries, folders and files; empty when the archive folder does not
+   *   exist yet.
+   * @throws Whatever the platform rejects with when the folder exists but cannot be listed.
+   */
+  listEntries(): Promise<readonly string[]>;
+
+  /**
+   * Delete an entry of the archive folder, with everything it holds: the folder of an account goes
+   * with its archives, its leftovers and its quarantine. An entry that does not exist is not an
+   * error: there is nothing to remove.
+   *
+   * @param name - The name of the entry, as {@link ArchiveStore.listEntries} gives it. It must pass
+   *   `isArchiveEntryName` (`archive-layout.ts`): a name that could reach outside the archive folder
+   *   is a mistake of the caller, not something to clean up after.
+   * @returns A promise resolved once the entry is gone.
+   * @throws Error, before anything is touched, when the name is not a single entry name; its message
+   *   does not quote the name, which can be an account id. Whatever the platform rejects with when
+   *   the entry exists but cannot be removed (a file held open by another program, say).
+   */
+  removeEntry(name: string): Promise<void>;
 }

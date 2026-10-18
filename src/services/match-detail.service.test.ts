@@ -46,10 +46,11 @@ import {
 } from '../core/match-detail/archive-envelope';
 import { summarizeArchive } from '../core/match-detail/archive-facts';
 import {
+  archiveFolder,
   archivePath,
   isTemporaryArchiveName,
-  quarantineFileName,
-  QUARANTINE_FOLDER,
+  quarantineFolder,
+  quarantinePath,
   QUARANTINE_LIMIT,
 } from '../core/match-detail/archive-layout';
 import {
@@ -332,14 +333,14 @@ async function storedDetail(
 }
 
 /**
- * The files of the quarantine folder.
+ * The files of the quarantine folder of the tracked account.
  *
  * @param archive - The archive store.
  * @returns Their paths, sorted.
  */
 function quarantinedPaths(archive: MemoryArchiveStore): string[] {
   return [...archive.files.keys()]
-    .filter((path) => path.startsWith(`${QUARANTINE_FOLDER}/`))
+    .filter((path) => path.startsWith(`${quarantineFolder(ACCOUNT)}/`))
     .sort();
 }
 
@@ -358,7 +359,7 @@ async function readQuarantined(
   matchId: MatchId,
   at: number,
 ): Promise<string> {
-  const bytes = archive.files.get(`${QUARANTINE_FOLDER}/${quarantineFileName(matchId, at)}`);
+  const bytes = archive.files.get(quarantinePath(ACCOUNT, matchId, at));
   return new TextDecoder().decode(
     await compressor.decompress(bytes ?? expect.unreachable('the response is quarantined')),
   );
@@ -413,6 +414,22 @@ function holdRequests(): {
         }
       }),
   };
+}
+
+/**
+ * What a fixture handler answers to a request a test held, to pass on as the answer of that request.
+ * The handler sees a GET (the detail endpoint is one), and its body is JSON text, which is what a
+ * held request is answered with.
+ *
+ * @param handler - The fixture handler.
+ * @param request - The held request.
+ * @returns The handler's response, with its body as text.
+ */
+async function answerLike(handler: FixtureHandler, request: HttpRequest): Promise<HttpResponse> {
+  const response = await handler({ ...request, method: 'GET' });
+  const body =
+    typeof response.body === 'string' ? response.body : new TextDecoder().decode(response.body);
+  return { ...response, body };
 }
 
 /**
@@ -687,9 +704,11 @@ describe('MatchDetailService.runQueue', () => {
     });
     // Nothing was archived for the match; the response is kept, as it came, for a look.
     expect(archive.files.has(archivePath(ACCOUNT, matchOf(SERVED)))).toBe(false);
-    expect(quarantinedPaths(archive)).toEqual([
-      `${QUARANTINE_FOLDER}/${quarantineFileName(matchOf(SERVED), START)}`,
-    ]);
+    expect(quarantinedPaths(archive)).toEqual([quarantinePath(ACCOUNT, matchOf(SERVED), START)]);
+    // It is kept in the folder of the account, so that it goes away with the account's data.
+    expect(quarantinedPaths(archive)[0]?.startsWith(`${archiveFolder(ACCOUNT)}/quarantine/`)).toBe(
+      true,
+    );
     const kept = await readQuarantined(archive, compressor, matchOf(SERVED), START);
     expect(kept).toBe(JSON.stringify(createMatchMetadataFixture(OTHER_SERVED, ACCOUNT)));
     // The verdict is final: the next run does not ask again.
@@ -824,7 +843,7 @@ describe('MatchDetailService.runQueue', () => {
     unreadable.answer(NOT_JSON);
     await settle();
     // ... and gets a real answer after the run was stopped: it is archived, like any match in flight.
-    sibling.answer(await fixtures(sibling.request));
+    sibling.answer(await answerLike(fixtures, sibling.request));
     const report = await run;
 
     expect(report).toEqual({ ...NOTHING, archived: 1, retried: 1, stoppedBy: 'network' });
@@ -876,7 +895,7 @@ describe('MatchDetailService.runQueue', () => {
     unreadable.answer(NOT_JSON);
     await keepingHasStarted;
     // The other download ends while the body is still being kept, and looks for another match.
-    sibling.answer(await fixtures(sibling.request));
+    sibling.answer(await answerLike(fixtures, sibling.request));
     await settle();
     // The run was stopped as soon as the page was seen: that match was not started.
     expect(http.requests).toHaveLength(2);
@@ -1287,7 +1306,7 @@ describe('MatchDetailService.runQueue', () => {
     // The 5 oldest responses were deleted, whatever the order the two downloads ended in.
     const latest = quarantine.mock.calls
       .slice(-QUARANTINE_LIMIT)
-      .map(([matchId, at]) => `${QUARANTINE_FOLDER}/${quarantineFileName(matchId, at)}`)
+      .map(([accountId, matchId, at]) => quarantinePath(accountId, matchId, at))
       .sort();
     expect(quarantine).toHaveBeenCalledTimes(count);
     expect(quarantinedPaths(archive)).toEqual(latest);
@@ -1362,7 +1381,7 @@ describe('MatchDetailService.runQueue', () => {
     // The network fails for one download while the other one is still waiting for its answer.
     failing.fail(new AppError('network', 'The server cannot be reached'));
     await settle();
-    finishing.answer(await fixtures(finishing.request));
+    finishing.answer(await answerLike(fixtures, finishing.request));
     const report = await run;
 
     // The match in flight was archived; the one that met the failure is still to do; nothing else started.
@@ -1413,7 +1432,7 @@ describe('MatchDetailService.runQueue', () => {
     const finishing = held[0] ?? expect.unreachable('two requests are held');
     const failing = held[1] ?? expect.unreachable('two requests are held');
     // One download ends and looks for another match; the database is slow to answer...
-    finishing.answer(await fixtures(finishing.request));
+    finishing.answer(await answerLike(fixtures, finishing.request));
     await lookupHasStarted;
     // ... and meanwhile the other download meets a network failure, which stops the run.
     failing.fail(new AppError('network', 'The server cannot be reached'));
@@ -1443,7 +1462,7 @@ describe('MatchDetailService.runQueue', () => {
     // The network fails first; then the other download ends, and its archive cannot be written.
     failing.fail(new AppError('network', 'The server cannot be reached'));
     await settle();
-    finishing.answer(await fixtures(finishing.request));
+    finishing.answer(await answerLike(fixtures, finishing.request));
     const report = await run;
 
     expect(report).toEqual({ ...NOTHING, stoppedBy: 'network' });
@@ -1674,6 +1693,21 @@ describe('MatchDetailService.getSummary', () => {
     // The next run of this account goes through: the stop is forgotten.
     await expect(service.runQueue(ACCOUNT, 'run-0003')).resolves.toMatchObject({ stoppedBy: null });
     await expect(service.getSummary()).resolves.toMatchObject({ archived: 1, lastStop: null });
+  });
+
+  it('forgets why the last run of an account stopped', async () => {
+    const { service, archive } = await setUp({ matches: summariesOf([SERVED]) });
+    archive.failNextWrite(new Error('There is not enough space on the disk'));
+    await expect(service.runQueue(ACCOUNT, RUN)).resolves.toMatchObject({ stoppedBy: 'storage' });
+    await expect(service.getSummary()).resolves.toMatchObject({ lastStop: 'storage' });
+
+    // Forgetting another account changes nothing for this one.
+    service.forgetAccount(testAccountId(42));
+    await expect(service.getSummary()).resolves.toMatchObject({ lastStop: 'storage' });
+
+    // Once the data of the account is deleted, what stopped its last run is not its to tell.
+    service.forgetAccount(ACCOUNT);
+    await expect(service.getSummary()).resolves.toMatchObject({ lastStop: null });
   });
 
   it.each([

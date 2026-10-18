@@ -73,11 +73,6 @@ export const accountSyncStateSchema = z.object({
 export interface SyncStatus {
   /** An account is available to synchronise. */
   readonly accountLinked: boolean;
-  /**
-   * Development builds only: how to provide an account when none is linked. Always `null` in a
-   * release build.
-   */
-  readonly missingAccountHint: string | null;
   /** The last synchronisation of the linked account, or `null` when it was never synchronised. */
   readonly lastSync: LastSync | null;
   /** End of the pause requested by deadlock-api (Unix ms), or `null` when no pause is running. */

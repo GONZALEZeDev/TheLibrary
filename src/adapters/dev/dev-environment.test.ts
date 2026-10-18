@@ -1,61 +1,31 @@
 /**
- * Tests of the development account of the desktop development build. The browser adapters are
- * checked by running `pnpm dev`: under Node, sql.js cannot load its WebAssembly file from a URL.
+ * Tests of the development environment module. Only its construction is checked here: the adapters
+ * it creates are used by running `pnpm dev`, since under Node sql.js cannot load its WebAssembly
+ * file from a URL.
  *
  * @packageDocumentation
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createDesktopDevAccountSource, DEV_ONLY_MARKER } from './dev-environment';
+import { createBrowserDevAdapters, DEV_ONLY_MARKER } from './dev-environment';
 import { MemoryLogger } from './memory-logger.adapter';
 
 afterEach(() => {
-  vi.unstubAllEnvs();
+  // Puts the console back, even when an assertion failed before the end of the test.
+  vi.restoreAllMocks();
 });
 
-describe('createDesktopDevAccountSource', () => {
-  it('uses the account of VITE_DEV_ACCOUNT_ID, without logging it', async () => {
-    vi.stubEnv('VITE_DEV_ACCOUNT_ID', '123456789');
-    const logger = new MemoryLogger();
+describe('createBrowserDevAdapters', () => {
+  it('marks the browser adapters as development-only code', () => {
+    // The logger mirrors its lines to the console, which a developer reads in the browser: the
+    // `info` line of the marker is silenced so that the test output stays clean.
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
 
-    const source = createDesktopDevAccountSource(logger);
+    const { logger } = createBrowserDevAdapters();
 
-    await expect(source.currentAccountId()).resolves.toBe(123456789);
-    expect(source.missingAccountHint).toBeNull();
-    expect(JSON.stringify(logger.entries)).not.toContain('123456789');
-  });
-
-  it('has no account and explains how to set one when the variable is missing or empty', async () => {
-    for (const value of [undefined, '']) {
-      vi.stubEnv('VITE_DEV_ACCOUNT_ID', value);
-
-      const source = createDesktopDevAccountSource(new MemoryLogger());
-
-      await expect(source.currentAccountId()).resolves.toBeNull();
-      expect(source.missingAccountHint).toMatch(/^Development build: put VITE_DEV_ACCOUNT_ID=/);
-      expect(source.missingAccountHint).toContain('.env.development.local');
-    }
-  });
-
-  it('refuses an invalid account id instead of guessing, and says so', async () => {
-    vi.stubEnv('VITE_DEV_ACCOUNT_ID', '76561198000000000');
-    const logger = new MemoryLogger();
-
-    const source = createDesktopDevAccountSource(logger);
-
-    await expect(source.currentAccountId()).resolves.toBeNull();
-    expect(source.missingAccountHint).toMatch(/^VITE_DEV_ACCOUNT_ID is not a valid account id/);
-    expect(logger.entries).toContainEqual(expect.objectContaining({ level: 'warn' }));
-    // The rejected value is echoed neither in the logs nor in the hint.
-    expect(JSON.stringify(logger.entries)).not.toContain('76561198000000000');
-    expect(source.missingAccountHint).not.toContain('76561198000000000');
-  });
-
-  it('marks its log lines as development-only', () => {
-    vi.stubEnv('VITE_DEV_ACCOUNT_ID', '');
-    const logger = new MemoryLogger();
-
-    createDesktopDevAccountSource(logger);
-
-    expect(logger.entries[0]?.message).toContain(DEV_ONLY_MARKER);
+    // `scripts/check-dev-code.ts` looks for the marker in the build, so it must stay in a log line.
+    expect(logger).toBeInstanceOf(MemoryLogger);
+    const messages =
+      logger instanceof MemoryLogger ? logger.entries.map(({ message }) => message) : [];
+    expect(messages.join('\n')).toContain(DEV_ONLY_MARKER);
   });
 });

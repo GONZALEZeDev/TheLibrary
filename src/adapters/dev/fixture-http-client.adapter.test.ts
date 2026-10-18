@@ -5,6 +5,7 @@
  * @packageDocumentation
  */
 import { describe, expect, it } from 'vitest';
+import { avatarUrl } from '../../core/account/linked-account';
 import {
   DEADLOCK_API_BASE_URL,
   heroesRequest,
@@ -12,19 +13,43 @@ import {
   matchMetadataRequest,
   MAX_RESPONSE_BYTES,
   REQUEST_TIMEOUT_MS,
+  steamProfileRequest,
 } from '../../core/deadlock-api/endpoints';
 import { parseHeroes } from '../../core/deadlock-api/heroes.schema';
 import { parseMatchHistory } from '../../core/deadlock-api/match-history.schema';
 import { parseMatchMetadata } from '../../core/deadlock-api/match-metadata.schema';
+import { parseSteamProfiles } from '../../core/deadlock-api/steam-profile.schema';
 import { parseAccountId } from '../../core/domain/account';
 import { PAIGE_HERO_ID } from '../../core/domain/hero';
 import { AppError } from '../../core/errors/app-error';
 import { findTrackedPlayer } from '../../core/match-detail/pruning';
-import type { HttpRequest } from '../../ports/http-client.port';
+import {
+  buildCheckAuthenticationBody,
+  buildSignInRequest,
+  nonceFromBytes,
+  OPENID_NS,
+  parseCheckAuthenticationAnswer,
+  STEAM_OPENID_ENDPOINT,
+  validateCallback,
+} from '../../core/steam/steam-openid';
+import type { HttpFormPost, HttpRequest } from '../../ports/http-client.port';
 import { testAccountId, testMatchId } from '../../test/test-data';
-import { createFixtureApi, FixtureHttpClient, jsonResponse } from './fixture-http-client.adapter';
+import {
+  createFixtureApi,
+  FixtureHttpClient,
+  jsonResponse,
+  type FixtureRequest,
+} from './fixture-http-client.adapter';
 import { createMatchHistoryFixture, FIXTURE_ACCOUNT_ID } from './fixtures/match-history.fixture';
 import { isMetadataMissing } from './fixtures/match-metadata.fixture';
+import {
+  createSteamCallbackUrl,
+  createSteamProfilesFixture,
+  FIXTURE_AVATAR_HASH,
+  FIXTURE_AVATAR_JPEG,
+  FIXTURE_PERSONA_NAME,
+  FIXTURE_STEAM_ID64,
+} from './fixtures/steam.fixture';
 
 const NOW = Date.UTC(2026, 9, 14, 12, 0, 0);
 
@@ -37,6 +62,18 @@ const NOW = Date.UTC(2026, 9, 14, 12, 0, 0);
  */
 function get(url: string, maxBodyBytes = MAX_RESPONSE_BYTES): HttpRequest {
   return { url, headers: {}, timeoutMs: REQUEST_TIMEOUT_MS, maxBodyBytes };
+}
+
+/**
+ * Build a form post with the default limits of the app.
+ *
+ * @param url - URL to post to.
+ * @param form - The form body.
+ * @param maxBodyBytes - Largest body accepted.
+ * @returns The request.
+ */
+function post(url: string, form: string, maxBodyBytes = MAX_RESPONSE_BYTES): HttpFormPost {
+  return { ...get(url, maxBodyBytes), form };
 }
 
 describe('createFixtureApi', () => {
@@ -194,14 +231,177 @@ describe('createFixtureApi match details', () => {
   });
 });
 
+describe('createFixtureApi Steam', () => {
+  const NONCE = nonceFromBytes(Uint8Array.from({ length: 16 }, (_, index) => index + 1));
+  const PORT = 49152;
+
+  /** The answer of Steam to a `check_authentication` it confirms, and to one it does not. */
+  const IS_VALID = `ns:${OPENID_NS}\nis_valid:true\n`;
+  const IS_NOT_VALID = `ns:${OPENID_NS}\nis_valid:false\n`;
+
+  /**
+   * The form the app posts to Steam to confirm a genuine sign-in: the fields of a callback, with
+   * the mode changed. Every call signs its own assertion, with a signature of its own.
+   *
+   * @returns The form body.
+   */
+  function assertionForm(): string {
+    const signIn = buildSignInRequest(PORT, NONCE);
+    const url = createSteamCallbackUrl(signIn.loginUrl, {
+      steamId64: FIXTURE_STEAM_ID64,
+      now: NOW,
+    });
+    const check = validateCallback(
+      url,
+      { port: PORT, nonce: NONCE, returnTo: signIn.returnTo },
+      NOW,
+    );
+    return check.ok
+      ? buildCheckAuthenticationBody(check.fields)
+      : expect.unreachable('the callback of the fixture is genuine');
+  }
+
+  /**
+   * Change one field of a form.
+   *
+   * @param form - The form body.
+   * @param key - The field.
+   * @param value - Its new value, or `null` to remove it.
+   * @returns The new form body.
+   */
+  function withField(form: string, key: string, value: string | null): string {
+    const fields = new URLSearchParams(form);
+    if (value === null) {
+      fields.delete(key);
+    } else {
+      fields.set(key, value);
+    }
+    return fields.toString();
+  }
+
+  it('confirms a sign-in assertion once', async () => {
+    const client = new FixtureHttpClient(createFixtureApi({ now: NOW }));
+    const form = assertionForm();
+
+    const first = await client.postForm(post(STEAM_OPENID_ENDPOINT, form));
+    const second = await client.postForm(post(STEAM_OPENID_ENDPOINT, form));
+
+    expect(first.status).toBe(200);
+    expect(first.headers['content-type']).toBe('text/plain;charset=utf-8');
+    expect(first.body).toBe(IS_VALID);
+    expect(parseCheckAuthenticationAnswer(first.body)).toBe('valid');
+    expect(second.status).toBe(200);
+    expect(second.body).toBe(IS_NOT_VALID);
+    expect(parseCheckAuthenticationAnswer(second.body)).toBe('invalid');
+  });
+
+  it('confirms each assertion on its own signature', async () => {
+    const client = new FixtureHttpClient(createFixtureApi({ now: NOW }));
+
+    const first = await client.postForm(post(STEAM_OPENID_ENDPOINT, assertionForm()));
+    const second = await client.postForm(post(STEAM_OPENID_ENDPOINT, assertionForm()));
+
+    expect([first.body, second.body]).toEqual([IS_VALID, IS_VALID]);
+  });
+
+  it('keeps what it confirmed to itself', async () => {
+    const form = assertionForm();
+    const first = new FixtureHttpClient(createFixtureApi({ now: NOW }));
+    const second = new FixtureHttpClient(createFixtureApi({ now: NOW }));
+
+    await first.postForm(post(STEAM_OPENID_ENDPOINT, form));
+
+    expect((await second.postForm(post(STEAM_OPENID_ENDPOINT, form))).body).toBe(IS_VALID);
+  });
+
+  it('refuses a form that is not a check_authentication', async () => {
+    const form = assertionForm();
+    const refused = [
+      withField(form, 'openid.mode', 'id_res'),
+      withField(form, 'openid.mode', null),
+      withField(form, 'openid.ns', 'http://specs.openid.net/auth/1.1'),
+      withField(form, 'openid.ns', null),
+      withField(form, 'openid.sig', null),
+      withField(form, 'openid.sig', ''),
+      '',
+    ];
+    const client = new FixtureHttpClient(createFixtureApi({ now: NOW }));
+
+    for (const body of refused) {
+      const response = await client.postForm(post(STEAM_OPENID_ENDPOINT, body));
+
+      expect(response.status).toBe(200);
+      expect(response.headers['content-type']).toBe('text/plain;charset=utf-8');
+      expect(response.body).toBe(IS_NOT_VALID);
+    }
+    // A refusal does not spend the signature: Steam still confirms the genuine form.
+    expect((await client.postForm(post(STEAM_OPENID_ENDPOINT, form))).body).toBe(IS_VALID);
+  });
+
+  it('only answers a POST to the endpoint of Steam', async () => {
+    const client = new FixtureHttpClient(createFixtureApi({ now: NOW }));
+
+    expect((await client.get(get(STEAM_OPENID_ENDPOINT))).status).toBe(404);
+    expect(
+      (await client.postForm(post('https://example.test/openid/login', assertionForm()))).status,
+    ).toBe(404);
+  });
+
+  it('gives the profile of the fixture account and nothing for the others', async () => {
+    const client = new FixtureHttpClient(createFixtureApi({ now: NOW }));
+
+    const own = await client.get(get(steamProfileRequest(FIXTURE_ACCOUNT_ID, false).url));
+    const other = await client.get(get(steamProfileRequest(testAccountId(2_000_001), false).url));
+
+    expect(own.status).toBe(200);
+    expect(own.headers['content-type']).toBe('application/json');
+    expect(JSON.parse(own.body)).toEqual(createSteamProfilesFixture(FIXTURE_ACCOUNT_ID));
+    expect(parseSteamProfiles(JSON.parse(own.body), FIXTURE_ACCOUNT_ID)).toEqual({
+      personaName: FIXTURE_PERSONA_NAME,
+      avatarHash: FIXTURE_AVATAR_HASH,
+    });
+    expect(other.status).toBe(200);
+    expect(JSON.parse(other.body)).toEqual([]);
+  });
+
+  it('answers a refresh like a normal profile call', async () => {
+    const client = new FixtureHttpClient(createFixtureApi({ now: NOW }));
+    const normal = await client.get(get(steamProfileRequest(FIXTURE_ACCOUNT_ID, false).url));
+
+    const refreshed = await client.get(get(steamProfileRequest(FIXTURE_ACCOUNT_ID, true).url));
+    const other = await client.get(get(steamProfileRequest(testAccountId(2_000_001), true).url));
+
+    expect(refreshed).toEqual(normal);
+    expect(JSON.parse(other.body)).toEqual([]);
+  });
+
+  it('serves the fixture avatar as a JPEG', async () => {
+    const client = new FixtureHttpClient(createFixtureApi({ now: NOW }));
+
+    const response = await client.getBytes(get(avatarUrl(FIXTURE_AVATAR_HASH)));
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toBe('image/jpeg');
+    expect(response.body).toEqual(FIXTURE_AVATAR_JPEG);
+  });
+
+  it('answers 404 for any other avatar', async () => {
+    const client = new FixtureHttpClient(createFixtureApi({ now: NOW }));
+
+    const response = await client.getBytes(get(avatarUrl('cd'.repeat(20))));
+
+    expect(response.status).toBe(404);
+  });
+});
+
 describe('FixtureHttpClient', () => {
-  it('records the requests it receives', async () => {
+  it('records the requests it receives, with their method', async () => {
     const client = new FixtureHttpClient(() => jsonResponse([]));
     const request = get('https://example.test/a');
 
     await client.get(request);
 
-    expect(client.requests).toEqual([request]);
+    expect(client.requests).toEqual([{ ...request, method: 'GET' }]);
   });
 
   it('lower-cases header names, like a real client', async () => {
@@ -226,5 +426,106 @@ describe('FixtureHttpClient', () => {
     });
 
     await expect(client.get(get('https://example.test/a'))).rejects.toThrow('simulated timeout');
+  });
+
+  it('answers a form post with the handler, which sees the method and the form', async () => {
+    const seen: FixtureRequest[] = [];
+    const client = new FixtureHttpClient((request) => {
+      seen.push(request);
+      return { status: 302, headers: { Location: 'https://example.test/b' }, body: '' };
+    });
+    const request = post('https://example.test/login', 'mode=check');
+
+    const response = await client.postForm(request);
+
+    expect(response).toEqual({
+      status: 302,
+      headers: { location: 'https://example.test/b' },
+      body: '',
+    });
+    expect(seen).toEqual([{ ...request, method: 'POST' }]);
+    expect(seen[0]?.form).toBe('mode=check');
+    expect(client.requests).toEqual(seen);
+  });
+
+  it('answers a binary request with bytes', async () => {
+    const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
+    const client = new FixtureHttpClient(() => ({
+      status: 200,
+      headers: { 'Content-Type': 'image/jpeg' },
+      body: bytes,
+    }));
+
+    const response = await client.getBytes(get('https://example.test/avatar.jpg'));
+
+    expect(response).toEqual({
+      status: 200,
+      headers: { 'content-type': 'image/jpeg' },
+      body: bytes,
+    });
+    expect(client.requests).toEqual([{ ...get('https://example.test/avatar.jpg'), method: 'GET' }]);
+  });
+
+  it('encodes a text answer for a binary request', async () => {
+    const client = new FixtureHttpClient(() => jsonResponse({ ok: true }));
+
+    const response = await client.getBytes(get('https://example.test/a'));
+
+    expect(new TextDecoder().decode(response.body)).toBe('{"ok":true}');
+  });
+
+  it('decodes a binary answer for a text request', async () => {
+    const client = new FixtureHttpClient(() => ({
+      status: 200,
+      headers: {},
+      body: new TextEncoder().encode('is_valid:true\n'),
+    }));
+
+    await expect(client.get(get('https://example.test/a'))).resolves.toMatchObject({
+      body: 'is_valid:true\n',
+    });
+    await expect(
+      client.postForm(post('https://example.test/a', 'mode=check')),
+    ).resolves.toMatchObject({ body: 'is_valid:true\n' });
+  });
+
+  it('enforces the size cap on binary bodies', async () => {
+    const binary = new FixtureHttpClient(() => ({
+      status: 200,
+      headers: {},
+      body: new Uint8Array(100),
+    }));
+    // 60 bytes in 30 characters: the cap counts bytes, whatever the type of the body.
+    const accented = new FixtureHttpClient(() => ({
+      status: 200,
+      headers: {},
+      body: 'é'.repeat(30),
+    }));
+    const tooLarge = expect.objectContaining({ kind: 'invalid_payload' }) as unknown;
+
+    await expect(binary.getBytes(get('https://example.test/a', 50))).rejects.toThrow(tooLarge);
+    await expect(binary.get(get('https://example.test/a', 50))).rejects.toThrow(tooLarge);
+    await expect(binary.postForm(post('https://example.test/a', 'mode=check', 50))).rejects.toThrow(
+      tooLarge,
+    );
+    await expect(accented.getBytes(get('https://example.test/a', 50))).rejects.toThrow(tooLarge);
+    await expect(accented.get(get('https://example.test/a', 59))).rejects.toThrow(tooLarge);
+    await expect(accented.get(get('https://example.test/a', 60))).resolves.toMatchObject({
+      status: 200,
+    });
+  });
+
+  it('lower-cases header names for every method', async () => {
+    const client = new FixtureHttpClient(() => ({
+      status: 200,
+      headers: { 'Content-Type': 'text/plain', 'X-Custom': '1' },
+      body: '',
+    }));
+    const expected = { 'content-type': 'text/plain', 'x-custom': '1' };
+
+    expect((await client.getBytes(get('https://example.test/a'))).headers).toEqual(expected);
+    expect((await client.postForm(post('https://example.test/a', 'a=b'))).headers).toEqual(
+      expected,
+    );
   });
 });

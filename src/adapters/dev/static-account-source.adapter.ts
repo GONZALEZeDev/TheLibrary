@@ -9,15 +9,12 @@ import type { AccountSource } from '../../ports/account-source.port';
 /** {@link AccountSource} with a fixed account, or none. */
 export class StaticAccountSource implements AccountSource {
   readonly #accountId: AccountId | null;
-  readonly missingAccountHint: string | null;
 
   /**
    * @param accountId - The account, or `null` for none.
-   * @param missingAccountHint - Shown to the developer when there is no account.
    */
-  constructor(accountId: AccountId | null, missingAccountHint: string | null = null) {
+  constructor(accountId: AccountId | null) {
     this.#accountId = accountId;
-    this.missingAccountHint = accountId === null ? missingAccountHint : null;
   }
 
   /**

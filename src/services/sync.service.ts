@@ -261,7 +261,6 @@ export class SyncService {
     ]);
     return {
       accountLinked: accountId !== null,
-      missingAccountHint: accountId === null ? this.#accountSource.missingAccountHint : null,
       lastSync: state.lastSync,
       pausedUntil: pausedUntil !== null && pausedUntil > this.#now() ? pausedUntil : null,
       protectedAccount: state.protectedAccount,

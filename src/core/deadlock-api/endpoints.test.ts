@@ -11,6 +11,7 @@ import {
   matchHistoryRequest,
   matchMetadataRequest,
   redactAccountIds,
+  steamProfileRequest,
   userAgent,
 } from './endpoints';
 
@@ -52,6 +53,32 @@ describe('matchMetadataRequest', () => {
       endpoint: '/v1/matches/{match_id}/metadata',
       family: 'metadata',
     });
+  });
+});
+
+describe('steamProfileRequest', () => {
+  it('asks for the Steam profile of one account', () => {
+    expect(steamProfileRequest(ACCOUNT_ID, false)).toEqual({
+      url: 'https://api.deadlock-api.com/v1/players/steam?account_ids=123456789',
+      endpoint: '/v1/players/steam',
+      family: 'profile',
+    });
+    expect(steamProfileRequest(ACCOUNT_ID, true)).toEqual({
+      url: 'https://api.deadlock-api.com/v1/players/steam?account_ids=123456789&refresh=true',
+      endpoint: '/v1/players/steam',
+      family: 'profile',
+    });
+  });
+
+  it('never logs the account id of a profile request', () => {
+    // The endpoint template is what the logs carry; the URL only reaches a log through an error
+    // message, which goes through `redactAccountIds` first.
+    for (const refresh of [false, true]) {
+      const request = steamProfileRequest(ACCOUNT_ID, refresh);
+
+      expect(request.endpoint).not.toContain(String(ACCOUNT_ID));
+      expect(redactAccountIds(request.url)).not.toContain(String(ACCOUNT_ID));
+    }
   });
 });
 

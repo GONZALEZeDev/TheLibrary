@@ -149,7 +149,6 @@ export function SyncBanner() {
   // status above already says when the local data cannot be read.
   const detailsLine = describeDetails(detailSummary.data, t);
   const detailsStopLine = describeDetailsStop(detailSummary.data, t);
-  const hint = status.data?.missingAccountHint ?? null;
 
   return (
     <section className="mb-6 flex items-start justify-between gap-6 rounded-xl border border-border bg-surface p-4">
@@ -159,12 +158,10 @@ export function SyncBanner() {
           {sentences.map((sentence) => (
             <p key={sentence}>{sentence}</p>
           ))}
-          {hint !== null && <p className="font-mono text-xs text-fg-muted">{hint}</p>}
         </div>
         {/* Outside the live region: the queue updates the counts up to once a second, and a screen
-            reader would read them out at every change. (The hint above only shows without an
-            account, when there is no line.) The sentence of a stuck queue follows the counts, and
-            shows even when there are none to show. */}
+            reader would read them out at every change. The sentence of a stuck queue follows the
+            counts, and shows even when there are none to show. */}
         {detailsLine !== null && <p>{detailsLine}</p>}
         {detailsStopLine !== null && <p>{detailsStopLine}</p>}
       </div>

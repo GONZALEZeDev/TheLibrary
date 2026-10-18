@@ -274,13 +274,13 @@ function watchSyncNow(sync: SyncService): { whenCalled: (count: number) => Promi
 
 /**
  * Options of {@link setUp}: those of `createTestServices`, except the settings, which the
- * synchronisation does not use, and the missing-account hint, which `setUp` fixes. `handler` gives
- * the first answers of the returned `answer.handler` (the fixture API of 240 matches by default);
+ * synchronisation does not use. `handler` gives the first answers of the returned
+ * `answer.handler` (the fixture API of 240 matches by default);
  * `now`, when given, replaces the controllable `clock` for every service, which then has no effect.
  * Either way it is the base clock of the services: the time they wait for the rate limit of the
  * match details is added to it (see `TestServices.skippedMs`).
  */
-type SetUpOptions = Omit<TestServicesOptions, 'settingsStore' | 'missingAccountHint'>;
+type SetUpOptions = Omit<TestServicesOptions, 'settingsStore'>;
 
 /**
  * Build the synchronisation exactly like the app (through `createTestServices`), with a
@@ -295,8 +295,6 @@ function setUp(options: SetUpOptions = {}) {
   const { services, http, logger, archiveStore, skippedMs } = createTestServices({
     ...options,
     handler: (request) => answer.handler(request),
-    // What the development build shows when no account is set: only reported without an account.
-    missingAccountHint: 'Set the development account',
     now: options.now ?? (() => clock.now),
   });
   /**
@@ -436,7 +434,7 @@ describe('SyncService', () => {
     );
   });
 
-  it('does nothing without a linked account, logs nothing above debug and shows the hint', async () => {
+  it('does nothing without a linked account and logs nothing above debug', async () => {
     const { sync, http, logger } = setUp({ accountId: null });
 
     await sync.syncNow('manual');
@@ -445,7 +443,6 @@ describe('SyncService', () => {
     expect(logger.entries.filter((entry) => entry.level !== 'debug')).toEqual([]);
     await expect(sync.getStatus()).resolves.toEqual({
       accountLinked: false,
-      missingAccountHint: 'Set the development account',
       lastSync: null,
       pausedUntil: null,
       protectedAccount: false,

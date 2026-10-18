@@ -6,10 +6,10 @@
  * `core/match-detail/archive-layout.ts`, relative to that base. The plugin only reaches the
  * `archive` folder: the permissions and the scope are granted in `src-tauri/capabilities/default.json`.
  *
- * The plugin's `readFile` and `readDir` throw when the path does not exist, whereas the port treats
- * a missing archive as `null` and a missing folder as "nothing to do": the adapter asks `exists`
- * first where that matters. Its `rename` replaces an existing destination on Windows, which is
- * what makes the write atomic.
+ * The plugin's `readFile`, `readDir` and `remove` throw when the path does not exist, whereas the
+ * port treats a missing archive as `null` and a missing folder or entry as "nothing to do": the
+ * adapter asks `exists` first where that matters. Its `rename` replaces an existing destination on
+ * Windows, which is what makes the write atomic.
  *
  * @packageDocumentation
  */
@@ -28,10 +28,12 @@ import type { MatchId } from '../../core/domain/match';
 import {
   archiveFolder,
   archivePath,
+  ARCHIVE_ROOT,
+  isArchiveEntryName,
   isQuarantineFileName,
   isTemporaryArchiveName,
+  quarantineFolder,
   quarantinePath,
-  QUARANTINE_FOLDER,
   QUARANTINE_LIMIT,
   temporaryArchivePath,
 } from '../../core/match-detail/archive-layout';
@@ -51,6 +53,12 @@ const AT_LOCAL_DATA = { baseDir: BaseDirectory.AppLocalData } as const;
 
 /** Options of `mkdir`: the `archive` folder itself does not exist either on a first launch. */
 const MAKE_FOLDERS = { ...AT_LOCAL_DATA, recursive: true } as const;
+
+/**
+ * Options of `remove` for an entry that may be a folder: the plugin deletes it with all its
+ * content, and does not follow a link that it finds on the way (it removes the link itself).
+ */
+const REMOVE_WITH_CONTENT = { ...AT_LOCAL_DATA, recursive: true } as const;
 
 /** Options of `rename`, which takes a base directory for each of its two paths. */
 const RENAME_AT_LOCAL_DATA = {
@@ -154,34 +162,83 @@ export class TauriArchiveStore implements ArchiveStore {
   }
 
   /**
-   * Keep a response that could not be used, then delete the oldest ones over the limit.
+   * Keep a response that could not be used in the quarantine folder of its account, then delete
+   * the oldest ones of that folder over the limit.
    *
    * The response is written straight to its final name, not through a temporary file: a
    * half-written quarantined file is harmless, as nothing ever reads it back.
    *
+   * @param accountId - The account the response was fetched for.
    * @param matchId - The match the response was fetched for.
    * @param at - When the response was quarantined, in Unix milliseconds.
    * @param bytes - The response, zstd-compressed.
    * @returns A promise resolved once the response is kept and the folder is trimmed.
    * @throws Whatever the plugin rejects with: a full disk, a denied path…
    */
-  async quarantine(matchId: MatchId, at: number, bytes: Uint8Array): Promise<void> {
-    await this.#fs.mkdir(QUARANTINE_FOLDER, MAKE_FOLDERS);
-    await this.#fs.writeFile(quarantinePath(matchId, at), bytes, AT_LOCAL_DATA);
+  async quarantine(
+    accountId: AccountId,
+    matchId: MatchId,
+    at: number,
+    bytes: Uint8Array,
+  ): Promise<void> {
+    const folder = quarantineFolder(accountId);
+    // Recursive: the account folder, and the `archive` folder above it, may not exist yet.
+    await this.#fs.mkdir(folder, MAKE_FOLDERS);
+    await this.#fs.writeFile(quarantinePath(accountId, matchId, at), bytes, AT_LOCAL_DATA);
 
     // The folder exists (it was just made), so listing it cannot fail on a missing path. Only the
     // files named like a quarantined response count: a folder or a stray file is left alone.
     // The names start with the time padded to a fixed width, so sorting them as text sorts them
     // by time, oldest first: the ones to drop are at the front of the list.
-    const quarantined = (await this.#fs.readDir(QUARANTINE_FOLDER, AT_LOCAL_DATA))
+    const quarantined = (await this.#fs.readDir(folder, AT_LOCAL_DATA))
       .filter((entry) => entry.isFile && isQuarantineFileName(entry.name))
       .map((entry) => entry.name)
       .sort();
     for (const name of quarantined.slice(0, Math.max(0, quarantined.length - QUARANTINE_LIMIT))) {
       // The folder and the name of a response that was listed here: `quarantinePath` builds a path
       // from a match and a time, which a listed name no longer carries as numbers.
-      await this.#fs.remove(`${QUARANTINE_FOLDER}/${name}`, AT_LOCAL_DATA);
+      await this.#fs.remove(`${folder}/${name}`, AT_LOCAL_DATA);
     }
+  }
+
+  /**
+   * List what the archive folder holds directly, folders and files.
+   *
+   * @returns The names of the entries, in the order the plugin lists them; empty before the first
+   *   archive is written, when the `archive` folder does not exist.
+   * @throws Whatever the plugin rejects with when the folder exists but cannot be listed.
+   */
+  async listEntries(): Promise<readonly string[]> {
+    // `readDir` throws on a missing folder; before the first archive there is nothing to list.
+    if (!(await this.#fs.exists(ARCHIVE_ROOT, AT_LOCAL_DATA))) {
+      return [];
+    }
+    const entries = await this.#fs.readDir(ARCHIVE_ROOT, AT_LOCAL_DATA);
+    return entries.map((entry) => entry.name);
+  }
+
+  /**
+   * Delete an entry of the archive folder, with everything in it.
+   *
+   * @param name - The name of the entry; it must be a single name (`isArchiveEntryName`).
+   * @returns A promise resolved once the entry is gone.
+   * @throws Error, before any call to the plugin, when the name is not a single entry name. The
+   *   message does not quote it: it can be an account id, and the interface logs what it catches.
+   *   Whatever the plugin rejects with when the entry exists but cannot be removed.
+   */
+  async removeEntry(name: string): Promise<void> {
+    if (!isArchiveEntryName(name)) {
+      // A mistake of the caller. Checked here as well as by the callers: the name goes into a
+      // recursive removal, which must never be able to leave the archive folder.
+      throw new Error('The name of an archive entry must be a single plain name');
+    }
+    // Built from the guarded name: a listed name carries no account or match to build a path from.
+    const path = `${ARCHIVE_ROOT}/${name}`;
+    // The plugin's `remove` throws on a missing path, which the port treats as "nothing to do".
+    if (!(await this.#fs.exists(path, AT_LOCAL_DATA))) {
+      return;
+    }
+    await this.#fs.remove(path, REMOVE_WITH_CONTENT);
   }
 
   /**

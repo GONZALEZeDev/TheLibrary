@@ -79,6 +79,7 @@ describe('DeadlockApiService.fetchMatchHistory', () => {
     expect(result.kind === 'fetched' ? result.matches : []).toHaveLength(5);
     expect(http.requests).toEqual([
       {
+        method: 'GET',
         url: 'https://api.deadlock-api.com/v1/players/1000001/match-history',
         headers: {
           'User-Agent': 'TheLibrary/0.1.0 (+https://github.com/GONZALEZeDev/TheLibrary)',
@@ -390,6 +391,7 @@ describe('DeadlockApiService.fetchMatchMetadata', () => {
     expect(fetched.json).toMatchObject({ match_info: { match_id: servedMatch } });
     expect(http.requests).toEqual([
       {
+        method: 'GET',
         url: `https://api.deadlock-api.com/v1/matches/${String(servedMatch)}/metadata?disable_steam=true`,
         headers: {
           'User-Agent': 'TheLibrary/0.1.0 (+https://github.com/GONZALEZeDev/TheLibrary)',

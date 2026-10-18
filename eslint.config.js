@@ -8,9 +8,7 @@
  *   the import resolver used by the boundaries rules cannot follow (block
  *   "project/extensionless-imports" for static imports, "project/restricted-syntax" for dynamic ones);
  * - `import.meta.env` read through dot access only (`import.meta.env.DEV`), never used as a value
- *   nor with brackets (`import.meta.env['DEV']`), and the developer's account variable
- *   (`VITE_DEV_ACCOUNT_ID`) read in src/adapters/dev/dev-environment.ts only (blocks
- *   "project/restricted-syntax" and "project/dev-account-variable", see ADR 0006);
+ *   nor with brackets (`import.meta.env['DEV']`) (block "project/restricted-syntax", see ADR 0006);
  * - TSDoc on every exported symbol (the `jsdoc(...)` block);
  * - kebab-case folders and files, PascalCase React component files (block "project/naming");
  * - `console` only in src/adapters/dev/** — everything else logs through the Logger port;
@@ -57,13 +55,11 @@ const NO_SCRIPT_EXTENSION_DYNAMIC_IMPORT = {
 /**
  * Message of the rule that restricts `import.meta.env` to dot access. In a build, Vite replaces
  * `import.meta.env.<NAME>` by the value of that one variable, but every other use of
- * `import.meta.env` (as a value, or with brackets) by an object holding every `VITE_*` variable: if
- * the developer's account id were set when a release is built, it would be inlined in that release.
- * `scripts/check-dev-code.ts` would only notice the variable's name in the built files, after the
- * build (the inlined object keeps its keys); this rule stops it at lint time.
+ * `import.meta.env` (as a value, or with brackets) by an object holding every `VITE_*` variable of
+ * the build environment: they would all be inlined in the bundle, whoever set them.
  */
 const IMPORT_META_ENV_DOT_ACCESS_MESSAGE =
-  "Read import.meta.env through dot access only (import.meta.env.DEV), never as a value (alias, spread, argument, type assertion, destructuring) nor with brackets (import.meta.env['DEV'], import.meta.env[key]): Vite replaces every other use with an object holding every VITE_* variable, which would inline the development account id in a release built with it set (ADR 0006: docs/adr/0006-development-code-out-of-releases.md).";
+  "Read import.meta.env through dot access only (import.meta.env.DEV), never as a value (alias, spread, argument, type assertion, destructuring) nor with brackets (import.meta.env['DEV'], import.meta.env[key]): Vite replaces every other use with an object holding every VITE_* variable of the build environment, which would inline them all in the bundle (ADR 0006: docs/adr/0006-development-code-out-of-releases.md).";
 
 /** `no-restricted-syntax` option restricting `import.meta.env` to the object of a dot access. */
 const IMPORT_META_ENV_DOT_ACCESS_ONLY = {
@@ -75,50 +71,6 @@ const IMPORT_META_ENV_DOT_ACCESS_ONLY = {
     'MemberExpression[computed=false][object.type="MetaProperty"][object.meta.name="import"][property.name="env"]:not(MemberExpression[computed=false] > .object)',
   message: IMPORT_META_ENV_DOT_ACCESS_MESSAGE,
 };
-
-/**
- * `no-restricted-syntax` options of every src file: the dynamic-import ban, and `import.meta.env`
- * restricted to dot access. A block that sets the rule replaces the options of the blocks before it
- * instead of adding to them, so a block that adds options starts from this list.
- */
-const RESTRICTED_SYNTAX_EVERYWHERE = [
-  NO_SCRIPT_EXTENSION_DYNAMIC_IMPORT,
-  IMPORT_META_ENV_DOT_ACCESS_ONLY,
-];
-
-/** Environment variable holding the developer's account id in the desktop development build. */
-const DEV_ACCOUNT_VARIABLE = 'VITE_DEV_ACCOUNT_ID';
-
-/** The module that reads `DEV_ACCOUNT_VARIABLE`. */
-const DEV_ENVIRONMENT_MODULE = 'src/adapters/dev/dev-environment.ts';
-
-/** The only files allowed to read `DEV_ACCOUNT_VARIABLE`: its module, and the test of that module. */
-const DEV_ACCOUNT_VARIABLE_FILES = [
-  DEV_ENVIRONMENT_MODULE,
-  'src/adapters/dev/dev-environment.test.ts',
-];
-
-/**
- * Message of the rules that keep `DEV_ACCOUNT_VARIABLE` out of the production code. Vite replaces
- * `import.meta.env.<NAME>` by its value at build time and the name then disappears from the bundle,
- * so `scripts/check-dev-code.ts` (which looks for texts) could never see such a read.
- */
-const DEV_ACCOUNT_VARIABLE_MESSAGE = `${DEV_ACCOUNT_VARIABLE} (the developer's account id) may only be read in ${DEV_ENVIRONMENT_MODULE}: Vite inlines the value of an import.meta.env variable at build time, so a read anywhere else could put the id in a release build without scripts/check-dev-code.ts noticing (ADR 0006: docs/adr/0006-development-code-out-of-releases.md).`;
-
-/**
- * `no-restricted-syntax` options forbidding every way to read `DEV_ACCOUNT_VARIABLE`, whatever the
- * object it is read from (`import.meta.env`, an alias of it, a type assertion on it, `process.env`…).
- * Only reads are targeted: a text that merely mentions the name (a hint sentence, a log line) is fine.
- */
-const NO_DEV_ACCOUNT_VARIABLE_READ = [
-  // <object>.VITE_DEV_ACCOUNT_ID
-  `MemberExpression[computed=false][property.name="${DEV_ACCOUNT_VARIABLE}"]`,
-  // <object>['VITE_DEV_ACCOUNT_ID']   (a template literal starting with the name too)
-  `MemberExpression[computed=true]:matches([property.value="${DEV_ACCOUNT_VARIABLE}"], [property.quasis.0.value.cooked="${DEV_ACCOUNT_VARIABLE}"])`,
-  // const { VITE_DEV_ACCOUNT_ID } = <object>   (also renamed, quoted, computed with a string or a
-  // template literal starting with the name, or with a default value; and as a parameter)
-  `ObjectPattern > Property:matches([computed=false][key.name="${DEV_ACCOUNT_VARIABLE}"], [key.value="${DEV_ACCOUNT_VARIABLE}"], [key.quasis.0.value.cooked="${DEV_ACCOUNT_VARIABLE}"])`,
-].map((selector) => ({ selector, message: DEV_ACCOUNT_VARIABLE_MESSAGE }));
 
 export default defineConfig([
   globalIgnores(['dist/', 'coverage/', '.vitest/', 'src-tauri/', 'node_modules/']),
@@ -196,7 +148,7 @@ export default defineConfig([
         { patterns: [{ regex: RELATIVE_SCRIPT_IMPORT, message: EXTENSIONLESS_IMPORT_MESSAGE }] },
       ],
       // The dynamic form (`import('./x.js')`) is banned by `no-restricted-syntax`, whose options
-      // are all set in the two blocks below.
+      // are all set in the block below.
     },
   },
 
@@ -204,24 +156,13 @@ export default defineConfig([
     name: 'project/restricted-syntax',
     files: ['src/**/*.{ts,tsx}'],
     rules: {
-      // Dynamic imports with a script extension, and `import.meta.env` other than through dot access.
-      'no-restricted-syntax': ['error', ...RESTRICTED_SYNTAX_EVERYWHERE],
-    },
-  },
-
-  {
-    name: 'project/dev-account-variable',
-    files: ['src/**/*.{ts,tsx}'],
-    // The development environment module (and its test) is the one place that reads the variable.
-    ignores: DEV_ACCOUNT_VARIABLE_FILES,
-    rules: {
-      // Replaces the options of "project/restricted-syntax" for these files (flat config does not
-      // merge rule options), hence the same list repeated. The ignored files above are not matched
-      // by this block, so they keep the options of the previous one and stay subject to its bans.
+      // Dynamic imports with a script extension, and `import.meta.env` other than through dot
+      // access. Every option of the rule is set here: a block setting it again later would replace
+      // them, since flat config does not merge rule options.
       'no-restricted-syntax': [
         'error',
-        ...RESTRICTED_SYNTAX_EVERYWHERE,
-        ...NO_DEV_ACCOUNT_VARIABLE_READ,
+        NO_SCRIPT_EXTENSION_DYNAMIC_IMPORT,
+        IMPORT_META_ENV_DOT_ACCESS_ONLY,
       ],
     },
   },

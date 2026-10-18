@@ -27,7 +27,12 @@ describe('SqlJsDatabase', () => {
       "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
     );
 
-    expect(rows.map((row) => row.name)).toEqual(['api_cache', 'matches', 'sync_state']);
+    expect(rows.map((row) => row.name)).toEqual([
+      'api_cache',
+      'linked_account',
+      'matches',
+      'sync_state',
+    ]);
   });
 
   it('runs statements with parameters and returns the rows by column name', async () => {

@@ -43,10 +43,8 @@ export default defineConfig({
     // compression and reloads the page, which wipes the in-memory database of the browser mode.
     include: ['@hpcc-js/wasm-zstd'],
   },
-  // `envPrefix` keeps Vite's default (VITE_*). The only variable read is VITE_DEV_ACCOUNT_ID, by
-  // development builds only (src/adapters/dev/dev-environment.ts): Vite reads the
-  // `.env.development.*` files in development mode only. (Tauri's guide adds 'TAURI_ENV_*', but
-  // Vite matches plain prefixes, so that entry would expose nothing.)
+  // No `VITE_*` variable is read by the app: `envPrefix` keeps Vite's default. (Tauri's guide adds
+  // 'TAURI_ENV_*', but Vite matches plain prefixes, so that entry would expose nothing.)
   build: {
     // WebView2 is evergreen Chromium, and Tailwind v4 itself requires Chromium 111 or later.
     target: 'chrome111',

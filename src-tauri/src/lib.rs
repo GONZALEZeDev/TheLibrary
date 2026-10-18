@@ -167,6 +167,12 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../../migrations/0002_match_detail.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 3,
+            description: "linked steam account",
+            sql: include_str!("../../migrations/0003_account.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

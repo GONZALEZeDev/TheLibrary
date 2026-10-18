@@ -9,6 +9,8 @@ import {
   HISTORY_RATE_LIMIT,
   METADATA_MAX_CONCURRENCY,
   METADATA_RATE_LIMIT,
+  PROFILE_RATE_LIMIT,
+  PROFILE_REFRESH_RATE_LIMIT,
 } from './budgets';
 
 describe('history budgets', () => {
@@ -21,6 +23,13 @@ describe('history budgets', () => {
 
   it('keeps at least 2 requests of the window for the "Sync" button', () => {
     expect(HISTORY_RATE_LIMIT.limit - AUTOMATIC_HISTORY_RATE_LIMIT.limit).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('profile budgets', () => {
+  it('sends at most 10 profile requests a minute and 3 refreshes an hour', () => {
+    expect(PROFILE_RATE_LIMIT).toEqual({ limit: 10, windowMs: 60_000 });
+    expect(PROFILE_REFRESH_RATE_LIMIT).toEqual({ limit: 3, windowMs: 3_600_000 });
   });
 });
 

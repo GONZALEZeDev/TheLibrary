@@ -11,8 +11,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   archivePath,
-  quarantineFileName,
-  QUARANTINE_FOLDER,
+  ARCHIVE_ROOT,
+  LEGACY_QUARANTINE_ENTRY,
+  quarantineFolder,
+  quarantinePath,
   QUARANTINE_LIMIT,
   temporaryArchivePath,
 } from '../../core/match-detail/archive-layout';
@@ -78,41 +80,180 @@ describe('MemoryArchiveStore', () => {
     const store = new MemoryArchiveStore();
     await store.write(ACCOUNT, MATCH, new Uint8Array([1]));
     await store.write(OTHER_ACCOUNT, MATCH, new Uint8Array([2]));
-    await store.quarantine(MATCH, QUARANTINE_START, new Uint8Array([3]));
+    await store.quarantine(ACCOUNT, MATCH, QUARANTINE_START, new Uint8Array([3]));
     store.addTemporaryFile(ACCOUNT, OTHER_MATCH);
     store.addTemporaryFile(OTHER_ACCOUNT, OTHER_MATCH);
+    // A file named like a leftover, but inside the quarantine folder that the account folder holds.
+    store.addFile(`${quarantineFolder(ACCOUNT)}/stray.json.zst.tmp`);
     expect(store.files.has(temporaryArchivePath(ACCOUNT, OTHER_MATCH))).toBe(true);
 
     await store.removeTemporaryFiles(ACCOUNT);
 
     // Only the temporary file of that account is gone: its archives, the other account's files
-    // (temporary ones included) and the quarantine stay.
+    // (temporary ones included), the quarantine and what the quarantine holds stay.
     expect([...store.files.keys()].sort()).toEqual(
       [
         archivePath(ACCOUNT, MATCH),
         archivePath(OTHER_ACCOUNT, MATCH),
         temporaryArchivePath(OTHER_ACCOUNT, OTHER_MATCH),
-        `${QUARANTINE_FOLDER}/${quarantineFileName(MATCH, QUARANTINE_START)}`,
+        quarantinePath(ACCOUNT, MATCH, QUARANTINE_START),
+        `${quarantineFolder(ACCOUNT)}/stray.json.zst.tmp`,
       ].sort(),
     );
   });
 
-  it('keeps only the 20 most recent quarantined responses', async () => {
+  it('quarantines under the folder of the account and keeps the 20 most recent', async () => {
     const store = new MemoryArchiveStore();
     const writes = QUARANTINE_LIMIT + 5;
     for (let index = 0; index < writes; index += 1) {
-      await store.quarantine(MATCH, QUARANTINE_START + index, new Uint8Array([index]));
+      await store.quarantine(ACCOUNT, MATCH, QUARANTINE_START + index, new Uint8Array([index]));
+    }
+    // Another account has fewer responses than the limit, written after those of the first one.
+    for (let index = 0; index < 3; index += 1) {
+      await store.quarantine(
+        OTHER_ACCOUNT,
+        MATCH,
+        QUARANTINE_START + index,
+        new Uint8Array([100 + index]),
+      );
     }
 
-    // The 5 oldest are gone, the 20 last remain.
-    const expectedNames = Array.from({ length: QUARANTINE_LIMIT }, (_, offset) => {
-      const at = QUARANTINE_START + (writes - QUARANTINE_LIMIT) + offset;
-      return `${QUARANTINE_FOLDER}/${quarantineFileName(MATCH, at)}`;
-    });
-    expect([...store.files.keys()].sort()).toEqual(expectedNames);
+    // The 5 oldest of the first account are gone, the 20 last remain. The other account keeps its 3:
+    // the limit is per account, and trimming one folder never touches the other.
+    const expectedNames = [
+      ...Array.from({ length: QUARANTINE_LIMIT }, (_, offset) =>
+        quarantinePath(ACCOUNT, MATCH, QUARANTINE_START + (writes - QUARANTINE_LIMIT) + offset),
+      ),
+      ...Array.from({ length: 3 }, (_, offset) =>
+        quarantinePath(OTHER_ACCOUNT, MATCH, QUARANTINE_START + offset),
+      ),
+    ];
+    expect([...store.files.keys()].sort()).toEqual(expectedNames.sort());
+    // Every response is in the folder of its account, none in a quarantine folder shared by all.
+    for (const path of store.files.keys()) {
+      expect(path.startsWith(`${ARCHIVE_ROOT}/${LEGACY_QUARANTINE_ENTRY}/`)).toBe(false);
+    }
     // The bytes of a kept response are the ones that were quarantined.
-    const lastName = `${QUARANTINE_FOLDER}/${quarantineFileName(MATCH, QUARANTINE_START + writes - 1)}`;
+    const lastName = quarantinePath(ACCOUNT, MATCH, QUARANTINE_START + writes - 1);
     expect(Array.from(store.files.get(lastName) ?? [])).toEqual([writes - 1]);
+  });
+
+  it('trims the quarantine by the names of the responses only', async () => {
+    const store = new MemoryArchiveStore();
+    const folder = quarantineFolder(ACCOUNT);
+    // A full folder, plus a file that is not a quarantined response and sorts before all of them.
+    for (let index = 0; index < QUARANTINE_LIMIT; index += 1) {
+      await store.quarantine(ACCOUNT, MATCH, QUARANTINE_START + index, new Uint8Array([index]));
+    }
+    store.addFile(`${folder}/000-notes.txt`);
+
+    await store.quarantine(
+      ACCOUNT,
+      MATCH,
+      QUARANTINE_START + QUARANTINE_LIMIT,
+      new Uint8Array([1]),
+    );
+
+    // Exactly one quarantined response went: the oldest of the 21. The foreign file stayed.
+    expect(store.files.has(quarantinePath(ACCOUNT, MATCH, QUARANTINE_START))).toBe(false);
+    expect(store.files.has(quarantinePath(ACCOUNT, MATCH, QUARANTINE_START + 1))).toBe(true);
+    expect(store.files.has(`${folder}/000-notes.txt`)).toBe(true);
+  });
+
+  it('lists what the archive folder holds', async () => {
+    const store = new MemoryArchiveStore();
+
+    // Before the first write the archive folder does not exist.
+    await expect(store.listEntries()).resolves.toEqual([]);
+
+    await store.write(ACCOUNT, MATCH, new Uint8Array([1]));
+    await store.write(ACCOUNT, OTHER_MATCH, new Uint8Array([2]));
+    await store.quarantine(ACCOUNT, MATCH, QUARANTINE_START, new Uint8Array([3]));
+    await store.write(OTHER_ACCOUNT, MATCH, new Uint8Array([4]));
+    // The folder of the first archive layout, and a file that is not the app's: both are entries.
+    store.addFile(`${ARCHIVE_ROOT}/${LEGACY_QUARANTINE_ENTRY}/001792154119000-100000001.json.zst`);
+    store.addFile(`${ARCHIVE_ROOT}/notes.txt`);
+
+    const entries = await store.listEntries();
+
+    // Each name once, folders and files alike; what the folders hold is not listed.
+    expect([...entries].sort()).toEqual(
+      [String(ACCOUNT), String(OTHER_ACCOUNT), LEGACY_QUARANTINE_ENTRY, 'notes.txt'].sort(),
+    );
+  });
+
+  it('removes an entry with everything in it', async () => {
+    const store = new MemoryArchiveStore();
+    await store.write(ACCOUNT, MATCH, new Uint8Array([1]));
+    await store.quarantine(ACCOUNT, MATCH, QUARANTINE_START, new Uint8Array([2]));
+    store.addTemporaryFile(ACCOUNT, OTHER_MATCH);
+    // An account whose id starts with the same digits is another entry.
+    const longerAccount = testAccountId(1234567890);
+    await store.write(longerAccount, MATCH, new Uint8Array([3]));
+    await store.write(OTHER_ACCOUNT, MATCH, new Uint8Array([4]));
+
+    await store.removeEntry(String(ACCOUNT));
+
+    // The archives, the leftovers and the quarantine of the account are gone, nothing else.
+    expect([...store.files.keys()].sort()).toEqual(
+      [archivePath(longerAccount, MATCH), archivePath(OTHER_ACCOUNT, MATCH)].sort(),
+    );
+    const entries = await store.listEntries();
+    expect([...entries].sort()).toEqual([String(longerAccount), String(OTHER_ACCOUNT)].sort());
+  });
+
+  it('removes a file that is directly under the archive folder', async () => {
+    const store = new MemoryArchiveStore();
+    store.addFile(`${ARCHIVE_ROOT}/notes.txt`);
+    store.addFile(`${ARCHIVE_ROOT}/notes.txt.bak`);
+
+    await store.removeEntry('notes.txt');
+
+    expect([...store.files.keys()]).toEqual([`${ARCHIVE_ROOT}/notes.txt.bak`]);
+  });
+
+  it('does nothing for an entry that does not exist', async () => {
+    const store = new MemoryArchiveStore();
+    await store.write(OTHER_ACCOUNT, MATCH, new Uint8Array([1]));
+
+    await expect(store.removeEntry(String(ACCOUNT))).resolves.toBeUndefined();
+
+    expect([...store.files.keys()]).toEqual([archivePath(OTHER_ACCOUNT, MATCH)]);
+  });
+
+  it.each([
+    '',
+    '.',
+    '..',
+    'a/b',
+    '../123456789',
+    '/123456789',
+    'a\\b',
+    'c:',
+    '.. ',
+    '... ',
+    'x.',
+    'x ',
+    'a\u0001b',
+    'a\0b',
+  ])('refuses the entry name "%s", which is not a single name', async (name) => {
+    const store = new MemoryArchiveStore();
+    await store.write(ACCOUNT, MATCH, new Uint8Array([1]));
+    store.failNextRemove(new Error('disk error'));
+
+    await expect(store.removeEntry(name)).rejects.toThrow(Error);
+
+    // A programming error: nothing was touched, and the failure waiting for the next removal
+    // was not used up by the refused name.
+    expect([...store.files.keys()]).toEqual([archivePath(ACCOUNT, MATCH)]);
+    await expect(store.removeEntry(String(ACCOUNT))).rejects.toThrow('disk error');
+  });
+
+  it('does not put the refused entry name in the error', async () => {
+    const store = new MemoryArchiveStore();
+
+    // The name of an entry can be an account id, which never goes in a message.
+    await expect(store.removeEntry(`${String(ACCOUNT)}/..`)).rejects.not.toThrow(String(ACCOUNT));
   });
 
   it('fails the next write when asked', async () => {
@@ -124,5 +265,27 @@ describe('MemoryArchiveStore', () => {
     expect(store.files.size).toBe(0);
     await store.write(ACCOUNT, MATCH, new Uint8Array([1]));
     expect(store.files.size).toBe(1);
+  });
+
+  it('fails the next removal when asked', async () => {
+    const store = new MemoryArchiveStore();
+    await store.write(ACCOUNT, MATCH, new Uint8Array([1]));
+    store.failNextRemove(new Error('access denied'));
+
+    await expect(store.removeEntry(String(ACCOUNT))).rejects.toThrow('access denied');
+    // The failed removal left everything in place, and only that one removal fails.
+    expect([...store.files.keys()]).toEqual([archivePath(ACCOUNT, MATCH)]);
+    await store.removeEntry(String(ACCOUNT));
+    expect(store.files.size).toBe(0);
+  });
+
+  it('adds a file at a path, with one byte unless it is given bytes', () => {
+    const store = new MemoryArchiveStore();
+
+    store.addFile(`${ARCHIVE_ROOT}/a`);
+    store.addFile(`${ARCHIVE_ROOT}/b`, new Uint8Array([7, 8]));
+
+    expect(Array.from(store.files.get(`${ARCHIVE_ROOT}/a`) ?? [])).toEqual([0]);
+    expect(Array.from(store.files.get(`${ARCHIVE_ROOT}/b`) ?? [])).toEqual([7, 8]);
   });
 });

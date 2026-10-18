@@ -34,8 +34,6 @@ export interface TestServicesOptions {
   readonly handler?: FixtureHandler;
   /** The linked account; the account of the fixtures by default, `null` for none. */
   readonly accountId?: AccountId | null;
-  /** Shown instead of an account when none is linked; none by default. */
-  readonly missingAccountHint?: string;
   /**
    * The database; a fresh in-memory one by default. Pass the database of an earlier call to simulate
    * a restart of the app, or one of your own to make the storage fail.
@@ -120,7 +118,6 @@ export function createTestServices(options: TestServicesOptions = {}): TestServi
       database,
       accountSource: new StaticAccountSource(
         options.accountId === undefined ? FIXTURE_ACCOUNT_ID : options.accountId,
-        options.missingAccountHint,
       ),
       archiveStore,
       compressor: options.compressor ?? new DirectCompressor(),

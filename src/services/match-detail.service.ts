@@ -288,6 +288,17 @@ export class MatchDetailService {
   }
 
   /**
+   * Forget what the queue keeps in memory about an account: why its last run stopped. It is called
+   * when the data of the account is deleted, so that the summary of the account, should it be
+   * linked again, does not tell the stop of a run that belongs to the deleted data.
+   *
+   * @param accountId - The account whose data is deleted.
+   */
+  forgetAccount(accountId: AccountId): void {
+    this.#lastStops.delete(accountId);
+  }
+
+  /**
    * Be told after each match whose outcome was recorded (progress). An arrow function, so that it
    * can be passed as is to React's `useSyncExternalStore`.
    *
@@ -539,7 +550,7 @@ export class MatchDetailService {
     if (attempt.body !== undefined) {
       // After the verdict is saved: the verdict matters more than the copy of the response. If the
       // copy fails, the run stops, but the match is not asked again.
-      await this.#quarantine(matchId, attempt.body);
+      await this.#quarantine(accountId, matchId, attempt.body);
       run.quarantined += 1;
     }
   }
@@ -629,15 +640,16 @@ export class MatchDetailService {
   }
 
   /**
-   * Keep a response that could not be used, compressed, in the quarantine folder.
+   * Keep a response that could not be used, compressed, in the quarantine folder of the account.
    *
+   * @param accountId - The tracked account the response was fetched for.
    * @param matchId - The match the response was fetched for.
    * @param body - The text of the response, as it was received.
    * @throws The error of the compressor or of the archive: it stops the run.
    */
-  async #quarantine(matchId: MatchId, body: string): Promise<void> {
+  async #quarantine(accountId: AccountId, matchId: MatchId, body: string): Promise<void> {
     const compressed = await this.#compressor.compress(new TextEncoder().encode(body));
-    await this.#archive.quarantine(matchId, this.#now(), compressed);
+    await this.#archive.quarantine(accountId, matchId, this.#now(), compressed);
   }
 
   /**

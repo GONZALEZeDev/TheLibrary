@@ -12,8 +12,11 @@
  *
  * - The plugin inserts its own script right after `<head>`. That script reads the full URL of the
  *   page, query included, and hands it to the app, so it runs before the script of the body. The
- *   body's script then replaces the address with `/callback`: the URL carries the nonce and the
- *   player's Steam assertion, and should not stay in the address bar or in the browser history.
+ *   body's script then replaces the address with `/callback` (`history.replaceState`): the URL
+ *   carries the nonce and the player's Steam assertion, and should not stay in the address bar or
+ *   in the tab's history entry. The browser's global history may still hold the original URL; what
+ *   it holds is an assertion Steam has already consumed, which `check_authentication` accepts only
+ *   once, so it cannot be replayed.
  * - The plugin sends no `Content-Type` header, so the browser cannot learn the encoding from the
  *   response. The `<meta charset>` is what makes the French accent display correctly.
  * - The page loads no external resource (no stylesheet, font, image or script file, and no link),

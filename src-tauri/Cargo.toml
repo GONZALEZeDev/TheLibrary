@@ -27,10 +27,11 @@ tauri-build = { version = "2.7.0", features = [] }
 tauri = { version = "2.12.0", features = [] }
 tauri-plugin-log = "2.10.0"
 tauri-plugin-store = "2.5.0"
-# HTTP client of the webview (deadlock-api). Default features minus `cookies`: the API needs no
-# cookie, so none is ever kept. `gzip` lets the server compress its responses (the hero catalogue
-# weighs about 1.4 MB uncompressed). TLS trusts the union of two root sets, because each one covers
-# a case the other misses:
+# HTTP client of the webview: it calls deadlock-api, posts the Steam sign-in confirmation to Steam
+# and downloads the Steam avatar. Default features minus `cookies`: none of these needs a cookie, so
+# none is ever kept, Steam's included. `gzip` lets the server compress its responses (the hero
+# catalogue weighs about 1.4 MB uncompressed). TLS trusts the union of two root sets, because each
+# one covers a case the other misses:
 # - `rustls-tls-native-roots` (the Windows certificate store): antivirus software and corporate
 #   proxies that inspect HTTPS install their own root there, and the bundled list does not know it,
 #   so without it every request would fail behind them.

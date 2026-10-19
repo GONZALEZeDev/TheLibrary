@@ -58,8 +58,13 @@ export interface SignInGateway {
   /**
    * Open a URL in the system browser.
    *
+   * The URL is the login URL, which carries the nonce, and a plugin rejection may quote it: the
+   * caller must never log the message of what this rejects with, only its kind.
+   *
    * @param url - The URL, here the Steam login page.
    * @returns A promise resolved once the browser is asked to open it.
+   * @throws Whatever the plugin rejects with when the browser cannot be launched. Its message may
+   *   hold the URL.
    */
   openBrowser(url: string): Promise<void>;
 }

@@ -4,8 +4,10 @@
  * It picks the adapters for the current environment — Tauri plugins in the desktop app, the
  * development adapters (synthetic data, in-memory database) in the browser dev mode (`pnpm dev`) —
  * builds the services, initialises i18n with the saved (or system) language, renders the
- * application, then starts the synchronisation. It also logs every error nothing else reports:
- * errors outside a route, unhandled promise rejections, uncaught render errors.
+ * application, then starts the account service: its `start()` runs the startup cleanup (data left
+ * by an interrupted unlink or switch) with the synchronisation suspended, and only then starts the
+ * synchronisation. It also logs every error nothing else reports: errors outside a route,
+ * unhandled promise rejections, uncaught render errors.
  *
  * Development-only code (the browser adapters, with their in-memory archive store, and the TanStack
  * devtools) is only reached through dynamic `import()`s guarded by `import.meta.env.DEV`. Vite

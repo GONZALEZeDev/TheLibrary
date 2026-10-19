@@ -53,7 +53,8 @@ export class SeededDatabase implements Database {
   /**
    * Run a query, once the seed has run.
    *
-   * @param sql - One `SELECT` statement.
+   * @param sql - One statement that answers rows: a `SELECT`, or a pragma such as the checkpoint of
+   *   the write-ahead log.
    * @param params - Values of `$1`, `$2`…
    * @returns The rows, in the order of the query.
    */

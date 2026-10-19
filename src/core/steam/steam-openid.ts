@@ -282,7 +282,10 @@ function isRecentResponseNonce(responseNonce: string, now: number): boolean {
     return false;
   }
   const issuedAt = Date.parse(time);
-  // `Date.parse` gives NaN for a date that does not exist, and a comparison with NaN is false.
+  // `Date.parse` gives NaN for a field out of range (month 13, hour 25), and a comparison with NaN
+  // is false. A day that does not exist in its month (`02-30`) may instead roll over to the next
+  // month, depending on the engine: that is harmless, since the instant it names must still fall
+  // inside the tolerance window, and Steam signs `response_nonce` and refuses an edited one.
   return Math.abs(issuedAt - now) <= RESPONSE_NONCE_TOLERANCE_MS;
 }
 

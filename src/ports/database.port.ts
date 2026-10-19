@@ -43,9 +43,10 @@ export interface Database {
   execute(sql: string, params?: readonly SqlValue[]): Promise<number>;
 
   /**
-   * Run a query.
+   * Run one statement that answers rows: a `SELECT`, or a pragma that answers a row, such as the
+   * checkpoint of the write-ahead log (`PRAGMA wal_checkpoint(TRUNCATE)`).
    *
-   * @param sql - One `SELECT` statement.
+   * @param sql - One statement that answers rows.
    * @param params - Values of `$1`, `$2`…
    * @returns The rows, in the order of the query.
    */

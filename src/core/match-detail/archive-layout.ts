@@ -22,8 +22,11 @@ const QUARANTINE_SUBFOLDER = 'quarantine';
 /**
  * The name of the quarantine folder of the first layout of the archive, which sat directly under
  * {@link ARCHIVE_ROOT} and held the responses of every account together. Nothing writes there any
- * more: the name is only known so that the cleanup of the archive folder can remove what is left,
- * since the responses it holds cannot be told apart by account.
+ * more. The startup cleanup does not look for this name: it removes every entry of the archive
+ * folder but the linked account's folder, so this folder goes like any other leftover (its
+ * responses cannot be told apart by account, so none is kept). The constant is kept for the tests
+ * of the archive stores, which use it to check that nothing writes to that folder any more and to
+ * seed it among the entries they list.
  */
 export const LEGACY_QUARANTINE_ENTRY = 'quarantine';
 

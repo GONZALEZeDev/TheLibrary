@@ -10,7 +10,7 @@
  * second may quote the URL, which carries the nonce and the player's Steam assertion, so it is
  * dropped and the app is told an empty string instead.
  *
- * The listener is not trusted ([ADR 0005](../../docs/adr/0005-steam-openid-linking.md)): any local
+ * The listener is not trusted ([ADR 0005](../../../docs/adr/0005-steam-openid-linking.md)): any local
  * process can reach its port, so the gateway forwards what it hears without judging it. The
  * permissions of the two plugins are granted in `src-tauri/capabilities/default.json`: the webview
  * may start and stop the listener and open URLs, nothing more.

@@ -26,9 +26,9 @@ const ACCOUNT_ID_TEXT = /^\d{1,10}$/;
 /**
  * Validate an account id.
  *
- * Accepts a number, or its decimal form as text (an environment variable, a URL parameter…).
- * Text is strict: no sign, no decimals, no exponent, no surrounding spaces, so that a typo is
- * reported instead of silently becoming another account.
+ * Accepts a number, or its decimal form as text (the digits of a stored key, for example). Text is
+ * strict: no sign, no decimals, no exponent, no surrounding spaces, so that a typo is reported
+ * instead of silently becoming another account.
  *
  * @param value - The candidate account id.
  * @returns The account id, or `null` when `value` is not a valid account id.

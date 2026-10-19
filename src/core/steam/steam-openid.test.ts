@@ -106,6 +106,9 @@ describe('validateCallback', () => {
   it('keeps the nonce of the URL out of the openid fields', () => {
     const check = validateCallback(callback(), pending, NOW);
 
+    // The callback must be accepted first: on a refusal there are no fields to look at, and the
+    // test would pass without having checked anything.
+    expect(check.ok).toBe(true);
     expect(check.ok && 'nonce' in check.fields).toBe(false);
   });
 
@@ -150,6 +153,13 @@ describe('validateCallback', () => {
     {
       name: 'a duplicated openid.claimed_id',
       url: `${callback()}&openid.claimed_id=${encodeURIComponent(CLAIMED_ID)}`,
+    },
+    {
+      // The keys are compared once decoded: `openid%2Emode` is `openid.mode`. A comparison of the
+      // raw text would see two different keys and let the second value hide behind the first, so
+      // the duplicate must be refused like any other, whichever value it carries.
+      name: 'an openid.mode duplicated by a percent-encoded key',
+      url: `${callback()}&openid%2Emode=cancel`,
     },
     { name: 'a duplicated nonce', url: `${callback()}&nonce=${NONCE}` },
     { name: 'a missing nonce', url: callback({ nonce: null }) },

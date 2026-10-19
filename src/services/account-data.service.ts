@@ -21,8 +21,13 @@
  * the next start compact. If saving the flag fails, the deletion goes on anyway: a deletion that is
  * not crash-safe is better than data that is not deleted, and the compaction is still attempted.
  *
- * Neither method rejects. Every step is tried even when an earlier one failed, a failure is logged
- * with the step that failed, and the caller learns from the report whether anything is left.
+ * The compaction is owed even earlier than that: the link row holds the persona name and the avatar,
+ * and they are overwritten or deleted when the link changes, which the account service does *before*
+ * it asks for the erasure. {@link AccountDataService.prepareErasure} lets it save the flag ahead of
+ * the link change, so that no crash window is left between the two.
+ *
+ * None of the methods rejects. Every step is tried even when an earlier one failed, a failure is
+ * logged with the step that failed, and the caller learns from the report whether anything is left.
  *
  * Privacy: an account id and the name of an archive folder (which is the id) are never logged. A
  * database error is logged with its context, as everywhere; the message of an archive error can
@@ -129,6 +134,29 @@ export class AccountDataService {
   }
 
   /**
+   * Save that a compaction is owed, ahead of an erasure whose first step is not a deletion of this
+   * service: the account service changes the link (a switch saves the new one, an unlink clears it),
+   * and only then asks for {@link AccountDataService.eraseAccount}.
+   *
+   * Without it, an app killed between the link change and the erasure would leave the old persona
+   * name and avatar in the free pages of the database for good, when the account had no match and
+   * no saved synchronisation state yet: the next start's sweep would find nothing to delete, owe no
+   * compaction, and not compact. With the flag saved first, that start compacts. If the link change
+   * then fails, nothing is deleted and the flag only costs one compaction at the next start.
+   *
+   * Call it with the synchronisation suspended, right before the link changes. It deletes nothing
+   * and compacts nothing. {@link AccountDataService.eraseAccount} saves the flag too, which is
+   * harmless and keeps that method correct on its own.
+   *
+   * @returns A promise resolved once the flag is saved; it never rejects. A flag that cannot be saved
+   *   is logged with the step `vacuum`, and the caller goes on: a link change that is not crash-safe
+   *   is better than one that is refused.
+   */
+  async prepareErasure(): Promise<void> {
+    await this.#markVacuumPending();
+  }
+
+  /**
    * Delete every local data of an account: its matches, its synchronisation state, its archive
    * folder and what the detail queue remembers of it. Then compact the database and check that
    * nothing of the account is left.
@@ -141,7 +169,9 @@ export class AccountDataService {
    */
   async eraseAccount(accountId: AccountId): Promise<ErasureReport> {
     // Whether the flag could be saved does not enter the report: it only protects against a crash
-    // between the deletion and the compaction, and the compaction below does not depend on it.
+    // between the deletion and the compaction, and the compaction below does not depend on it. The
+    // account service has usually saved it already (see `prepareErasure`); saving it again costs
+    // one write and keeps this method correct when it is called on its own.
     await this.#markVacuumPending();
     const rowsDeleted = await this.#deleteRows(accountId);
     const folderRemoved = (

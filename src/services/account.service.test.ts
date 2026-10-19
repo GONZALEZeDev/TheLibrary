@@ -1056,6 +1056,59 @@ describe('AccountService.unlink', () => {
     await expect(account.getLinkedAccount()).resolves.toBeNull();
   });
 
+  it.each([
+    { operation: 'unlink', failing: /^DELETE FROM linked_account/ },
+    { operation: 'switch', failing: /^INSERT INTO linked_account/ },
+  ] as const)(
+    'owes a compaction before the link changes, and pays it once at the next start: $operation',
+    async ({ operation, failing }) => {
+      const test = setUp({ steamId64: NEW_STEAM_ID64 });
+      await populate(test);
+      const before = await storedDataOf(test, OLD);
+      test.spy.failNext(failing);
+
+      await expect(
+        operation === 'unlink' ? test.account.unlink() : test.account.link(),
+      ).rejects.toMatchObject({ kind: 'storage' });
+
+      // The link did not change, so nothing was deleted and nothing compacted. The debt is saved all
+      // the same, as it must be when the app is killed at this very point instead of failing.
+      await expect(storedDataOf(test, OLD)).resolves.toEqual(before);
+      expect(test.spy.vacuumCount()).toBe(0);
+      await expect(
+        new SyncStateRepository(test.database, test.logger).isVacuumPending(),
+      ).resolves.toBe(true);
+
+      // The next start pays it once, and leaves the data of the account that is still linked.
+      const restarted = setUp({
+        accountId: null,
+        database: test.spy,
+        archiveStore: test.archiveStore,
+      });
+      await restarted.account.start();
+      await whenIdle(restarted.services.sync);
+
+      expect(test.spy.vacuumCount()).toBe(1);
+      await expect(
+        new SyncStateRepository(restarted.database, restarted.logger).isVacuumPending(),
+      ).resolves.toBe(false);
+      await expect(storedDataOf(restarted, OLD)).resolves.toEqual(before);
+    },
+  );
+
+  it('owes nothing when there is no account to unlink', async () => {
+    const test = setUp({ accountId: null });
+
+    await test.account.unlink();
+
+    await expect(
+      new SyncStateRepository(test.database, test.logger).isVacuumPending(),
+    ).resolves.toBe(false);
+    expect(test.spy.statements.some((sql) => sql.trim().startsWith('INSERT INTO sync_state'))).toBe(
+      false,
+    );
+  });
+
   it('says the unlink is incomplete when a file cannot be removed, and finishes at the next start', async () => {
     const test = setUp();
     const { account, services, archiveStore, logger } = test;
@@ -1142,6 +1195,40 @@ describe('AccountService.start', () => {
       new SyncStateRepository(restarted.database, restarted.logger).isVacuumPending(),
     ).resolves.toBe(false);
   });
+
+  it.each([
+    { operation: 'an unlink', linked: null },
+    { operation: 'a switch', linked: NEW },
+  ])(
+    'compacts once at the next start after $operation killed just after the link changed',
+    async ({ linked }) => {
+      // The app that was killed: the link row changed (cleared, or now the new account's) and
+      // nothing else was done. The account that left had no match and no saved synchronisation
+      // state, so there is no data to delete: the flag, saved before the link changed, is all
+      // that tells the next start that the old persona name and avatar are still in the file.
+      const killed = setUp({ accountId: linked });
+      await new SyncStateRepository(killed.database, killed.logger).setVacuumPending(true);
+
+      // The next start: same database, same archive, the link as the crash left it.
+      const restarted = setUp({
+        accountId: null,
+        database: killed.spy,
+        archiveStore: killed.archiveStore,
+        handler: createFixtureApi({
+          now: START,
+          accountId: linked ?? OLD,
+          matchCount: SMALL_HISTORY,
+        }),
+      });
+      await restarted.account.start();
+      await whenIdle(restarted.services.sync);
+
+      expect(killed.spy.vacuumCount()).toBe(1);
+      await expect(
+        new SyncStateRepository(restarted.database, restarted.logger).isVacuumPending(),
+      ).resolves.toBe(false);
+    },
+  );
 
   it('cleans up before the first synchronisation starts', async () => {
     const test = setUp();

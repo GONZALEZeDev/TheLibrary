@@ -9,7 +9,10 @@
  * - **Nothing is deleted before the link has changed.** A switch saves the new link, then erases the
  *   old account; an unlink clears the link, then erases the account. A crash in between leaves data
  *   that belongs to no linked account, which the cleanup at the next start deletes. The other order
- *   could leave a link to an account without data.
+ *   could leave a link to an account without data. The one thing saved *before* the link changes is
+ *   the debt of a compaction of the database (see `AccountDataService.prepareErasure`): the link row
+ *   holds the persona name and the avatar, and an account that has no data yet would otherwise leave
+ *   the next start nothing to tell it to compact.
  * - **Nothing writes for an account while it is erased.** The synchronisation is suspended before the
  *   link changes (which waits for the run going to end) and resumed in a `finally`, whatever
  *   happened: a failure must never leave the app synchronising nothing for good. The cleanup at
@@ -400,16 +403,24 @@ export class AccountService {
   }
 
   /**
-   * Save the new link, then erase the old account, with the synchronisation suspended.
+   * Save the new link, then erase the old account, with the synchronisation suspended. The debt of
+   * the compaction is saved before the link.
    *
    * @param account - The account to link.
    * @param replacedId - The account it replaces.
    * @throws AppError of kind `storage` when the new link cannot be saved. Nothing is erased then:
-   *   the erasure comes after the link, in the same `try`.
+   *   the erasure comes after the link, in the same `try`. The debt stays saved, and only costs one
+   *   compaction at the next start.
    */
   async #switchTo(account: LinkedAccount, replacedId: AccountId): Promise<void> {
     await this.#sync.suspend();
     try {
+      // The compaction is owed from here, before the link row changes: an app killed right after
+      // the change, for an old account that has no data yet, would otherwise leave its persona name
+      // and avatar in the free pages of the database, with no debt to tell the next start. If the
+      // change fails, nothing is deleted and the debt only costs one compaction at the next start.
+      // Never rejects: a flag that cannot be saved is logged.
+      await this.#data.prepareErasure();
       await this.#accounts.setLinkedAccount(account);
       // Never rejects: what could not be deleted is logged, and the next start's cleanup retries.
       await this.#data.eraseAccount(replacedId);
@@ -419,9 +430,12 @@ export class AccountService {
   }
 
   /**
-   * Clear the link, then erase the account, with the synchronisation suspended.
+   * Clear the link, then erase the account, with the synchronisation suspended. The debt of the
+   * compaction is saved before the link is cleared.
    *
    * @returns Whether everything was deleted.
+   * @throws AppError of kind `storage` when the link cannot be cleared. Nothing is erased then; the
+   *   debt stays saved, and only costs one compaction at the next start.
    */
   async #unlink(): Promise<UnlinkResult> {
     const accountId = await this.#accounts.currentAccountId();
@@ -431,6 +445,9 @@ export class AccountService {
     await this.#sync.suspend();
     let complete: boolean;
     try {
+      // The compaction is owed before the link is cleared, for the reason given in `#switchTo`: the
+      // link row holds the persona name and the avatar. Never rejects.
+      await this.#data.prepareErasure();
       await this.#accounts.clearLinkedAccount();
       ({ complete } = await this.#data.eraseAccount(accountId));
     } finally {

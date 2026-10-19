@@ -56,7 +56,8 @@ export class SqlJsDatabase implements Database {
   /**
    * Run a query.
    *
-   * @param sql - One `SELECT` statement.
+   * @param sql - One statement that answers rows: a `SELECT`, or a pragma such as the checkpoint of
+   *   the write-ahead log.
    * @param params - Values of `$1`, `$2`…
    * @returns The rows, keyed by column name.
    * @throws Error when `sql` does not hold exactly one statement (a programming error).

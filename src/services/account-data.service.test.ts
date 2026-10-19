@@ -570,6 +570,49 @@ describe('AccountDataService.eraseAccount', () => {
   });
 });
 
+describe('AccountDataService.prepareErasure', () => {
+  it('saves that a compaction is owed, and deletes and compacts nothing', async () => {
+    const { service, populate, snapshot, database, syncState } = setUp();
+    await populate();
+    const before = await snapshot();
+
+    await expect(service.prepareErasure()).resolves.toBeUndefined();
+
+    await expect(syncState.isVacuumPending()).resolves.toBe(true);
+    // Only the flag was written: the data of both accounts is where it was.
+    await expect(snapshot()).resolves.toEqual({
+      ...before,
+      stateKeys: [...before.stateKeys, 'maintenance.vacuum_pending'],
+    });
+    expect(database.compactionStatements()).toEqual([]);
+  });
+
+  it('never rejects, and logs the step, when the flag cannot be saved', async () => {
+    const { service, populate, database, logger, syncState } = setUp();
+    await populate();
+    database.failNext(/^INSERT INTO sync_state/);
+
+    await expect(service.prepareErasure()).resolves.toBeUndefined();
+
+    expect(failures(logger)).toEqual([
+      expect.objectContaining({ step: 'vacuum', kind: 'storage' }),
+    ]);
+    await expect(syncState.isVacuumPending()).resolves.toBe(false);
+  });
+
+  it('leaves nothing to redo for the erasure that follows: it compacts once', async () => {
+    const { service, populate, database, syncState } = setUp();
+    await populate();
+
+    await service.prepareErasure();
+    // The erasure saves the flag again, which is harmless: it keeps the service correct on its own.
+    await expect(service.eraseAccount(LINKED)).resolves.toEqual({ complete: true });
+
+    expect(database.compactionStatements()).toEqual([VACUUM_STATEMENT, CHECKPOINT_STATEMENT]);
+    await expect(syncState.isVacuumPending()).resolves.toBe(false);
+  });
+});
+
 describe('AccountDataService.sweep', () => {
   it('compacts at the next start after an interrupted deletion', async () => {
     const { service, populate, snapshot, database, logger, matches, syncState, archiveStore } =
@@ -600,6 +643,26 @@ describe('AccountDataService.sweep', () => {
       message: 'Startup cleanup',
       context: { accounts: 0, entries: 0, vacuumed: true },
     });
+  });
+
+  it('compacts at the next start when the debt was saved ahead of an account that had no data', async () => {
+    const { service, snapshot, database, syncState } = setUp();
+    // The account that left was linked before any synchronisation wrote a match or a state for it,
+    // so the erasure that was to follow would have had nothing to delete: only the flag, saved
+    // before the link changed, tells the next start that the database still holds its profile.
+    await service.prepareErasure();
+    const before = await snapshot();
+
+    await expect(service.sweep(LINKED)).resolves.toEqual({
+      accounts: 0,
+      entries: 0,
+      vacuumed: true,
+    });
+
+    expect(database.compactionStatements()).toEqual([VACUUM_STATEMENT, CHECKPOINT_STATEMENT]);
+    await expect(syncState.isVacuumPending()).resolves.toBe(false);
+    // Only the value of the flag moved.
+    await expect(snapshot()).resolves.toEqual(before);
   });
 
   it('removes everything that is not the linked account at start', async () => {

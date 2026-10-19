@@ -9,13 +9,25 @@
  * The same rows also carry the state of the detail queue (`detail_status`), which this repository
  * only reads: the history never writes it, so a match that is already archived stays archived.
  *
+ * Besides the history itself, the repository answers three questions about whole accounts and
+ * periods: the totals the dashboard tiles are computed from, which accounts have matches, and the
+ * deletion of every match of one account (an unlink). The database does the summing and the
+ * deleting; the rules that turn totals into averages stay in `core`.
+ *
  * @packageDocumentation
  */
 import { z } from 'zod';
-import type { AccountId } from '../core/domain/account';
+import { parseAccountId, type AccountId } from '../core/domain/account';
+import type { HeroId } from '../core/domain/hero';
 import { matchIdSchema, type MatchSummary } from '../core/domain/match';
+import type { PeriodTotals } from '../core/domain/period-stats';
 import { AppError } from '../core/errors/app-error';
-import { DETAIL_STATUSES, type DetailStatus } from '../core/match-detail/detail-status';
+import {
+  ARCHIVED_GAME_MODE,
+  ARCHIVED_MATCH_MODES,
+  DETAIL_STATUSES,
+  type DetailStatus,
+} from '../core/match-detail/detail-status';
 import type { Database, SqlValue } from '../ports/database.port';
 
 /**
@@ -86,6 +98,26 @@ const matchRowSchema = z.object({
   // coerced to a status.
   detail_status: z.enum(DETAIL_STATUSES),
 });
+
+/**
+ * Schema of the row `periodTotals` reads. The sums are checked like the columns they add up (a
+ * sum of the safe integers of {@link matchRowSchema} is an integer too), and a count cannot be
+ * negative.
+ */
+const periodTotalsRowSchema = z.object({
+  matches: z.int().nonnegative(),
+  wins: z.int().nonnegative(),
+  kills: z.int(),
+  deaths: z.int(),
+  assists: z.int(),
+});
+
+/**
+ * Schema of a row `listAccountIds` reads. It only tells a number from anything else: whether the
+ * number is a Steam account id is `parseAccountId`'s to say, row by row, so that one damaged row
+ * is skipped instead of failing the whole list.
+ */
+const accountRowSchema = z.object({ account_id: z.int() });
 
 /** Reads and writes the `matches` table. */
 export class MatchesRepository {
@@ -182,6 +214,95 @@ export class MatchesRepository {
       }
       return toStoredMatch(parsed.data, accountId);
     });
+  }
+
+  /**
+   * Delete every stored match of a player, with the state of their detail queue (it lives in the
+   * same rows). The archive files on disk are not touched here.
+   *
+   * @param accountId - The player.
+   * @returns The number of matches deleted; 0 when the player has none (an unlink that is retried).
+   * @throws AppError of kind `storage` when the database fails.
+   */
+  async deleteAccount(accountId: AccountId): Promise<number> {
+    return this.#run(
+      () => this.#database.execute('DELETE FROM matches WHERE account_id = $1', [accountId]),
+      'Could not delete the matches of the account',
+    );
+  }
+
+  /**
+   * The accounts that have matches in the database, whether or not one of them is the linked
+   * account: the startup sweep deletes the matches of every account but the linked one.
+   *
+   * A stored account id that is no Steam account id (a damaged database can hold one: the table
+   * does not check the column) is left out instead of failing the list, and is never handed out as
+   * an account to delete.
+   *
+   * @returns Each account id once, lowest first.
+   * @throws AppError of kind `storage` when the database fails.
+   */
+  async listAccountIds(): Promise<AccountId[]> {
+    const rows = await this.#run(
+      () => this.#database.select('SELECT DISTINCT account_id FROM matches ORDER BY account_id'),
+      'Could not list the accounts',
+    );
+    const accountIds: AccountId[] = [];
+    for (const row of rows) {
+      const parsed = accountRowSchema.safeParse(row);
+      const accountId = parsed.success ? parseAccountId(parsed.data.account_id) : null;
+      if (accountId !== null) {
+        accountIds.push(accountId);
+      }
+    }
+    return accountIds;
+  }
+
+  /**
+   * The sums over the matches a hero played in a period, for the numbers of the dashboard.
+   *
+   * Only the normal-mode matches count: the normal game ({@link ARCHIVED_GAME_MODE}) in unranked or
+   * ranked mode ({@link ARCHIVED_MATCH_MODES}). Street Brawl and private lobbies say nothing about
+   * how a hero plays the real game, the same rule the detail archive follows.
+   *
+   * @param accountId - The player.
+   * @param heroId - The hero.
+   * @param sinceStartTime - Start of the period, in Unix seconds like a match's `start_time`; a
+   *   match that started at that very second counts.
+   * @returns The totals; all zeros when the player has no such match in the period.
+   * @throws AppError of kind `storage` when the database fails or returns an unexpected row.
+   */
+  async periodTotals(
+    accountId: AccountId,
+    heroId: HeroId,
+    sinceStartTime: number,
+  ): Promise<PeriodTotals> {
+    const fixedParams: SqlValue[] = [accountId, heroId, sinceStartTime, ARCHIVED_GAME_MODE];
+    // One placeholder for each archived match mode, numbered after the four values above.
+    const modePlaceholders = ARCHIVED_MATCH_MODES.map(
+      (_, index) => `$${String(fixedParams.length + index + 1)}`,
+    );
+    const rows = await this.#run(
+      () =>
+        // `COALESCE`: the sum of no row is NULL in SQL, and a period without a match is zeros.
+        this.#database.select(
+          `SELECT COUNT(*) AS matches,
+                  COALESCE(SUM(won), 0) AS wins,
+                  COALESCE(SUM(kills), 0) AS kills,
+                  COALESCE(SUM(deaths), 0) AS deaths,
+                  COALESCE(SUM(assists), 0) AS assists
+           FROM matches
+           WHERE account_id = $1 AND hero_id = $2 AND start_time >= $3
+             AND game_mode = $4 AND match_mode IN (${modePlaceholders.join(', ')})`,
+          [...fixedParams, ...ARCHIVED_MATCH_MODES],
+        ),
+      'Could not sum the matches of the period',
+    );
+    const parsed = periodTotalsRowSchema.safeParse(rows[0]);
+    if (!parsed.success) {
+      throw new AppError('storage', 'Unexpected result while summing the matches of the period');
+    }
+    return parsed.data;
   }
 
   /**

@@ -15,13 +15,14 @@ import {
   FIXTURE_ACCOUNT_ID,
 } from '../adapters/dev/fixtures/match-history.fixture';
 import { isMetadataMissing } from '../adapters/dev/fixtures/match-metadata.fixture';
+import { FIXTURE_AVATAR_HASH, FIXTURE_PERSONA_NAME } from '../adapters/dev/fixtures/steam.fixture';
 import { MemoryLogger } from '../adapters/dev/memory-logger.adapter';
 import { DEFAULT_PAUSE_MS } from '../core/deadlock-api/api-response';
 import { MAX_RESPONSE_BYTES, matchMetadataRequest } from '../core/deadlock-api/endpoints';
 import { AppError, errorLogContext, isAppError } from '../core/errors/app-error';
 import type { Database } from '../ports/database.port';
 import type { HttpRequest, HttpResponse } from '../ports/http-client.port';
-import { createTestDatabase, testMatchId } from '../test/test-data';
+import { createTestDatabase, testAccountId, testMatchId } from '../test/test-data';
 import { DeadlockApiService, type MetadataFetch } from './deadlock-api.service';
 import { SyncStateRepository } from './sync-state.repository';
 
@@ -829,6 +830,329 @@ describe('DeadlockApiService.fetchMatchMetadata', () => {
       const result = await api.fetchMatchMetadata(testMatchId(1)).catch((error: unknown) => error);
 
       // What a caller logs for a failure is the log context of its error: no body there either.
+      const loggedByCaller = isAppError(result) ? errorLogContext(result) : null;
+      expect(JSON.stringify([logger.entries, loggedByCaller])).not.toContain(marker);
+      // The check means something only if the request itself was logged.
+      expect(logger.entries.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('DeadlockApiService.fetchSteamProfile', () => {
+  /** An account the fixture API knows nothing about: deadlock-api answers it an empty list. */
+  const unknownAccountId = testAccountId(2_000_001);
+
+  const PROFILE_URL = 'https://api.deadlock-api.com/v1/players/steam?account_ids=1000001';
+
+  /** The two ways to ask: from the cache of deadlock-api, or with a refresh from Steam. */
+  const plain = { refresh: false };
+  const refreshed = { refresh: true };
+
+  it('asks deadlock-api for the Steam profile of an account', async () => {
+    const { api, http, logger } = setUp();
+
+    const result = await api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, plain);
+
+    expect(result).toEqual({
+      kind: 'fetched',
+      profile: { personaName: FIXTURE_PERSONA_NAME, avatarHash: FIXTURE_AVATAR_HASH },
+    });
+    expect(http.requests).toEqual([
+      {
+        method: 'GET',
+        url: PROFILE_URL,
+        headers: {
+          'User-Agent': 'TheLibrary/0.1.0 (+https://github.com/GONZALEZeDev/TheLibrary)',
+          Accept: 'application/json',
+        },
+        timeoutMs: 15_000,
+        maxBodyBytes: 10 * 1024 * 1024,
+      },
+    ]);
+    // The request is logged by the template of its endpoint, never by its URL.
+    expect(logger.entries).toContainEqual(
+      expect.objectContaining({
+        level: 'debug',
+        message: 'Request answered',
+        context: expect.objectContaining({
+          endpoint: '/v1/players/steam',
+          status: 200,
+        }) as unknown,
+      }),
+    );
+    expect(JSON.stringify(logger.entries)).not.toContain(String(FIXTURE_ACCOUNT_ID));
+  });
+
+  it('asks Steam to refresh only when told', async () => {
+    const { api, http } = setUp();
+
+    await api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, plain);
+    await api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, refreshed);
+
+    expect(http.requests.map((request) => request.url)).toEqual([
+      PROFILE_URL,
+      `${PROFILE_URL}&refresh=true`,
+    ]);
+  });
+
+  it('reports an unknown player as no profile', async () => {
+    const { api, syncState } = setUp();
+
+    await expect(api.fetchSteamProfile(unknownAccountId, plain)).resolves.toEqual({
+      kind: 'fetched',
+      profile: null,
+    });
+    // An empty list is an answer, not a failure: no pause follows.
+    await expect(syncState.getPausedUntil()).resolves.toBeNull();
+  });
+
+  it('keeps to 10 profile requests a minute and 3 refreshes an hour', async () => {
+    const { api, http, clock } = setUp();
+
+    // The minute: 10 requests go out, the 11th waits until the first one leaves the window.
+    for (let index = 0; index < 10; index += 1) {
+      await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, plain)).resolves.toEqual(FETCHED);
+    }
+    await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, plain)).resolves.toEqual({
+      kind: 'budget_exhausted',
+      nextAllowedAt: START + MINUTE,
+    });
+    expect(http.requests).toHaveLength(10);
+    clock.now = START + MINUTE;
+    await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, plain)).resolves.toEqual(FETCHED);
+
+    // The hour: 3 refreshes, a minute apart so that the minute is never what stops them.
+    for (const minutes of [2, 3, 4]) {
+      clock.now = START + minutes * MINUTE;
+      await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, refreshed)).resolves.toEqual(FETCHED);
+    }
+    clock.now = START + 5 * MINUTE;
+    await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, refreshed)).resolves.toEqual({
+      kind: 'budget_exhausted',
+      nextAllowedAt: START + 62 * MINUTE,
+    });
+    // The budget of the refreshes does not stop the requests that do not refresh.
+    await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, plain)).resolves.toEqual(FETCHED);
+    expect(http.requests).toHaveLength(15);
+
+    clock.now = START + 62 * MINUTE;
+    await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, refreshed)).resolves.toEqual(FETCHED);
+  });
+
+  it('counts a refresh in the minute as well as in the hour', async () => {
+    const { api } = setUp();
+    for (let index = 0; index < 3; index += 1) {
+      await api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, refreshed);
+    }
+
+    // The 3 refreshes used 3 of the 10 requests of the minute: 7 more fit, not 8.
+    for (let index = 0; index < 7; index += 1) {
+      await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, plain)).resolves.toEqual(FETCHED);
+    }
+    await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, plain)).resolves.toMatchObject({
+      kind: 'budget_exhausted',
+    });
+  });
+
+  it('counts a refresh that the hour refuses in no window', async () => {
+    const { api, http } = setUp();
+    for (let index = 0; index < 3; index += 1) {
+      await api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, refreshed);
+    }
+    await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, refreshed)).resolves.toMatchObject({
+      kind: 'budget_exhausted',
+    });
+
+    // Had the refused refresh been counted in the minute, only 6 more requests would fit.
+    for (let index = 0; index < 7; index += 1) {
+      await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, plain)).resolves.toEqual(FETCHED);
+    }
+    expect(http.requests).toHaveLength(10);
+  });
+
+  it('counts a refresh that the minute refuses in no window', async () => {
+    const { api, http, clock } = setUp();
+    for (let index = 0; index < 10; index += 1) {
+      await api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, plain);
+    }
+    await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, refreshed)).resolves.toEqual({
+      kind: 'budget_exhausted',
+      nextAllowedAt: START + MINUTE,
+    });
+
+    // Had the refused refresh been counted in the hour, only 2 refreshes would be left.
+    clock.now = START + MINUTE;
+    for (let index = 0; index < 3; index += 1) {
+      await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, refreshed)).resolves.toEqual(FETCHED);
+    }
+    expect(http.requests).toHaveLength(13);
+  });
+
+  it('answers the later date when both budgets refuse', async () => {
+    // The hour is the later one: 3 refreshes and 7 other requests at the same moment.
+    const sameMoment = setUp();
+    for (let index = 0; index < 3; index += 1) {
+      await sameMoment.api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, refreshed);
+    }
+    for (let index = 0; index < 7; index += 1) {
+      await sameMoment.api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, plain);
+    }
+    await expect(sameMoment.api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, refreshed)).resolves.toEqual({
+      kind: 'budget_exhausted',
+      nextAllowedAt: START + 60 * MINUTE,
+    });
+
+    // The minute is the later one: the oldest refresh leaves the hour half a minute before the
+    // oldest request leaves the minute.
+    const lateInTheHour = setUp();
+    for (const minutes of [0, 1, 2]) {
+      lateInTheHour.clock.now = START + minutes * MINUTE;
+      await lateInTheHour.api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, refreshed);
+    }
+    lateInTheHour.clock.now = START + 59.5 * MINUTE;
+    for (let index = 0; index < 10; index += 1) {
+      await lateInTheHour.api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, plain);
+    }
+    await expect(
+      lateInTheHour.api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, refreshed),
+    ).resolves.toEqual({ kind: 'budget_exhausted', nextAllowedAt: START + 60.5 * MINUTE });
+  });
+
+  it('never lets overlapping calls exceed the budget', async () => {
+    const { api, http } = setUp();
+    for (let index = 0; index < 9; index += 1) {
+      await api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, plain);
+    }
+
+    const results = await Promise.all([
+      api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, plain),
+      api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, plain),
+    ]);
+
+    expect(results.map((result) => result.kind).toSorted()).toEqual([
+      'budget_exhausted',
+      'fetched',
+    ]);
+    expect(http.requests).toHaveLength(10);
+  });
+
+  it('pauses on a 429 and answers paused', async () => {
+    const { api, http, syncState } = setUp(() =>
+      jsonResponse({ status: 429 }, 429, { 'retry-after': '120' }),
+    );
+
+    await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, plain)).resolves.toEqual({
+      kind: 'paused',
+      until: START + 120_000,
+    });
+    await expect(syncState.getPausedUntil()).resolves.toBe(START + 120_000);
+
+    // The pause is shared by every family of requests: the next calls send nothing.
+    await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, refreshed)).resolves.toEqual({
+      kind: 'paused',
+      until: START + 120_000,
+    });
+    await expect(api.fetchMatchHistory(FIXTURE_ACCOUNT_ID, { automatic: false })).resolves.toEqual({
+      kind: 'paused',
+      until: START + 120_000,
+    });
+    expect(http.requests).toHaveLength(1);
+  });
+
+  it('pauses on a 503 without Retry-After for the default delay', async () => {
+    const { api, syncState } = setUp(() => jsonResponse({ status: 503 }, 503));
+
+    await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, plain)).resolves.toEqual({
+      kind: 'paused',
+      until: START + DEFAULT_PAUSE_MS,
+    });
+    await expect(syncState.getPausedUntil()).resolves.toBe(START + DEFAULT_PAUSE_MS);
+  });
+
+  it('answers a pause that another request asked for, without sending or counting anything', async () => {
+    const { api, http, syncState, clock } = setUp();
+    await syncState.setPausedUntil(START + 5_000);
+
+    for (let index = 0; index < 12; index += 1) {
+      await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, refreshed)).resolves.toEqual({
+        kind: 'paused',
+        until: START + 5_000,
+      });
+    }
+    expect(http.requests).toHaveLength(0);
+
+    // The pause is over, and the calls it stopped used none of the budgets.
+    clock.now = START + 5_000;
+    await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, refreshed)).resolves.toEqual(FETCHED);
+  });
+
+  it.each([
+    [403, 'forbidden'],
+    [404, 'not_found'],
+    [500, 'service_unavailable'],
+    [418, 'unexpected'],
+  ] as const)('throws a %s as %s', async (status, kind) => {
+    const { api } = setUp(() => jsonResponse({}, status));
+
+    await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, plain)).rejects.toMatchObject({
+      kind,
+      context: { endpoint: '/v1/players/steam', status },
+    });
+  });
+
+  it('throws an answer that is not a list as an invalid payload', async () => {
+    const { api } = setUp(() => jsonResponse({ account_id: FIXTURE_ACCOUNT_ID }));
+
+    await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, plain)).rejects.toMatchObject({
+      kind: 'invalid_payload',
+    });
+  });
+
+  it('removes the account id that a transport error quotes', async () => {
+    const { api, logger } = setUp(() => {
+      throw new AppError('network', 'The request failed', {
+        cause: `error sending request for url (${PROFILE_URL}&refresh=true)`,
+      });
+    });
+
+    const error = await api
+      .fetchSteamProfile(FIXTURE_ACCOUNT_ID, refreshed)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AppError);
+    expect(error).toMatchObject({
+      kind: 'network',
+      context: { endpoint: '/v1/players/steam' },
+      cause:
+        'error sending request for url (https://api.deadlock-api.com/v1/players/steam?account_ids={account_id}&refresh=true)',
+    });
+    expect(
+      JSON.stringify([isAppError(error) ? errorLogContext(error) : null, logger.entries]),
+    ).not.toContain(String(FIXTURE_ACCOUNT_ID));
+  });
+
+  it('never logs the persona name', async () => {
+    const marker = 'NAME-MARKER-7d3b';
+    const answers: readonly HttpResponse[] = [
+      jsonResponse([{ account_id: FIXTURE_ACCOUNT_ID, personaname: marker }]),
+      jsonResponse({ personaname: marker }),
+      jsonResponse([{ personaname: marker }]),
+      { status: 200, headers: {}, body: `<html>${marker}</html>` },
+      jsonResponse({ error: marker }, 404),
+      jsonResponse({ error: marker }, 429, { 'retry-after': '5' }),
+      jsonResponse({ error: marker }, 503, { 'retry-after': '5' }),
+      jsonResponse({ error: marker }, 403),
+      jsonResponse({ error: marker }, 500),
+    ];
+
+    for (const answer of answers) {
+      const { api, logger } = setUp(() => answer);
+
+      const result = await api
+        .fetchSteamProfile(FIXTURE_ACCOUNT_ID, plain)
+        .catch((error: unknown) => error);
+
+      // What a caller logs for a failure is the log context of its error: no name there either.
       const loggedByCaller = isAppError(result) ? errorLogContext(result) : null;
       expect(JSON.stringify([logger.entries, loggedByCaller])).not.toContain(marker);
       // The check means something only if the request itself was logged.

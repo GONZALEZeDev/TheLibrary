@@ -73,6 +73,9 @@ export class FixtureSignInGateway implements SignInGateway {
   /** The failure the next {@link FixtureSignInGateway.openBrowser} throws instead of opening. */
   #nextOpenError: Error | null = null;
 
+  /** The failure the next {@link FixtureSignInGateway.cancel} rejects with, once it is recorded. */
+  #nextCancelError: Error | null = null;
+
   /**
    * @param options - See {@link FixtureSignInGatewayOptions}.
    */
@@ -128,10 +131,13 @@ export class FixtureSignInGateway implements SignInGateway {
    * Record the cancelled listener and drop the answers still waiting for their delay: a closed
    * listener hears nothing from the browser any more.
    *
-   * The real listener rejects a cancel once it has ended by itself; this one accepts it always.
+   * The real listener rejects a cancel once it has ended by itself; this one accepts it always,
+   * unless {@link FixtureSignInGateway.failNextCancel} queued a failure.
    *
    * @param port - The port to stop.
    * @returns A promise resolved at once.
+   * @throws The error given to {@link FixtureSignInGateway.failNextCancel}, once, when one is
+   *   queued. The cancel is recorded all the same: it was asked for.
    */
   cancel(port: number): Promise<void> {
     this.#cancelled.push(port);
@@ -139,6 +145,11 @@ export class FixtureSignInGateway implements SignInGateway {
       clearTimeout(timer);
     }
     this.#pendingAnswers.clear();
+    if (this.#nextCancelError !== null) {
+      const error = this.#nextCancelError;
+      this.#nextCancelError = null;
+      return Promise.reject(error);
+    }
     return Promise.resolve();
   }
 
@@ -208,6 +219,16 @@ export class FixtureSignInGateway implements SignInGateway {
    */
   failNextOpen(error: Error): void {
     this.#nextOpenError = error;
+  }
+
+  /**
+   * Make the next {@link FixtureSignInGateway.cancel} reject with `error`, once: the way the real
+   * listener answers a cancel after it ended by itself.
+   *
+   * @param error - The failure to reject with.
+   */
+  failNextCancel(error: Error): void {
+    this.#nextCancelError = error;
   }
 
   /**

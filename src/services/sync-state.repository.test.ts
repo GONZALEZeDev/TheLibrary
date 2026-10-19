@@ -6,11 +6,22 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryLogger } from '../adapters/dev/memory-logger.adapter';
 import { INITIAL_ACCOUNT_SYNC_STATE, type AccountSyncState } from '../core/sync/sync-status';
+import type { Database } from '../ports/database.port';
 import { createTestDatabase, TEST_ACCOUNT_ID, testAccountId } from '../test/test-data';
 import { SyncStateRepository } from './sync-state.repository';
 
 /** One hour, in milliseconds. */
 const HOUR = 3_600_000;
+
+/** Two synthetic accounts, for the tests that keep one account's state apart from another's. */
+const FIRST_ACCOUNT = testAccountId(1000001);
+const SECOND_ACCOUNT = testAccountId(2000001);
+
+/** A database whose every statement fails, as a locked or damaged file would. */
+const BROKEN_DATABASE: Database = {
+  execute: () => Promise.reject(new Error('disk I/O error')),
+  select: () => Promise.reject(new Error('disk I/O error')),
+};
 
 /** A synchronisation state with every field set. */
 const SYNCED: AccountSyncState = {
@@ -127,5 +138,134 @@ describe('SyncStateRepository', () => {
     await expect(database.select('SELECT updated_at FROM sync_state')).resolves.toEqual([
       { updated_at: 77 },
     ]);
+  });
+
+  it('deletes the state of one account only', async () => {
+    const repository = new SyncStateRepository(createTestDatabase(), new MemoryLogger());
+    await repository.setAccountState(FIRST_ACCOUNT, SYNCED);
+    await repository.setAccountState(SECOND_ACCOUNT, SYNCED);
+    await repository.setHistoryRequests([1, 2]);
+    await repository.setPausedUntil(9_000);
+    await repository.setVacuumPending(true);
+
+    await repository.deleteAccountState(FIRST_ACCOUNT);
+
+    await expect(repository.hasAccountState(FIRST_ACCOUNT)).resolves.toBe(false);
+    await expect(repository.getAccountState(FIRST_ACCOUNT)).resolves.toEqual(
+      INITIAL_ACCOUNT_SYNC_STATE,
+    );
+    // The other account and the values that belong to no account stay.
+    await expect(repository.hasAccountState(SECOND_ACCOUNT)).resolves.toBe(true);
+    await expect(repository.getHistoryRequests()).resolves.toEqual([1, 2]);
+    await expect(repository.getPausedUntil()).resolves.toBe(9_000);
+    await expect(repository.isVacuumPending()).resolves.toBe(true);
+    // An unlink that is retried deletes what is already gone: not an error.
+    await expect(repository.deleteAccountState(FIRST_ACCOUNT)).resolves.toBeUndefined();
+  });
+
+  it('tells whether an account has a saved state', async () => {
+    const repository = new SyncStateRepository(createTestDatabase(), new MemoryLogger());
+    await expect(repository.hasAccountState(FIRST_ACCOUNT)).resolves.toBe(false);
+
+    await repository.setAccountState(FIRST_ACCOUNT, INITIAL_ACCOUNT_SYNC_STATE);
+
+    await expect(repository.hasAccountState(FIRST_ACCOUNT)).resolves.toBe(true);
+    await expect(repository.hasAccountState(SECOND_ACCOUNT)).resolves.toBe(false);
+  });
+
+  it('lists the accounts with a saved state', async () => {
+    const database = createTestDatabase();
+    const repository = new SyncStateRepository(database, new MemoryLogger());
+    await expect(repository.listAccountIds()).resolves.toEqual([]);
+    await repository.setAccountState(SECOND_ACCOUNT, SYNCED);
+    await repository.setAccountState(FIRST_ACCOUNT, SYNCED);
+    await repository.setAccountState(testAccountId(300), SYNCED);
+    // The largest account id, 2^32 - 1: ten digits, and still an account.
+    await repository.setAccountState(testAccountId(4_294_967_295), SYNCED);
+    await repository.setHistoryRequests([1]);
+    await repository.setPausedUntil(9_000);
+    await repository.setVacuumPending(true);
+    // Keys that look like an account's but are not one `deleteAccountState` could ever delete.
+    for (const key of [
+      'account.abc.sync',
+      'account.0.sync',
+      // Ten digits, so it fits the pattern of a key; only the account id check refuses it (2^32).
+      'account.4294967296.sync',
+      'account.99999999999.sync',
+      'account.0000300.sync',
+      'account.4000001.sync.old',
+      'ACCOUNT.4000002.SYNC',
+      'x.account.4000003.sync',
+    ]) {
+      await database.execute(
+        "INSERT INTO sync_state (key, value_json, updated_at) VALUES ($1, '{}', 0)",
+        [key],
+      );
+    }
+
+    // In numeric order, not in the order of the keys as text.
+    await expect(repository.listAccountIds()).resolves.toEqual([
+      testAccountId(300),
+      FIRST_ACCOUNT,
+      SECOND_ACCOUNT,
+      testAccountId(4_294_967_295),
+    ]);
+  });
+
+  it('remembers a pending compaction', async () => {
+    const database = createTestDatabase();
+    const repository = new SyncStateRepository(database, new MemoryLogger());
+    await expect(repository.isVacuumPending()).resolves.toBe(false);
+
+    await repository.setVacuumPending(true);
+
+    // A new repository on the same database is the app after a restart.
+    const afterRestart = new SyncStateRepository(database, new MemoryLogger());
+    await expect(afterRestart.isVacuumPending()).resolves.toBe(true);
+    await afterRestart.setVacuumPending(false);
+    await expect(repository.isVacuumPending()).resolves.toBe(false);
+    await expect(
+      database.select("SELECT value_json FROM sync_state WHERE key = 'maintenance.vacuum_pending'"),
+    ).resolves.toEqual([{ value_json: 'false' }]);
+  });
+
+  it('reads an unreadable pending compaction as not pending, and logs the key', async () => {
+    const database = createTestDatabase();
+    const logger = new MemoryLogger();
+    const repository = new SyncStateRepository(database, logger);
+    await repository.setVacuumPending(true);
+    await database.execute(`UPDATE sync_state SET value_json = '"yes"'`);
+
+    await expect(repository.isVacuumPending()).resolves.toBe(false);
+    expect(logger.entries).toContainEqual({
+      level: 'warn',
+      scope: 'sync.state',
+      message: 'Ignored an unreadable synchronisation state value',
+      context: { key: 'maintenance.vacuum_pending' },
+    });
+  });
+
+  it.each([
+    [
+      'deleting the state of an account',
+      (repository: SyncStateRepository) => repository.deleteAccountState(FIRST_ACCOUNT),
+    ],
+    [
+      'asking whether an account has a state',
+      (repository: SyncStateRepository) => repository.hasAccountState(FIRST_ACCOUNT),
+    ],
+    ['listing the accounts', (repository: SyncStateRepository) => repository.listAccountIds()],
+    [
+      'reading the pending compaction',
+      (repository: SyncStateRepository) => repository.isVacuumPending(),
+    ],
+    [
+      'saving the pending compaction',
+      (repository: SyncStateRepository) => repository.setVacuumPending(true),
+    ],
+  ])('fails with a storage error when the database fails while %s', async (_name, run) => {
+    const repository = new SyncStateRepository(BROKEN_DATABASE, new MemoryLogger());
+
+    await expect(run(repository)).rejects.toMatchObject({ name: 'AppError', kind: 'storage' });
   });
 });

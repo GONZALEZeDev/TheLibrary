@@ -4,6 +4,7 @@
  * @packageDocumentation
  */
 import { describe, expect, it } from 'vitest';
+import { PAIGE_HERO_ID } from '../core/domain/hero';
 import type { Database } from '../ports/database.port';
 import {
   createTestDatabase,
@@ -12,6 +13,34 @@ import {
   testAccountId,
 } from '../test/test-data';
 import { MatchesRepository } from './matches.repository';
+
+/** The account of the tests of the account methods and of the period numbers. */
+const ACCOUNT_ID = testAccountId(1000001);
+
+/** Another account, whose matches the methods of {@link ACCOUNT_ID} must never reach. */
+const OTHER_ACCOUNT_ID = testAccountId(2000001);
+
+/**
+ * Insert a match row with any account id, as a damaged database could hold it. `upsertMany` cannot
+ * write one: its matches carry an account id that went through `parseAccountId`.
+ *
+ * @param database - The database to write to.
+ * @param accountId - The account id of the row, valid or not.
+ * @param matchId - The match id of the row.
+ */
+async function insertRawMatch(
+  database: Database,
+  accountId: number,
+  matchId: number,
+): Promise<void> {
+  await database.execute(
+    `INSERT INTO matches (account_id, match_id, hero_id, start_time, duration_s, game_mode,
+                         match_mode, won, kills, deaths, assists, net_worth, last_hits, denies,
+                         rank_delta, synced_at)
+     VALUES ($1, $2, 67, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, NULL, 0)`,
+    [accountId, matchId],
+  );
+}
 
 describe('MatchesRepository', () => {
   it('saves matches and reads them back, most recent first', async () => {
@@ -169,5 +198,185 @@ describe('MatchesRepository', () => {
       // The error names the problem; the stored value stays out of the logs.
       context: { issue: expect.not.stringContaining('corrupt-status') as unknown },
     });
+  });
+
+  it('deletes every match of an account and only those', async () => {
+    const repository = new MatchesRepository(createTestDatabase());
+    await repository.upsertMany([
+      matchSummary({ accountId: ACCOUNT_ID, matchId: 100000001 }),
+      matchSummary({ accountId: ACCOUNT_ID, matchId: 100000002 }),
+      matchSummary({ accountId: OTHER_ACCOUNT_ID, matchId: 100000003 }),
+    ]);
+
+    await expect(repository.deleteAccount(ACCOUNT_ID)).resolves.toBe(2);
+
+    await expect(repository.count(ACCOUNT_ID)).resolves.toBe(0);
+    await expect(repository.listRecent(OTHER_ACCOUNT_ID, 10)).resolves.toMatchObject([
+      { matchId: 100000003 },
+    ]);
+    // Deleting an account that has no match left (an unlink retried) is not an error.
+    await expect(repository.deleteAccount(ACCOUNT_ID)).resolves.toBe(0);
+  });
+
+  it('lists the accounts that have matches', async () => {
+    const repository = new MatchesRepository(createTestDatabase());
+    await repository.upsertMany([
+      matchSummary({ accountId: OTHER_ACCOUNT_ID, matchId: 100000001 }),
+      matchSummary({ accountId: ACCOUNT_ID, matchId: 100000002 }),
+      matchSummary({ accountId: ACCOUNT_ID, matchId: 100000003 }),
+    ]);
+
+    // Each account once, however many matches it has, in a stable order.
+    await expect(repository.listAccountIds()).resolves.toEqual([ACCOUNT_ID, OTHER_ACCOUNT_ID]);
+  });
+
+  it('lists no account when there is no match', async () => {
+    await expect(new MatchesRepository(createTestDatabase()).listAccountIds()).resolves.toEqual([]);
+  });
+
+  it('skips the stored account ids that are not valid', async () => {
+    const database = createTestDatabase();
+    const repository = new MatchesRepository(database);
+    await repository.upsertMany([matchSummary({ accountId: ACCOUNT_ID, matchId: 100000001 })]);
+    // The table does not check the account id: a damaged or hand-edited database can hold ids
+    // that are no Steam account (zero, negative, beyond 32 bits). One of them must not make the
+    // whole list fail, and must not be handed out as an account to delete.
+    await insertRawMatch(database, 0, 100000002);
+    await insertRawMatch(database, -5, 100000003);
+    await insertRawMatch(database, 4_294_967_296, 100000004);
+
+    await expect(repository.listAccountIds()).resolves.toEqual([ACCOUNT_ID]);
+  });
+
+  it('sums the normal-mode matches of a hero since a time', async () => {
+    const repository = new MatchesRepository(createTestDatabase());
+    const since = 1_760_000_000;
+    await repository.upsertMany([
+      // Counted: ranked, and unranked; the first one starts exactly at the limit of the period.
+      matchSummary({
+        matchId: 100000001,
+        accountId: ACCOUNT_ID,
+        startTime: since,
+        matchMode: 4,
+        won: true,
+        kills: 5,
+        deaths: 2,
+        assists: 10,
+      }),
+      matchSummary({
+        matchId: 100000002,
+        accountId: ACCOUNT_ID,
+        startTime: since + 3_600,
+        matchMode: 1,
+        won: false,
+        kills: 3,
+        deaths: 4,
+        assists: 6,
+      }),
+      // Left out, each with numbers that would show in the sums if it was counted.
+      // Street Brawl.
+      matchSummary({
+        matchId: 100000003,
+        accountId: ACCOUNT_ID,
+        startTime: since + 7_200,
+        gameMode: 4,
+        kills: 100,
+        deaths: 100,
+        assists: 100,
+      }),
+      // A private lobby.
+      matchSummary({
+        matchId: 100000004,
+        accountId: ACCOUNT_ID,
+        startTime: since + 7_200,
+        matchMode: 2,
+        kills: 100,
+        deaths: 100,
+        assists: 100,
+      }),
+      // Another hero.
+      matchSummary({
+        matchId: 100000005,
+        accountId: ACCOUNT_ID,
+        startTime: since + 7_200,
+        heroId: PAIGE_HERO_ID + 1,
+        kills: 100,
+        deaths: 100,
+        assists: 100,
+      }),
+      // One second before the period.
+      matchSummary({
+        matchId: 100000006,
+        accountId: ACCOUNT_ID,
+        startTime: since - 1,
+        kills: 100,
+        deaths: 100,
+        assists: 100,
+      }),
+      // Another account.
+      matchSummary({
+        matchId: 100000007,
+        accountId: OTHER_ACCOUNT_ID,
+        startTime: since + 7_200,
+        kills: 100,
+        deaths: 100,
+        assists: 100,
+      }),
+    ]);
+
+    await expect(repository.periodTotals(ACCOUNT_ID, PAIGE_HERO_ID, since)).resolves.toEqual({
+      matches: 2,
+      wins: 1,
+      kills: 8,
+      deaths: 6,
+      assists: 16,
+    });
+  });
+
+  it('sums nothing for an empty period', async () => {
+    const repository = new MatchesRepository(createTestDatabase());
+    await repository.upsertMany([
+      matchSummary({ matchId: 100000001, accountId: ACCOUNT_ID, startTime: 1_000 }),
+    ]);
+
+    // The sums of no row are NULL in SQL: they must come back as zeros, not as an error.
+    await expect(repository.periodTotals(ACCOUNT_ID, PAIGE_HERO_ID, 2_000)).resolves.toEqual({
+      matches: 0,
+      wins: 0,
+      kills: 0,
+      deaths: 0,
+      assists: 0,
+    });
+    await expect(
+      repository.periodTotals(OTHER_ACCOUNT_ID, PAIGE_HERO_ID, 0),
+    ).resolves.toMatchObject({ matches: 0 });
+  });
+
+  it('reports a failure of the account and period methods as a storage error', async () => {
+    const broken: Database = {
+      execute: () => Promise.reject(new Error('disk I/O error')),
+      select: () => Promise.reject(new Error('disk I/O error')),
+    };
+    const repository = new MatchesRepository(broken);
+
+    await expect(repository.deleteAccount(ACCOUNT_ID)).rejects.toMatchObject({
+      kind: 'storage',
+      cause: new Error('disk I/O error'),
+    });
+    await expect(repository.listAccountIds()).rejects.toMatchObject({ kind: 'storage' });
+    await expect(repository.periodTotals(ACCOUNT_ID, PAIGE_HERO_ID, 0)).rejects.toMatchObject({
+      kind: 'storage',
+    });
+  });
+
+  it('reports unexpected period totals as a storage error', async () => {
+    const database: Database = {
+      execute: () => Promise.resolve(0),
+      select: () => Promise.resolve([{ matches: 'many' }]),
+    };
+
+    await expect(
+      new MatchesRepository(database).periodTotals(ACCOUNT_ID, PAIGE_HERO_ID, 0),
+    ).rejects.toMatchObject({ kind: 'storage' });
   });
 });

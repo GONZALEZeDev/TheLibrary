@@ -29,6 +29,9 @@ import { SYNC_INTERVAL_MS, type SyncService } from './sync.service';
 
 const START = Date.UTC(2026, 9, 14, 12, 0, 0);
 
+/** The debug line of a synchronisation (or a retry) refused while the account changes. */
+const REFUSED_MESSAGE = 'Synchronisation refused while the account changes';
+
 /**
  * Size of the synthetic history of the tests that run the detail queue for real. About a third of
  * the matches are Paige matches to archive (six of these twenty, plus one the API does not hold):
@@ -273,6 +276,38 @@ function watchSyncNow(sync: SyncService): { whenCalled: (count: number) => Promi
 }
 
 /**
+ * The synthetic deadlock-api (the whole history, no way to the details) whose history answer waits
+ * for the test, and that tells the test when the history was asked for: a synchronisation is then
+ * known to be running, held in its first step, and no test polls the clock to find out.
+ *
+ * @returns The handler, a promise settled once the history was asked for, and the function that
+ *   lets the answer go.
+ */
+function heldHistoryApi() {
+  const asked = createGate();
+  const released = createGate();
+  const scripted = createScriptedApi(historyOnlyApi(), 0);
+  scripted.control.holdHistory = released.opened;
+  const handler: FixtureHandler = (request) => {
+    if (isHistoryRequest(request)) {
+      asked.open();
+    }
+    return scripted.handler(request);
+  };
+  return { handler, historyAsked: asked.opened, release: released.open };
+}
+
+/**
+ * Let the pending work of the other promises run (a macrotask later), so that whatever could
+ * settle by itself has settled. Real timers only.
+ *
+ * @returns A promise resolved after a timer of 0 ms.
+ */
+async function settle(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
+/**
  * Options of {@link setUp}: those of `createTestServices`, except the settings, which the
  * synchronisation does not use. `handler` gives the first answers of the returned
  * `answer.handler` (the fixture API of 240 matches by default);
@@ -514,6 +549,48 @@ describe('SyncService', () => {
       protectedAccount: false,
       lastSync: { outcome: 'synced' },
     });
+  });
+
+  it('runs a link synchronisation like a request of the user: a protected account still gets its history', async () => {
+    const { sync, historyRequests, answer, logger } = setUp({
+      handler: () => jsonResponse({}, 403),
+    });
+    await sync.syncNow('startup');
+    await expect(sync.getStatus()).resolves.toMatchObject({ protectedAccount: true });
+    answer.handler = historyOnlyApi();
+
+    // The timer stays quiet on a protected account; the first synchronisation after a link does not.
+    await sync.syncNow('schedule');
+    expect(historyRequests()).toHaveLength(1);
+    await sync.syncNow('link');
+
+    expect(historyRequests()).toHaveLength(2);
+    await expect(sync.getStatus()).resolves.toMatchObject({
+      protectedAccount: false,
+      lastSync: { outcome: 'synced', newMatches: 240 },
+    });
+    expect(endedLines(logger).at(-1)?.context).toMatchObject({
+      trigger: 'link',
+      outcome: 'synced',
+    });
+  });
+
+  it('does not hold a link synchronisation to the automatic part of the history budget', async () => {
+    const { sync, clock, historyRequests } = setUp({ handler: historyOnlyApi() });
+    for (let index = 0; index <= AUTOMATIC_HISTORY_RATE_LIMIT.limit; index += 1) {
+      clock.now = START + index * 60_000;
+      await sync.syncNow('schedule');
+    }
+    expect(historyRequests()).toHaveLength(AUTOMATIC_HISTORY_RATE_LIMIT.limit);
+    await expect(sync.getStatus()).resolves.toMatchObject({
+      lastSync: { outcome: 'budget_exhausted' },
+    });
+
+    clock.now = START + (AUTOMATIC_HISTORY_RATE_LIMIT.limit + 1) * 60_000;
+    await sync.syncNow('link');
+
+    expect(historyRequests()).toHaveLength(AUTOMATIC_HISTORY_RATE_LIMIT.limit + 1);
+    await expect(sync.getStatus()).resolves.toMatchObject({ lastSync: { outcome: 'synced' } });
   });
 
   it('records a failure, logs it once with the id of the synchronisation, and keeps the data', async () => {
@@ -1016,6 +1093,370 @@ describe('SyncService and the detail queue', () => {
     expect(skippedMs()).toBeGreaterThanOrEqual(
       Math.floor((requests - 1) / METADATA_RATE_LIMIT.limit) * METADATA_RATE_LIMIT.windowMs,
     );
+  });
+});
+
+describe('SyncService.suspend and resume', () => {
+  /**
+   * The lines logged when a synchronisation (or a retry) was refused, oldest first.
+   *
+   * @param logger - The logger of the services.
+   * @returns The refusal lines.
+   */
+  function refusals(logger: MemoryLogger) {
+    return logger.entries.filter((entry) => entry.message === REFUSED_MESSAGE);
+  }
+
+  /**
+   * Tell whether a promise settles on its own: it has by the time the other promises' pending work
+   * has run (a macrotask later), or it is still waiting for something the test holds.
+   *
+   * @param promise - The promise to watch.
+   * @returns `'settled'` or `'pending'`.
+   */
+  function stateOf(promise: Promise<unknown>): Promise<'settled' | 'pending'> {
+    return Promise.race([
+      promise.then(() => 'settled' as const),
+      settle().then(() => 'pending' as const),
+    ]);
+  }
+
+  it('waits for the running synchronisation when suspended', async () => {
+    const { handler, historyAsked, release } = heldHistoryApi();
+    const { sync } = setUp({ handler });
+    const order: string[] = [];
+    const run = sync.syncNow('manual').then(() => {
+      order.push('run ended');
+    });
+    await historyAsked;
+
+    const suspension = sync.suspend().then(() => {
+      order.push('suspended');
+    });
+    await settle();
+
+    // The history answer is held, so the run goes on, and the suspension waits for it.
+    expect(sync.isRunning()).toBe(true);
+    expect(order).toEqual([]);
+    release();
+    await Promise.all([run, suspension]);
+    expect(order).toEqual(['run ended', 'suspended']);
+    expect(sync.isRunning()).toBe(false);
+    // The run was not cut short: it saved its history.
+    await expect(sync.getStatus()).resolves.toMatchObject({ lastSync: { outcome: 'synced' } });
+  });
+
+  it('lets a run that a joiner waits for end normally, and starts no other', async () => {
+    const { handler, historyAsked, release } = heldHistoryApi();
+    const { sync, logger, historyRequests } = setUp({ handler });
+    const run = sync.syncNow('manual');
+    await historyAsked;
+    const joiner = sync.syncNow('schedule');
+
+    const suspension = sync.suspend();
+    release();
+    await Promise.all([run, joiner, suspension]);
+    // Once suspended, nothing starts again.
+    await sync.syncNow('manual');
+
+    expect(joiner).toBe(run);
+    expect(historyRequests()).toHaveLength(1);
+    expect(endedLines(logger).map((entry) => entry.context.trigger)).toEqual(['manual']);
+    await expect(sync.getStatus()).resolves.toMatchObject({ lastSync: { outcome: 'synced' } });
+  });
+
+  it('refuses a synchronisation that arrives while the suspension waits, instead of joining the run', async () => {
+    const { handler, historyAsked, release } = heldHistoryApi();
+    const { sync, logger, historyRequests } = setUp({ handler });
+    const run = sync.syncNow('manual');
+    await historyAsked;
+    const suspension = sync.suspend();
+
+    const late = sync.syncNow('manual');
+
+    // The refusal is at once, though the run is still held: the late call did not wait for it.
+    await expect(stateOf(late)).resolves.toBe('settled');
+    expect(late).not.toBe(run);
+    expect(sync.isRunning()).toBe(true);
+    expect(refusals(logger)).toEqual([
+      { level: 'debug', scope: 'sync', message: REFUSED_MESSAGE, context: { trigger: 'manual' } },
+    ]);
+    expect(logger.entries.some((entry) => entry.message === 'Synchronisation joined')).toBe(false);
+    release();
+    await Promise.all([run, suspension]);
+    expect(historyRequests()).toHaveLength(1);
+  });
+
+  it('waits for the detail queue, which writes nothing once the suspension has resolved', async () => {
+    const gate = createGate();
+    const { handler, control, whenHeld } = createScriptedApi(smallHistoryApi(), 0);
+    // Every detail waits for the test: the run is held in its queue, after its history.
+    control.holdOtherDetails = gate.opened;
+    const database = createTestDatabase();
+    const { sync, http, logger, archiveStore } = setUp({ handler, database });
+    const databaseWrites = vi.spyOn(database, 'execute');
+    const archiveWrites = vi.spyOn(archiveStore, 'write');
+    /** Everything that says whether the queue ended and whether anything was written since. */
+    const snapshot = () => ({
+      queueEnded: logger.entries.some((entry) => entry.message === 'Detail queue ended'),
+      runEnded: endedLines(logger).length === 1,
+      requests: http.requests.length,
+      databaseWrites: databaseWrites.mock.calls.length,
+      archiveWrites: archiveWrites.mock.calls.length,
+    });
+    const run = sync.syncNow('manual');
+    await whenHeld(1);
+
+    const suspended = sync.suspend().then(snapshot);
+
+    // The queue is held, so the suspension waits for it.
+    await expect(stateOf(suspended)).resolves.toBe('pending');
+    gate.open();
+    const [, atResolve] = await Promise.all([run, suspended]);
+    // The queue ended (and wrote its archives) before the suspension resolved...
+    expect(atResolve.queueEnded).toBe(true);
+    expect(atResolve.runEnded).toBe(true);
+    expect(atResolve.archiveWrites).toBeGreaterThan(0);
+    // ...and nothing is written after it, not even by the calls that come then.
+    await settle();
+    await sync.syncNow('manual');
+    await sync.retryDetail(testMatchId(100_000_001));
+    await settle();
+    expect(snapshot()).toEqual(atResolve);
+  });
+
+  it('refuses to synchronise while suspended', async () => {
+    const { sync, http, logger } = setUp({ handler: historyOnlyApi() });
+    const states: boolean[] = [];
+    sync.subscribe(() => states.push(sync.isRunning()));
+    await sync.suspend();
+
+    await expect(sync.syncNow('manual')).resolves.toBeUndefined();
+    await expect(sync.syncNow('schedule')).resolves.toBeUndefined();
+
+    // No request, no run (the listeners were not told of one), and a debug line for each refusal.
+    expect(http.requests).toHaveLength(0);
+    expect(sync.isRunning()).toBe(false);
+    expect(states).toEqual([]);
+    expect(refusals(logger)).toEqual([
+      { level: 'debug', scope: 'sync', message: REFUSED_MESSAGE, context: { trigger: 'manual' } },
+      { level: 'debug', scope: 'sync', message: REFUSED_MESSAGE, context: { trigger: 'schedule' } },
+    ]);
+    expect(logger.entries.some((entry) => entry.message === 'Synchronisation started')).toBe(false);
+  });
+
+  it('accepts synchronisations again once resumed', async () => {
+    const { sync, historyRequests, logger } = setUp({ handler: historyOnlyApi() });
+    await sync.suspend();
+    await sync.syncNow('manual');
+
+    sync.resume();
+    await sync.syncNow('manual');
+
+    // The first one was refused; the second one ran.
+    expect(refusals(logger)).toHaveLength(1);
+    expect(historyRequests()).toHaveLength(1);
+    await expect(sync.getStatus()).resolves.toMatchObject({ lastSync: { outcome: 'synced' } });
+  });
+
+  it('restarts the timer on resume, without synchronising at once', async () => {
+    const { sync, clock, countMatches, historyRequests, logger } = setUp({
+      handler: historyOnlyApi(),
+    });
+    // Open the database before faking the timers: sql.js loads its WebAssembly file with real I/O,
+    // which fake timers do not wait for. `countMatches` does not read the clock.
+    await countMatches();
+    vi.useFakeTimers();
+    sync.start();
+    await vi.waitFor(() => {
+      expect(sync.isRunning()).toBe(false);
+    });
+    expect(historyRequests()).toHaveLength(1);
+
+    await sync.suspend();
+    // The timer is gone: the ticks that would have fallen meanwhile do not happen.
+    clock.now += 3 * SYNC_INTERVAL_MS;
+    await vi.advanceTimersByTimeAsync(3 * SYNC_INTERVAL_MS);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(historyRequests()).toHaveLength(1);
+
+    sync.resume();
+    await vi.advanceTimersByTimeAsync(0);
+    // The timer is back, and nothing ran when it came back.
+    expect(vi.getTimerCount()).toBe(1);
+    expect(sync.isRunning()).toBe(false);
+    expect(historyRequests()).toHaveLength(1);
+    clock.now += SYNC_INTERVAL_MS;
+    await vi.advanceTimersByTimeAsync(SYNC_INTERVAL_MS);
+    await vi.waitFor(() => {
+      expect(historyRequests()).toHaveLength(2);
+    });
+    sync.stop();
+    await vi.waitFor(() => {
+      expect(sync.isRunning()).toBe(false);
+    });
+
+    expect(endedLines(logger).map((entry) => entry.context.trigger)).toEqual([
+      'startup',
+      'schedule',
+    ]);
+  });
+
+  it('resumes without a timer when it was never started', async () => {
+    vi.useFakeTimers();
+    const { sync, http } = setUp({ handler: historyOnlyApi() });
+    await sync.suspend();
+
+    sync.resume();
+    await vi.advanceTimersByTimeAsync(3 * SYNC_INTERVAL_MS);
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(http.requests).toHaveLength(0);
+  });
+
+  it('does not start a second timer when resumed without being suspended', async () => {
+    const { sync, countMatches } = setUp({ handler: historyOnlyApi() });
+    await countMatches();
+    vi.useFakeTimers();
+    sync.start();
+    await vi.waitFor(() => {
+      expect(sync.isRunning()).toBe(false);
+    });
+
+    sync.resume();
+
+    expect(vi.getTimerCount()).toBe(1);
+    sync.stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('keeps that the timer was started when it is suspended twice', async () => {
+    const { sync, clock, countMatches, historyRequests } = setUp({ handler: historyOnlyApi() });
+    await countMatches();
+    vi.useFakeTimers();
+    sync.start();
+    await vi.waitFor(() => {
+      expect(sync.isRunning()).toBe(false);
+    });
+
+    await sync.suspend();
+    await sync.suspend();
+    sync.resume();
+
+    // The second suspension did not overwrite "the timer was started" with "it was not".
+    expect(vi.getTimerCount()).toBe(1);
+    clock.now += SYNC_INTERVAL_MS;
+    await vi.advanceTimersByTimeAsync(SYNC_INTERVAL_MS);
+    await vi.waitFor(() => {
+      expect(historyRequests()).toHaveLength(2);
+    });
+    sync.stop();
+    await vi.waitFor(() => {
+      expect(sync.isRunning()).toBe(false);
+    });
+  });
+
+  it('resolves a second suspension once the running synchronisation has ended', async () => {
+    const { handler, historyAsked, release } = heldHistoryApi();
+    const { sync } = setUp({ handler });
+    const order: string[] = [];
+    const run = sync.syncNow('manual').then(() => {
+      order.push('run ended');
+    });
+    await historyAsked;
+
+    const first = sync.suspend().then(() => {
+      order.push('first suspension');
+    });
+    const second = sync.suspend().then(() => {
+      order.push('second suspension');
+    });
+    await settle();
+
+    expect(order).toEqual([]);
+    release();
+    await Promise.all([run, first, second]);
+    // Neither suspension resolved before the run ended.
+    expect(order[0]).toBe('run ended');
+    expect(order).toHaveLength(3);
+  });
+
+  it('only records that the timer is wanted when it starts while suspended', async () => {
+    const { sync, clock, countMatches, http, historyRequests, logger } = setUp({
+      handler: historyOnlyApi(),
+    });
+    await countMatches();
+    vi.useFakeTimers();
+    await sync.suspend();
+
+    sync.start();
+    clock.now += 3 * SYNC_INTERVAL_MS;
+    await vi.advanceTimersByTimeAsync(3 * SYNC_INTERVAL_MS);
+
+    // No startup run, no interval; and `start` did not even ask for a run to be refused.
+    expect(sync.isRunning()).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(http.requests).toHaveLength(0);
+    expect(refusals(logger)).toEqual([]);
+
+    sync.resume();
+    await vi.advanceTimersByTimeAsync(0);
+    // The timer starts on resume, with no immediate run.
+    expect(vi.getTimerCount()).toBe(1);
+    expect(http.requests).toHaveLength(0);
+    clock.now += SYNC_INTERVAL_MS;
+    await vi.advanceTimersByTimeAsync(SYNC_INTERVAL_MS);
+    await vi.waitFor(() => {
+      expect(historyRequests()).toHaveLength(1);
+    });
+    sync.stop();
+    await vi.waitFor(() => {
+      expect(sync.isRunning()).toBe(false);
+    });
+    expect(endedLines(logger).map((entry) => entry.context.trigger)).toEqual(['schedule']);
+  });
+
+  it('forgets that the timer was wanted when it is stopped while suspended', async () => {
+    vi.useFakeTimers();
+    const { sync, http } = setUp({ handler: historyOnlyApi() });
+    await sync.suspend();
+    sync.start();
+
+    sync.stop();
+    sync.resume();
+    await vi.advanceTimersByTimeAsync(3 * SYNC_INTERVAL_MS);
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(http.requests).toHaveLength(0);
+  });
+
+  it('refuses the retry of a match detail while suspended, before it resets the match', async () => {
+    const { sync, services, http, logger } = setUp({ handler: smallHistoryApi() });
+    const resetForRetry = vi.spyOn(services.details, 'resetForRetry');
+    await sync.suspend();
+
+    await expect(sync.retryDetail(testMatchId(100_000_001))).resolves.toBeUndefined();
+
+    // A retry writes the row of its match: it must not write the row of an account being erased.
+    expect(resetForRetry).not.toHaveBeenCalled();
+    expect(http.requests).toHaveLength(0);
+    expect(refusals(logger)).toEqual([
+      { level: 'debug', scope: 'sync', message: REFUSED_MESSAGE, context: { trigger: 'detail' } },
+    ]);
+    expect(logger.entries.filter((entry) => entry.level !== 'debug')).toEqual([]);
+  });
+
+  it('accepts the retry of a match detail again once resumed', async () => {
+    const { sync, services, logger } = setUp({ handler: smallHistoryApi() });
+    const resetForRetry = vi.spyOn(services.details, 'resetForRetry');
+    await sync.suspend();
+    sync.resume();
+
+    await sync.retryDetail(testMatchId(100_000_001));
+
+    expect(resetForRetry).toHaveBeenCalledTimes(1);
+    expect(refusals(logger)).toEqual([]);
+    expect(endedLines(logger).map((entry) => entry.context.trigger)).toEqual(['detail']);
   });
 });
 

@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AccountId } from '../core/domain/account';
 import { PAIGE_HERO_ID } from '../core/domain/hero';
+import { AppError } from '../core/errors/app-error';
 import type { DetailStatus } from '../core/match-detail/detail-status';
 import type { AccountSource } from '../ports/account-source.port';
 import type { Database } from '../ports/database.port';
@@ -189,5 +190,102 @@ describe('MatchesService', () => {
 
     await expect(detailStatusesOf(early)).resolves.toEqual({ 1: 'pending' });
     await expect(detailStatusesOf(late)).resolves.toEqual({ 1: null });
+  });
+});
+
+describe('MatchesService.getPeriodSummary', () => {
+  const ACCOUNT_ID = testAccountId(1000001);
+  const OTHER_ACCOUNT_ID = testAccountId(2000001);
+
+  /**
+   * A normal-mode Paige match of the account that started some days before {@link NOW}.
+   *
+   * @param matchId - The match id.
+   * @param days - How many days before {@link NOW} it started.
+   * @param overrides - Other fields to change.
+   * @returns The match.
+   */
+  function paigeMatch(
+    matchId: number,
+    days: number,
+    overrides: Parameters<typeof matchSummary>[0] = {},
+  ): ReturnType<typeof matchSummary> {
+    return matchSummary({
+      matchId,
+      accountId: ACCOUNT_ID,
+      startTime: startedDaysAgo(days),
+      ...overrides,
+    });
+  }
+
+  it('summarises the period of the linked account', async () => {
+    const repository = new MatchesRepository(createTestDatabase());
+    await repository.upsertMany([
+      // Inside the 7 days; the second one began exactly 7 days ago, the limit of the period.
+      paigeMatch(100000001, 1, { won: true, kills: 8, deaths: 2, assists: 10 }),
+      paigeMatch(100000002, 7, { won: false, kills: 4, deaths: 6, assists: 20 }),
+      // Outside the 7 days, inside the 30.
+      paigeMatch(100000003, 8, { won: true, kills: 12, deaths: 1, assists: 3 }),
+      // Never counted, whatever the period: another hero, Street Brawl, another account.
+      paigeMatch(100000004, 1, { heroId: PAIGE_HERO_ID + 1, kills: 100 }),
+      paigeMatch(100000005, 1, { gameMode: 4, kills: 100 }),
+      paigeMatch(100000006, 1, { accountId: OTHER_ACCOUNT_ID, kills: 100 }),
+    ]);
+    const service = new MatchesService(accountSource(ACCOUNT_ID), repository, () => NOW);
+
+    await expect(service.getPeriodSummary('7d', PAIGE_HERO_ID)).resolves.toEqual({
+      kind: 'stats',
+      stats: {
+        matches: 2,
+        wins: 1,
+        winRate: 0.5,
+        averageKills: 6,
+        averageDeaths: 4,
+        averageAssists: 15,
+      },
+    });
+    // The period decides which matches count: the wider one takes the third match in.
+    await expect(service.getPeriodSummary('30d', PAIGE_HERO_ID)).resolves.toMatchObject({
+      kind: 'stats',
+      stats: { matches: 3, wins: 2 },
+    });
+  });
+
+  it('says when the period has no match', async () => {
+    const repository = new MatchesRepository(createTestDatabase());
+    // The only match is older than the period.
+    await repository.upsertMany([paigeMatch(100000001, 20)]);
+    const service = new MatchesService(accountSource(ACCOUNT_ID), repository, () => NOW);
+
+    await expect(service.getPeriodSummary('7d', PAIGE_HERO_ID)).resolves.toEqual({
+      kind: 'empty',
+    });
+  });
+
+  it('needs a linked account', async () => {
+    const repository = new MatchesRepository(createTestDatabase());
+    // Matches are stored, but none is the numbers of an account that is not linked.
+    await repository.upsertMany([paigeMatch(100000001, 1)]);
+    const service = new MatchesService(accountSource(null), repository, () => NOW);
+
+    await expect(service.getPeriodSummary('7d', PAIGE_HERO_ID)).resolves.toEqual({
+      kind: 'no_account',
+    });
+  });
+
+  it('does not take an unreadable linked account for no account', async () => {
+    const unreadable: AccountSource = {
+      currentAccountId: () =>
+        Promise.reject(new AppError('storage', 'The linked account is invalid')),
+    };
+    const service = new MatchesService(
+      unreadable,
+      new MatchesRepository(createTestDatabase()),
+      () => NOW,
+    );
+
+    await expect(service.getPeriodSummary('7d', PAIGE_HERO_ID)).rejects.toMatchObject({
+      kind: 'storage',
+    });
   });
 });

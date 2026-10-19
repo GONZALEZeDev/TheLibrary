@@ -1,8 +1,8 @@
 /**
  * Synchronisation of the match history and of the match details: downloads the history of the
  * linked account from deadlock-api and saves it, then runs the detail queue, which downloads and
- * archives the detail of the Paige matches that are due. It runs at startup, every 13 minutes and
- * when the user asks for it.
+ * archives the detail of the Paige matches that are due. It runs at startup, every 13 minutes, when
+ * the user asks for it and right after an account was linked.
  *
  * Only one synchronisation runs at a time: a trigger arriving while one runs joins it. That is also
  * what keeps the detail queue (which is not safe to run twice at once) alone. A synchronisation
@@ -18,6 +18,13 @@
  * The listeners are told when a run starts and ends, and once more when its history step has saved
  * its outcome, before the queue starts: the queue can take many seconds, and the interface must not
  * wait for it to show the matches and the state of the history.
+ *
+ * The synchronisation can be suspended around a change of account (see {@link SyncService.suspend}).
+ * A running detail queue captured the id of the account it was started for: left alone while the
+ * account is erased, it would go on writing for that account, and could create the archive folder
+ * of the old account again after its deletion. So the account service suspends the synchronisation
+ * before it erases or switches an account: that waits for the run going to end, then refuses every
+ * new run (the timer included, and the retry of a match detail) until it is resumed.
  *
  * @packageDocumentation
  */
@@ -48,9 +55,12 @@ import type { SyncStateRepository } from './sync-state.repository';
  * - `manual` is the user's own request, history and details;
  * - `detail` is the user's own request too (the "Retry" of a match detail), but for the details
  *   only: the history step is left out, so it sends no history request and changes nothing of what
- *   the history banner shows.
+ *   the history banner shows;
+ * - `link` is the first synchronisation after an account was linked: the user's own request too,
+ *   with the history and the details, so it is not held to the automatic part of the history budget
+ *   and it is not stopped by a protected account.
  */
-export type SyncTrigger = 'startup' | 'schedule' | 'manual' | 'detail';
+export type SyncTrigger = 'startup' | 'schedule' | 'manual' | 'detail' | 'link';
 
 /**
  * Time between two automatic synchronisations: 13 minutes. 13 does not divide the hour, so a
@@ -91,7 +101,7 @@ interface RunResult {
  * are the user's own requests.
  *
  * @param trigger - What started the synchronisation.
- * @returns `true` for `startup` and `schedule`.
+ * @returns `true` for `startup` and `schedule`; `false` for `manual`, `detail` and `link`.
  */
 function isAutomatic(trigger: SyncTrigger): boolean {
   return trigger === 'startup' || trigger === 'schedule';
@@ -121,7 +131,16 @@ export class SyncService {
   readonly #now: () => number;
   /** The running synchronisation, shared by every trigger that arrives meanwhile. */
   #running: RunningSync | null = null;
+  /** The interval of the automatic synchronisations; `undefined` while it is not ticking. */
   #timer: ReturnType<typeof setInterval> | undefined;
+  /**
+   * Whether the automatic synchronisations were started ({@link SyncService.start}) and not stopped
+   * since. It outlives a suspension, which only stops the interval: that is how the interval comes
+   * back on {@link SyncService.resume}, and how a second suspension leaves it be.
+   */
+  #timerWanted = false;
+  /** Whether the synchronisation is suspended around a change of account. */
+  #suspended = false;
   readonly #listeners = new Set<() => void>();
 
   /**
@@ -146,10 +165,18 @@ export class SyncService {
    * ("Synchronisation joined", with the id of the run joined and the trigger of the caller): the
    * started run logs its own start, which a joiner would otherwise leave no trace of.
    *
+   * While the synchronisation is suspended (see {@link SyncService.suspend}) nothing is started and
+   * nothing is joined: the call is refused, at once, and logged at `debug`.
+   *
    * @param trigger - What started it.
-   * @returns A promise resolved when the synchronisation has ended; it never rejects.
+   * @returns A promise resolved when the synchronisation has ended (at once when it was refused); it
+   *   never rejects.
    */
   syncNow(trigger: SyncTrigger): Promise<void> {
+    if (this.#suspended) {
+      this.#logRefusal(trigger);
+      return Promise.resolve();
+    }
     if (this.#running !== null) {
       this.#logger.log('debug', 'sync', 'Synchronisation joined', {
         syncRunId: this.#running.syncRunId,
@@ -181,10 +208,19 @@ export class SyncService {
    * A match that waits for a retry date (the joined run took it and it failed again) is not
    * `pending`: another run would not take it before that date.
    *
+   * While the synchronisation is suspended the retry is refused before it touches the match, and
+   * logged at `debug`: putting a match back in the queue writes its row, which must not happen to an
+   * account that is being erased.
+   *
    * @param matchId - The match.
-   * @returns A promise resolved when the run is over; it never rejects. A failure is logged.
+   * @returns A promise resolved when the run is over (at once when the retry was refused); it never
+   *   rejects. A failure is logged.
    */
   async retryDetail(matchId: MatchId): Promise<void> {
+    if (this.#suspended) {
+      this.#logRefusal('detail');
+      return;
+    }
     try {
       await this.#details.resetForRetry(matchId);
       // Whether the call below joins a run that was going, read in the same turn as that call.
@@ -204,21 +240,69 @@ export class SyncService {
   /**
    * Start the automatic synchronisations: one right away, then one every
    * {@link SYNC_INTERVAL_MS}. Calling it again has no effect.
+   *
+   * While the synchronisation is suspended it only records that the timer is wanted: no run starts
+   * and no interval is set until {@link SyncService.resume}, which then starts the interval alone.
    */
   start(): void {
-    if (this.#timer !== undefined) {
+    if (this.#timerWanted) {
+      return;
+    }
+    this.#timerWanted = true;
+    if (this.#suspended) {
       return;
     }
     void this.syncNow('startup');
-    this.#timer = setInterval(() => {
-      void this.syncNow('schedule');
-    }, SYNC_INTERVAL_MS);
+    this.#startTimer();
   }
 
-  /** Stop the automatic synchronisations (a running one ends normally). */
+  /**
+   * Stop the automatic synchronisations (a running one ends normally), and forget that they were
+   * started: a suspended synchronisation that is resumed afterwards does not bring the timer back.
+   */
   stop(): void {
-    clearInterval(this.#timer);
-    this.#timer = undefined;
+    this.#timerWanted = false;
+    this.#stopTimer();
+  }
+
+  /**
+   * Suspend the synchronisation around a change of account, so that nothing writes for an account
+   * while it is erased or switched. It stops the timer (remembering that it was started), then
+   * waits for the run going, if any, to end: the run, and the joiners that wait for it, end
+   * normally. From then on {@link SyncService.syncNow} and {@link SyncService.retryDetail} refuse,
+   * and once the returned promise has resolved no run is going and none can start until
+   * {@link SyncService.resume}.
+   *
+   * Why this is needed: a running detail queue captured the id of its account when it started, and
+   * would go on writing for that account (it could even create the archive folder again after its
+   * deletion). The run is waited for rather than cancelled, so it ends the way it always does and
+   * saves its outcome.
+   *
+   * Calling it again is harmless: the remembered state of the timer is kept, and the promise
+   * resolves once the running run has ended.
+   *
+   * @returns A promise resolved once no run is going; it never rejects.
+   */
+  suspend(): Promise<void> {
+    this.#suspended = true;
+    this.#stopTimer();
+    return this.#running?.done ?? Promise.resolve();
+  }
+
+  /**
+   * Accept the synchronisations again after {@link SyncService.suspend}, and restart the timer if it
+   * was started. It does not synchronise at once: the caller that resumes decides whether a run is
+   * needed (after a link it runs a `link` synchronisation itself). Without a suspension it does
+   * nothing.
+   */
+  resume(): void {
+    if (!this.#suspended) {
+      return;
+    }
+    this.#suspended = false;
+    if (this.#timerWanted) {
+      this.#startTimer();
+    }
   }
 
   /**
@@ -265,6 +349,38 @@ export class SyncService {
       pausedUntil: pausedUntil !== null && pausedUntil > this.#now() ? pausedUntil : null,
       protectedAccount: state.protectedAccount,
     };
+  }
+
+  /**
+   * Set the interval of the automatic synchronisations: each tick is a `schedule` run. Never a
+   * second one: it would double every tick, so the guarantee holds here and not only in the callers.
+   */
+  #startTimer(): void {
+    if (this.#timer !== undefined) {
+      return;
+    }
+    this.#timer = setInterval(() => {
+      void this.syncNow('schedule');
+    }, SYNC_INTERVAL_MS);
+  }
+
+  /** Clear the interval of the automatic synchronisations, whether or not it ticks. */
+  #stopTimer(): void {
+    clearInterval(this.#timer);
+    this.#timer = undefined;
+  }
+
+  /**
+   * Log that a synchronisation (or the retry of a match detail) was refused because the
+   * synchronisation is suspended. At `debug`: the account service that suspended it knows, and a
+   * refusal is not a failure.
+   *
+   * @param trigger - What would have started it.
+   */
+  #logRefusal(trigger: SyncTrigger): void {
+    this.#logger.log('debug', 'sync', 'Synchronisation refused while the account changes', {
+      trigger,
+    });
   }
 
   /**

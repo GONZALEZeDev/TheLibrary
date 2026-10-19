@@ -6,6 +6,13 @@
  *   restarting the app must not reset it.
  * - The end of a pause requested by deadlock-api (HTTP 429 or 503).
  * - Per account: the last synchronisation and whether the account is protected (HTTP 403).
+ * - Whether the database still has to be compacted after the data of an account was deleted: the
+ *   deleted rows stay readable in the file until it is compacted, so the owed compaction must
+ *   survive a crash, to be done at the next start.
+ *
+ * The state of an account can be listed, tested and deleted: the account data service deletes it
+ * with the rest of the account's data, and finds the accounts that have some left. The values that
+ * belong to no account are never deleted.
  *
  * A value that cannot be read back (damaged, or written by an incompatible version) is logged and
  * replaced by its default: the synchronisation state is never worth blocking the app for.
@@ -14,7 +21,7 @@
  */
 import { z } from 'zod';
 import { MAX_PAUSE_MS } from '../core/deadlock-api/api-response';
-import type { AccountId } from '../core/domain/account';
+import { parseAccountId, type AccountId } from '../core/domain/account';
 import { AppError } from '../core/errors/app-error';
 import {
   accountSyncStateSchema,
@@ -30,6 +37,9 @@ const HISTORY_REQUESTS_KEY = 'api.history_requests';
 /** Key of the end (Unix ms) of the pause requested by deadlock-api. */
 const API_PAUSE_KEY = 'api.paused_until';
 
+/** Key of the flag that says the database was emptied of some data and is still to be compacted. */
+const VACUUM_PENDING_KEY = 'maintenance.vacuum_pending';
+
 /**
  * Key of the synchronisation state of an account. The key contains the account id: keys are never
  * logged.
@@ -41,8 +51,31 @@ function accountKey(accountId: AccountId): string {
   return `account.${String(accountId)}.sync`;
 }
 
+/**
+ * The shape of the key of an account's state, which {@link accountKey} builds: the account id is at
+ * most 10 digits (2^32 has 10).
+ */
+const ACCOUNT_KEY_PATTERN = /^account\.(\d{1,10})\.sync$/;
+
+/**
+ * Read the account of a key.
+ *
+ * @param key - A key of the `sync_state` table.
+ * @returns The account, or `null` when the key is not the one {@link accountKey} builds for a valid
+ *   account id. A key such as `account.0000300.sync` has the right shape but is not that key, so no
+ *   deletion would ever reach it: it is not handed out as an account.
+ */
+function accountOfKey(key: string): AccountId | null {
+  const digits = ACCOUNT_KEY_PATTERN.exec(key)?.[1];
+  const accountId = digits === undefined ? null : parseAccountId(digits);
+  return accountId !== null && accountKey(accountId) === key ? accountId : null;
+}
+
 /** Schema of a row of the `sync_state` table. */
 const rowSchema = z.object({ value_json: z.string() });
+
+/** Schema of a row `listAccountIds` reads: a key, which {@link accountOfKey} then judges. */
+const keyRowSchema = z.object({ key: z.string() });
 
 /** Reads and writes the `sync_state` table. */
 export class SyncStateRepository {
@@ -125,6 +158,99 @@ export class SyncStateRepository {
    */
   async setAccountState(accountId: AccountId, state: AccountSyncState): Promise<void> {
     await this.#write(accountKey(accountId), state);
+  }
+
+  /**
+   * Delete the synchronisation state of an account, and nothing else: the values that belong to no
+   * account (the request budget, the pause) stay.
+   *
+   * @param accountId - The account.
+   * @throws AppError of kind `storage` when the database fails. An account without a state is not an
+   *   error: an unlink that is retried finds it already gone.
+   */
+  async deleteAccountState(accountId: AccountId): Promise<void> {
+    try {
+      await this.#database.execute('DELETE FROM sync_state WHERE key = $1', [
+        accountKey(accountId),
+      ]);
+    } catch (error) {
+      throw new AppError('storage', 'Could not delete the synchronisation state', { cause: error });
+    }
+  }
+
+  /**
+   * Tell whether an account has a saved synchronisation state. A value that cannot be read back
+   * counts: it is still data of the account, which a deletion must remove.
+   *
+   * @param accountId - The account.
+   * @returns `true` when a state is saved for the account.
+   * @throws AppError of kind `storage` when the database fails.
+   */
+  async hasAccountState(accountId: AccountId): Promise<boolean> {
+    try {
+      const rows = await this.#database.select(
+        'SELECT 1 AS present FROM sync_state WHERE key = $1',
+        [accountKey(accountId)],
+      );
+      return rows.length > 0;
+    } catch (error) {
+      throw new AppError('storage', 'Could not read the synchronisation state', { cause: error });
+    }
+  }
+
+  /**
+   * The accounts that have a saved synchronisation state, whether or not one of them is the linked
+   * account: the startup sweep deletes the state of every account but the linked one.
+   *
+   * A key that only looks like an account's (`account.abc.sync`, an id out of range, an id padded
+   * with zeros) is left out: it is not the key of any account, and handing it out would make the
+   * sweep delete nothing, at every start.
+   *
+   * @returns Each account once, lowest id first.
+   * @throws AppError of kind `storage` when the database fails.
+   */
+  async listAccountIds(): Promise<AccountId[]> {
+    let rows;
+    try {
+      // `LIKE` only narrows the rows read; `accountOfKey` decides which keys are accounts'.
+      rows = await this.#database.select(
+        "SELECT key FROM sync_state WHERE key LIKE 'account.%.sync'",
+      );
+    } catch (error) {
+      throw new AppError('storage', 'Could not list the synchronisation states', { cause: error });
+    }
+    const accountIds: AccountId[] = [];
+    for (const row of rows) {
+      const parsed = keyRowSchema.safeParse(row);
+      const accountId = parsed.success ? accountOfKey(parsed.data.key) : null;
+      if (accountId !== null) {
+        accountIds.push(accountId);
+      }
+    }
+    // Sorted as numbers: the order of the keys as text would put 1000001 before 300.
+    return accountIds.toSorted((first, second) => first - second);
+  }
+
+  /**
+   * Whether the database was emptied of some data and is still to be compacted (`VACUUM`). The flag
+   * is saved before data is deleted and cleared once the database is compacted, so a crash in
+   * between leaves it set and the next start finishes the job.
+   *
+   * @returns `true` when a compaction is owed; `false` by default.
+   * @throws AppError of kind `storage` when the database fails.
+   */
+  isVacuumPending(): Promise<boolean> {
+    return this.#read(VACUUM_PENDING_KEY, z.boolean(), false);
+  }
+
+  /**
+   * Save whether a compaction of the database is owed.
+   *
+   * @param pending - `true` before data is deleted, `false` once the database is compacted.
+   * @throws AppError of kind `storage` when the database fails.
+   */
+  async setVacuumPending(pending: boolean): Promise<void> {
+    await this.#write(VACUUM_PENDING_KEY, pending);
   }
 
   /**

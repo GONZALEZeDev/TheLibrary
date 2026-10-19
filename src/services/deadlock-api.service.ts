@@ -24,6 +24,8 @@ import {
   HISTORY_RATE_LIMIT,
   METADATA_MAX_CONCURRENCY,
   METADATA_RATE_LIMIT,
+  PROFILE_RATE_LIMIT,
+  PROFILE_REFRESH_RATE_LIMIT,
 } from '../core/deadlock-api/budgets';
 import {
   heroesRequest,
@@ -32,11 +34,13 @@ import {
   MAX_RESPONSE_BYTES,
   redactAccountIds,
   REQUEST_TIMEOUT_MS,
+  steamProfileRequest,
   userAgent,
   type ApiRequest,
 } from '../core/deadlock-api/endpoints';
 import { parseHeroes } from '../core/deadlock-api/heroes.schema';
 import { parseMatchHistory } from '../core/deadlock-api/match-history.schema';
+import { parseSteamProfiles, type SteamProfile } from '../core/deadlock-api/steam-profile.schema';
 import type { AccountId } from '../core/domain/account';
 import type { Hero } from '../core/domain/hero';
 import type { MatchId, MatchSummary } from '../core/domain/match';
@@ -94,6 +98,28 @@ export type MetadataFetch =
   | { readonly kind: 'not_found' }
   /** Not requested, or refused: deadlock-api asked to pause until `until` (Unix ms). */
   | { readonly kind: 'paused'; readonly until: number };
+
+/** Options of {@link DeadlockApiService.fetchSteamProfile}. */
+export interface SteamProfileFetchOptions {
+  /**
+   * Ask deadlock-api to read the profile from Steam again instead of answering from its cache. That
+   * path is strictly limited (see `PROFILE_REFRESH_RATE_LIMIT`), so it is only worth asking for when
+   * the cache knows nothing of the player.
+   */
+  readonly refresh: boolean;
+}
+
+/** Result of {@link DeadlockApiService.fetchSteamProfile}. */
+export type SteamProfileFetch =
+  /**
+   * deadlock-api answered. `profile` is `null` when it knows nothing of the player (it answers an
+   * empty list for an unknown player, never a 404): "fetched, no profile".
+   */
+  | { readonly kind: 'fetched'; readonly profile: SteamProfile | null }
+  /** Not requested, or refused: deadlock-api asked to pause until `until` (Unix ms). */
+  | { readonly kind: 'paused'; readonly until: number }
+  /** Not requested: the politeness budget allows the next request at `nextAllowedAt` (Unix ms). */
+  | { readonly kind: 'budget_exhausted'; readonly nextAllowedAt: number };
 
 /** A response, and what it means. */
 interface Exchange {
@@ -172,6 +198,13 @@ export class DeadlockApiService {
   #assetRequests: readonly number[] = [];
   /** Times of the recent match detail requests: per second too, so kept in memory as well. */
   #metadataRequests: readonly number[] = [];
+  /** Times of the recent Steam profile requests, refreshes included: per minute, kept in memory. */
+  #profileRequests: readonly number[] = [];
+  /**
+   * Times of the recent Steam profile requests sent with `refresh=true`. They are also in
+   * `#profileRequests`: a refresh is a profile request too.
+   */
+  #profileRefreshes: readonly number[] = [];
   /** The slots of the match detail requests in flight. */
   readonly #metadataSlots = new Semaphore(METADATA_MAX_CONCURRENCY);
   /** Settles when the last check of the history budget is done (see `#oneAtATime`). */
@@ -260,6 +293,45 @@ export class DeadlockApiService {
       throw outcome.error;
     }
     return parseHeroes(outcome.json);
+  }
+
+  /**
+   * Download and validate the Steam profile (persona name and avatar hash) of a player, if the
+   * budgets and deadlock-api allow it.
+   *
+   * The pause comes first: while deadlock-api asked to wait, nothing is sent and nothing is counted.
+   * Then {@link PROFILE_RATE_LIMIT} always applies, and {@link PROFILE_REFRESH_RATE_LIMIT} too when
+   * `refresh` is set (see `#admitProfileRequest`).
+   *
+   * The request leaves no account id in the logs nor in an error: the endpoint is named by its
+   * template, as for the match history.
+   *
+   * @param accountId - The player.
+   * @param options - See {@link SteamProfileFetchOptions}.
+   * @returns The profile (`null` for a player deadlock-api does not know), or why it was not
+   *   downloaded.
+   * @throws AppError of kind `timeout`, `network`, `forbidden`, `not_found`,
+   *   `service_unavailable`, `invalid_payload`, `unexpected` or `storage`.
+   */
+  async fetchSteamProfile(
+    accountId: AccountId,
+    options: SteamProfileFetchOptions,
+  ): Promise<SteamProfileFetch> {
+    const runningPause = await this.#activePause(this.#now());
+    if (runningPause !== null) {
+      return { kind: 'paused', until: runningPause };
+    }
+    // Nothing is awaited between the pause check above, the budget check below and the sending, so
+    // the request goes out under the pause just checked and under the budget just counted.
+    const refusal = this.#admitProfileRequest(options.refresh);
+    if (refusal !== null) {
+      return refusal;
+    }
+    const outcome = await this.#send(steamProfileRequest(accountId, options.refresh));
+    if (outcome.kind === 'pause') {
+      return { kind: 'paused', until: outcome.until };
+    }
+    return { kind: 'fetched', profile: parseSteamProfiles(outcome.json, accountId) };
   }
 
   /**
@@ -368,6 +440,46 @@ export class DeadlockApiService {
     return budget.allowed
       ? null
       : { kind: 'budget_exhausted', nextAllowedAt: budget.nextAllowedAt };
+  }
+
+  /**
+   * Check the budgets of a Steam profile request, and count the request when it may be sent.
+   *
+   * {@link PROFILE_RATE_LIMIT} always applies; {@link PROFILE_REFRESH_RATE_LIMIT} applies too for a
+   * refresh. Both are checked before either is written, so a request is counted in every window it
+   * belongs to or in none: an admitted refresh is counted in both, a refused request in neither (a
+   * refresh that only the refresh budget refuses must not use up one of the 10 requests of the
+   * minute). The check and the count are synchronous, so two overlapping calls cannot both take the
+   * last request of a window.
+   *
+   * @param refresh - Whether the request asks deadlock-api to read the profile from Steam again.
+   * @returns Why the request may not be sent, or `null` when it was counted. When both budgets
+   *   refuse, the request is allowed again once the later of the two allows it.
+   */
+  #admitProfileRequest(
+    refresh: boolean,
+  ): Extract<SteamProfileFetch, { kind: 'budget_exhausted' }> | null {
+    const now = this.#now();
+    const requests = checkRateLimit(this.#profileRequests, now, PROFILE_RATE_LIMIT);
+    const refreshes = refresh
+      ? checkRateLimit(this.#profileRefreshes, now, PROFILE_REFRESH_RATE_LIMIT)
+      : null;
+    const allowed = requests.allowed && (refreshes === null || refreshes.allowed);
+    // The times that left the windows are dropped even when the request is refused; the request
+    // itself is only added to the windows when it is admitted.
+    this.#profileRequests = allowed ? [...requests.recent, now] : requests.recent;
+    if (refreshes !== null) {
+      this.#profileRefreshes = allowed ? [...refreshes.recent, now] : refreshes.recent;
+    }
+    if (allowed) {
+      return null;
+    }
+    // A window that allows the request answers `now`, so the later date is the one of the window(s)
+    // that refuse.
+    return {
+      kind: 'budget_exhausted',
+      nextAllowedAt: Math.max(requests.nextAllowedAt, refreshes?.nextAllowedAt ?? now),
+    };
   }
 
   /**

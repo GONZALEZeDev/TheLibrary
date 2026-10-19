@@ -183,6 +183,20 @@ describe('FixtureSignInGateway', () => {
     expect(received).toHaveLength(1);
   });
 
+  it('fails the next cancel when asked, after recording it', async () => {
+    const gateway = new FixtureSignInGateway();
+    const failure = new Error('synthetic cancel failure');
+
+    gateway.failNextCancel(failure);
+    await expect(gateway.cancel(FIXTURE_LOOPBACK_PORT)).rejects.toBe(failure);
+    // The listener was asked to stop, so the call is recorded even though it failed.
+    expect(gateway.cancelledPorts).toEqual([FIXTURE_LOOPBACK_PORT]);
+
+    // The failure is for one call only.
+    await expect(gateway.cancel(FIXTURE_LOOPBACK_PORT)).resolves.toBeUndefined();
+    expect(gateway.cancelledPorts).toEqual([FIXTURE_LOOPBACK_PORT, FIXTURE_LOOPBACK_PORT]);
+  });
+
   it('signs in the account it is told', async () => {
     const { gateway, pending, loginUrl, received } = await startSignIn();
 

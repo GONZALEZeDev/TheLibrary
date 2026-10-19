@@ -1,12 +1,15 @@
 /**
- * Match history use cases: list the matches of the linked account.
+ * Match history use cases: list the matches of the linked account, and sum up a period of them.
  *
  * The account is resolved here, not by the caller, so the interface never passes account ids
  * around (and never puts them in query keys, which are logged when a query fails).
  *
  * @packageDocumentation
  */
+import type { HeroId } from '../core/domain/hero';
 import type { MatchSummary } from '../core/domain/match';
+import { periodStartTime, type Period } from '../core/domain/period';
+import { periodStats, type PeriodStats } from '../core/domain/period-stats';
 import { isDetailEligible, type DetailStatus } from '../core/match-detail/detail-status';
 import type { AccountSource } from '../ports/account-source.port';
 import type { MatchesRepository, StoredMatch } from './matches.repository';
@@ -30,6 +33,15 @@ export interface RecentMatches {
   readonly matches: readonly MatchListItem[];
 }
 
+/**
+ * The numbers of a period for the dashboard tiles. The kind tells which of the three states to
+ * show: the invitation to link an account, the empty state, or the numbers.
+ */
+export type PeriodSummary =
+  | { readonly kind: 'no_account' }
+  | { readonly kind: 'empty' }
+  | { readonly kind: 'stats'; readonly stats: PeriodStats };
+
 /** Reads the match history of the linked account. */
 export class MatchesService {
   readonly #accountSource: AccountSource;
@@ -40,7 +52,7 @@ export class MatchesService {
    * @param accountSource - The linked account.
    * @param repository - The stored matches.
    * @param now - Current time (Unix ms), read to tell which matches are still in the 90-day window
-   *   of the archive; `Date.now` by default, controlled by tests.
+   *   of the archive and where a period starts; `Date.now` by default, controlled by tests.
    */
   constructor(
     accountSource: AccountSource,
@@ -71,6 +83,34 @@ export class MatchesService {
     // The clock is read once for the whole list, so that every match is judged at the same instant.
     const now = this.#now();
     return { accountLinked: true, total, matches: matches.map((match) => toListItem(match, now)) };
+  }
+
+  /**
+   * The numbers of a hero over a period, for the linked account.
+   *
+   * The period is a rolling window that ends now: the clock is read once, here, so the repository
+   * only ever sees a start time.
+   *
+   * @param period - The period to sum up.
+   * @param heroId - The hero.
+   * @returns `no_account` when no account is linked, `empty` when the hero has no normal-mode match
+   *   in the period (there are no averages of nothing), and the `stats` otherwise.
+   * @throws AppError of kind `storage` when the database fails, or when the linked account cannot be
+   *   read: an unreadable account is never reported as `no_account`, which would invite the user to
+   *   link an account over the data of the one the app lost.
+   */
+  async getPeriodSummary(period: Period, heroId: HeroId): Promise<PeriodSummary> {
+    const accountId = await this.#accountSource.currentAccountId();
+    if (accountId === null) {
+      return { kind: 'no_account' };
+    }
+    const totals = await this.#repository.periodTotals(
+      accountId,
+      heroId,
+      periodStartTime(period, this.#now()),
+    );
+    const stats = periodStats(totals);
+    return stats === null ? { kind: 'empty' } : { kind: 'stats', stats };
   }
 }
 

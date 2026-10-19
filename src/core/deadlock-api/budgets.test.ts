@@ -5,12 +5,14 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  ANALYTICS_RATE_LIMIT,
   AUTOMATIC_HISTORY_RATE_LIMIT,
   HISTORY_RATE_LIMIT,
   METADATA_MAX_CONCURRENCY,
   METADATA_RATE_LIMIT,
   PROFILE_RATE_LIMIT,
   PROFILE_REFRESH_RATE_LIMIT,
+  RANK_RATE_LIMIT,
 } from './budgets';
 
 describe('history budgets', () => {
@@ -30,6 +32,16 @@ describe('profile budgets', () => {
   it('sends at most 10 profile requests a minute and 3 refreshes an hour', () => {
     expect(PROFILE_RATE_LIMIT).toEqual({ limit: 10, windowMs: 60_000 });
     expect(PROFILE_REFRESH_RATE_LIMIT).toEqual({ limit: 3, windowMs: 3_600_000 });
+  });
+});
+
+describe('community comparison budgets', () => {
+  it('sends at most 20 analytics requests a minute', () => {
+    expect(ANALYTICS_RATE_LIMIT).toEqual({ limit: 20, windowMs: 60_000 });
+  });
+
+  it('sends at most 3 rank requests an hour', () => {
+    expect(RANK_RATE_LIMIT).toEqual({ limit: 3, windowMs: 3_600_000 });
   });
 });
 

@@ -12,8 +12,8 @@
  * @packageDocumentation
  */
 import { z } from 'zod';
-import { AppError } from '../errors/app-error';
 import type { ArchiveEnvelope } from './archive-envelope';
+import { archiveCount, readArchiveFields } from './archive-fields';
 import { findTrackedPlayer } from './pruning';
 
 /** What the match detail page shows about the tracked player in an archived match. */
@@ -38,9 +38,6 @@ export interface ArchiveFacts {
   readonly fetchedAt: number;
 }
 
-/** A count the API reports for a player: a non-negative integer. */
-const count = z.int().nonnegative();
-
 /**
  * The fields of the tracked player's entry that the facts need. The object is loose: every other
  * field of the player is ignored.
@@ -49,13 +46,13 @@ const count = z.int().nonnegative();
  * upgrades) may be absent from a player's entry: an absent array counts as empty.
  */
 const trackedPlayerSchema = z.looseObject({
-  kills: count,
-  deaths: count,
-  assists: count,
-  net_worth: count,
+  kills: archiveCount,
+  deaths: archiveCount,
+  assists: archiveCount,
+  net_worth: archiveCount,
   // Only the number of snapshots is read, so their content is not checked.
   stats: z.array(z.unknown()).optional(),
-  items: z.array(z.looseObject({ upgrade_id: count.optional() })).optional(),
+  items: z.array(z.looseObject({ upgrade_id: archiveCount.optional() })).optional(),
 });
 
 /** The fields of `match_info` that the facts need (the object is loose, like the player's). */
@@ -85,8 +82,8 @@ export function summarizeArchive(envelope: ArchiveEnvelope): ArchiveFacts {
   const entry = payload.match_info.players.find(
     (player) => player.account_id === prunedForAccountId,
   );
-  const player = readFields(trackedPlayerSchema, entry, 'tracked_player');
-  const matchInfo = readFields(matchInfoSchema, payload.match_info, 'match_info');
+  const player = readArchiveFields(trackedPlayerSchema, entry, 'tracked_player');
+  const matchInfo = readArchiveFields(matchInfoSchema, payload.match_info, 'match_info');
   return {
     won: matchInfo.winning_team === tracked.team,
     durationS: payload.match_info.duration_s,
@@ -100,31 +97,4 @@ export function summarizeArchive(envelope: ArchiveEnvelope): ArchiveFacts {
     itemsBought: (player.items ?? []).filter((item) => (item.upgrade_id ?? 0) === 0).length,
     fetchedAt: envelope.fetchedAt,
   };
-}
-
-/**
- * Read the fields of a part of the payload with a schema.
- *
- * @param schema - The schema of the fields to read.
- * @param value - The part of the payload.
- * @param name - What the part is, the start of the path of a problem.
- * @returns The validated fields.
- * @throws AppError of kind `invalid_payload` (`<name>.<path>: <code>`) when the part does not match
- *   the schema. Zod's message is not used: it can echo a part of the input.
- */
-function readFields<Schema extends z.ZodType>(
-  schema: Schema,
-  value: unknown,
-  name: string,
-): z.output<Schema> {
-  const parsed = schema.safeParse(value);
-  if (parsed.success) {
-    return parsed.data;
-  }
-  const [issue] = parsed.error.issues;
-  // An issue on the part itself has an empty path.
-  const path = [name, ...(issue?.path ?? []).map(String)].join('.');
-  throw new AppError('invalid_payload', 'The archive is unreadable', {
-    context: { issue: `${path}: ${issue?.code ?? 'invalid'}` },
-  });
 }

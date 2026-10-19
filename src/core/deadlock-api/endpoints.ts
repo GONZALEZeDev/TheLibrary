@@ -8,6 +8,7 @@
  * @packageDocumentation
  */
 import type { AccountId } from '../domain/account';
+import type { HeroId } from '../domain/hero';
 import type { MatchId } from '../domain/match';
 
 /**
@@ -31,9 +32,11 @@ export const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 /**
  * Groups of endpoints sharing a politeness budget: `history` is the match history (its Steam
  * refresh is strictly rate-limited by deadlock-api), `assets` the static game data, `metadata` the
- * detail of one match, `profile` the Steam profile of a player (name and avatar).
+ * detail of one match, `profile` the Steam profile of a player (name and avatar), `analytics` the
+ * community statistics of a hero (all of them share one limit per IP on deadlock-api's side), `rank`
+ * the rank of a player (a separate, far stricter limit).
  */
-export type RequestFamily = 'history' | 'assets' | 'metadata' | 'profile';
+export type RequestFamily = 'history' | 'assets' | 'metadata' | 'profile' | 'analytics' | 'rank';
 
 /** A request to deadlock-api. */
 export interface ApiRequest {
@@ -126,6 +129,133 @@ export function steamProfileRequest(accountId: AccountId, refresh: boolean): Api
     url: `${DEADLOCK_API_BASE_URL}/v1/players/steam?account_ids=${String(accountId)}${refresh ? '&refresh=true' : ''}`,
     endpoint: '/v1/players/steam',
     family: 'profile',
+  };
+}
+
+/**
+ * The community a match is compared with: the matches of one hero, over a recent period, within a
+ * match-duration window and, for a ranked comparison, within a rank tier.
+ *
+ * It holds nothing about the player: a community request carries a hero, a date, a duration window
+ * and a badge range, never an account id nor a match id.
+ */
+export interface CohortQuery {
+  /** Hero whose players form the community (Paige for every comparison of the app). */
+  readonly heroId: HeroId;
+  /**
+   * Start of the period, in Unix seconds: only the matches played since then count. deadlock-api
+   * floors it to the hour, so the caller passes a UTC midnight: the URL then stays the same all day
+   * and the answer can be reused until the next one.
+   */
+  readonly sinceUnixS: number;
+  /** Shortest match of the community, in seconds (inclusive). */
+  readonly minDurationS: number;
+  /**
+   * Longest match of the community, in seconds (inclusive). With {@link CohortQuery.minDurationS} it
+   * bounds a window of a few minutes, because most metrics are per-match totals that grow with the
+   * length of the match: a 25-minute match is never compared with a 45-minute one.
+   */
+  readonly maxDurationS: number;
+  /**
+   * Range of the match average badge (inclusive), e.g. `{ min: 41, max: 46 }` for tier 4, or `null`
+   * for every rank. The average badge only exists for ranked matches, so a range keeps ranked
+   * matches only, and a `null` range also admits the matches without a badge.
+   */
+  readonly badge: { readonly min: number; readonly max: number } | null;
+}
+
+/**
+ * The query parameters every community request shares once its own ones are written: the period,
+ * the duration window and, when the cohort has one, the badge range. They always come in this order
+ * so that two requests of the same cohort produce the same URL.
+ *
+ * @param query - The community.
+ * @returns The parameters, without a leading `?` or `&`.
+ */
+function cohortFilters(query: CohortQuery): string {
+  const period = `min_unix_timestamp=${String(query.sinceUnixS)}&min_duration_s=${String(query.minDurationS)}&max_duration_s=${String(query.maxDurationS)}`;
+  const { badge } = query;
+  return badge === null
+    ? period
+    : `${period}&min_average_badge=${String(badge.min)}&max_average_badge=${String(badge.max)}`;
+}
+
+/**
+ * The distribution of every per-player metric (its percentile points) among the players of a hero in
+ * a community: the reference a metric of a match is placed on.
+ *
+ * `hero_ids` restricts the statistics to the hero. `game_mode=normal` matches what the app archives
+ * (the normal mode only), so a match is never compared with another kind of game. The period, the
+ * duration window and the badge range come from the community (see {@link CohortQuery}).
+ *
+ * All the analytics endpoints share one limit of 200 requests per minute and per IP on
+ * deadlock-api's side, which `ANALYTICS_RATE_LIMIT` stays far below.
+ *
+ * @param query - The community.
+ * @returns The request.
+ */
+export function metricBenchmarkRequest(query: CohortQuery): ApiRequest {
+  return {
+    url: `${DEADLOCK_API_BASE_URL}/v1/analytics/player-stats/metrics?hero_ids=${String(query.heroId)}&game_mode=normal&${cohortFilters(query)}`,
+    endpoint: '/v1/analytics/player-stats/metrics',
+    family: 'analytics',
+  };
+}
+
+/**
+ * The performance curves (how a stat grows over the match) of the players of a hero in a community:
+ * the reference of the metrics that are read at a moment of the match.
+ *
+ * `resolution=0` asks for absolute game times instead of percentage buckets of the match: the
+ * points come at 180, 360, 540, 720 and 900 seconds, then every 300 seconds. A point then means the
+ * same moment whatever the length of the match, whereas a percentage bucket stands for a different
+ * moment in a 25-minute and in a 45-minute match. The other parameters are those of
+ * {@link metricBenchmarkRequest}.
+ *
+ * @param query - The community.
+ * @returns The request.
+ */
+export function performanceCurveRequest(query: CohortQuery): ApiRequest {
+  return {
+    url: `${DEADLOCK_API_BASE_URL}/v1/analytics/player-performance-curve?hero_ids=${String(query.heroId)}&game_mode=normal&resolution=0&${cohortFilters(query)}`,
+    endpoint: '/v1/analytics/player-performance-curve',
+    family: 'analytics',
+  };
+}
+
+/**
+ * The statistics of every hero in a duration window and a badge range: the sample the comparison
+ * rests on, i.e. how many matches the community of the hero holds.
+ *
+ * This endpoint has no hero filter and answers one row per hero, so `hero_ids` is not sent and the
+ * builder ignores `query.heroId`: the parser keeps the row of the hero it needs. The other
+ * parameters are those of {@link metricBenchmarkRequest}.
+ *
+ * @param query - The community; its hero is not sent.
+ * @returns The request.
+ */
+export function heroSampleRequest(query: CohortQuery): ApiRequest {
+  return {
+    url: `${DEADLOCK_API_BASE_URL}/v1/analytics/hero-stats?game_mode=normal&${cohortFilters(query)}`,
+    endpoint: '/v1/analytics/hero-stats',
+    family: 'analytics',
+  };
+}
+
+/**
+ * The rank of one player: the badge the player had at the end of the latest ranked match.
+ *
+ * It tells which tier to compare an unranked match with. deadlock-api limits this endpoint to 20
+ * requests a minute and per IP, and the app needs one a day (see `RANK_RATE_LIMIT`).
+ *
+ * @param accountId - The player.
+ * @returns The request.
+ */
+export function playerRankRequest(accountId: AccountId): ApiRequest {
+  return {
+    url: `${DEADLOCK_API_BASE_URL}/v1/players/${String(accountId)}/rank`,
+    endpoint: '/v1/players/{account_id}/rank',
+    family: 'rank',
   };
 }
 

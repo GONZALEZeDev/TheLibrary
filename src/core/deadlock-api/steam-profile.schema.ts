@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { avatarHashFromUrl, normalisePersonaName } from '../account/linked-account';
 import type { AccountId } from '../domain/account';
 import { AppError } from '../errors/app-error';
+import { describeFirstIssue } from '../errors/first-issue';
 
 /** The Steam profile of a player, reduced to what the interface shows. */
 export interface SteamProfile {
@@ -103,23 +104,4 @@ function firstAvatarHash(urls: readonly (string | null | undefined)[]): string |
     }
   }
   return null;
-}
-
-/**
- * Describe the first problem of a failed validation as `<path>: <code>`, e.g. `(root): invalid_type`.
- *
- * Only the path and the issue code are used: Zod's messages can echo parts of the input, and the
- * payload belongs to players (names, avatars), so no value may reach an error or a log.
- *
- * @param error - The validation error.
- * @returns The path and code of its first issue.
- */
-function describeFirstIssue(error: z.ZodError): string {
-  const [issue] = error.issues;
-  if (issue === undefined) {
-    return 'invalid payload';
-  }
-  // An issue on the body itself (not an array) has an empty path.
-  const path = issue.path.length === 0 ? '(root)' : issue.path.map(String).join('.');
-  return `${path}: ${issue.code}`;
 }

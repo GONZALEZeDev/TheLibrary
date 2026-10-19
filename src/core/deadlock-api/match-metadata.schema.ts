@@ -16,6 +16,7 @@
 import { z } from 'zod';
 import type { MatchId } from '../domain/match';
 import { AppError } from '../errors/app-error';
+import { describeFirstIssue } from '../errors/first-issue';
 
 /** A slot number: an integer, `0` being the non-player (neutrals, objectives…) in the damage matrix. */
 const slot = z.int();
@@ -105,24 +106,4 @@ export function parseMatchMetadata(body: unknown, expectedMatchId?: MatchId): Ra
     });
   }
   return parsed.data;
-}
-
-/**
- * Describe the first problem of a failed validation as `<path>: <code>`, e.g.
- * `match_info.players.0.player_slot: invalid_type`.
- *
- * Only the path and the issue code are used: Zod's messages can echo parts of the input, and the
- * payload belongs to players (account ids), so no value may reach an error or a log.
- *
- * @param error - The validation error.
- * @returns The path and code of its first issue.
- */
-function describeFirstIssue(error: z.ZodError): string {
-  const [issue] = error.issues;
-  if (issue === undefined) {
-    return 'invalid payload';
-  }
-  // An issue on the body itself (not an object) has an empty path.
-  const path = issue.path.length === 0 ? '(root)' : issue.path.map(String).join('.');
-  return `${path}: ${issue.code}`;
 }

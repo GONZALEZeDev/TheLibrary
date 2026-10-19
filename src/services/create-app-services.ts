@@ -7,22 +7,28 @@
  *
  * @packageDocumentation
  */
-import type { AccountSource } from '../ports/account-source.port';
 import type { ArchiveStore } from '../ports/archive-store.port';
 import type { Compressor } from '../ports/compressor.port';
 import type { Database } from '../ports/database.port';
 import type { HttpClient } from '../ports/http-client.port';
 import type { Logger } from '../ports/logger.port';
 import type { SettingsStore } from '../ports/settings-store.port';
+import type { SignInGateway } from '../ports/sign-in-gateway.port';
+import { AccountDataService } from './account-data.service';
+import { AccountService } from './account.service';
 import { ApiCacheRepository } from './api-cache.repository';
 import type { AppServices } from './app-services';
+import { DatabaseMaintenanceRepository } from './database-maintenance.repository';
 import { DeadlockApiService } from './deadlock-api.service';
 import { HeroCatalogService } from './hero-catalog.service';
+import { LinkedAccountRepository } from './linked-account.repository';
 import { MatchDetailRepository } from './match-detail.repository';
 import { MatchDetailService } from './match-detail.service';
 import { MatchesRepository } from './matches.repository';
 import { MatchesService } from './matches.service';
 import { SettingsService } from './settings.service';
+import { SteamProfileService } from './steam-profile.service';
+import { SteamSignInService } from './steam-sign-in.service';
 import { SyncStateRepository } from './sync-state.repository';
 import { SyncService } from './sync.service';
 
@@ -32,7 +38,11 @@ export interface AppAdapters {
   readonly settingsStore: SettingsStore;
   readonly http: HttpClient;
   readonly database: Database;
-  readonly accountSource: AccountSource;
+  /**
+   * Runs the loopback listener and opens the system browser for the Steam sign-in. The account
+   * itself is not an adapter: it is the link stored in `database`.
+   */
+  readonly signInGateway: SignInGateway;
   /** Where the archives of the match details are kept. */
   readonly archiveStore: ArchiveStore;
   /** Compresses the archives of the match details. */
@@ -60,9 +70,12 @@ export interface AppServicesOptions {
  * @returns The services.
  */
 export function createAppServices(adapters: AppAdapters, options: AppServicesOptions): AppServices {
-  const { logger, settingsStore, http, database, accountSource, archiveStore, compressor } =
+  const { logger, settingsStore, http, database, signInGateway, archiveStore, compressor } =
     adapters;
   const now = options.now ?? Date.now;
+  // The account the app works for is the link stored in the database, not an adapter: this one
+  // instance is the `AccountSource` of every service, so they all see a link or an unlink at once.
+  const linkedAccounts = new LinkedAccountRepository(database, logger);
   const syncState = new SyncStateRepository(database, logger, now);
   const matches = new MatchesRepository(database, now);
   // One API service for the whole app: the history, the heroes and the match details all go
@@ -74,7 +87,7 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     ...(options.sleep === undefined ? {} : { sleep: options.sleep }),
   });
   const details = new MatchDetailService({
-    accountSource,
+    accountSource: linkedAccounts,
     api,
     repository: new MatchDetailRepository(database),
     archive: archiveStore,
@@ -82,13 +95,61 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     logger,
     now,
   });
+  // The synchronisation runs the detail queue after the history: it gets the one `details`.
+  const sync = new SyncService({
+    accountSource: linkedAccounts,
+    api,
+    details,
+    matches,
+    syncState,
+    logger,
+    now,
+  });
+  // Deletes the data of an account from the very instances the other services work with, so that
+  // nothing of an account stays in a repository, the archive or the memory of the detail queue.
+  const accountData = new AccountDataService({
+    matches,
+    syncState,
+    archive: archiveStore,
+    maintenance: new DatabaseMaintenanceRepository(database),
+    details,
+    logger,
+  });
+  // The only writer of the link: the other services only read it, through `linkedAccounts`.
+  const account = new AccountService({
+    accounts: linkedAccounts,
+    signIn: new SteamSignInService({
+      gateway: signInGateway,
+      http,
+      logger,
+      appVersion: options.appVersion,
+      now,
+    }),
+    profiles: new SteamProfileService({
+      api,
+      http,
+      logger,
+      appVersion: options.appVersion,
+      now,
+    }),
+    data: accountData,
+    sync,
+    logger,
+    now,
+  });
   return {
     logger,
     settings: new SettingsService(settingsStore, logger),
-    matches: new MatchesService(accountSource, matches, now),
-    heroes: new HeroCatalogService(api, new ApiCacheRepository(database), logger, now),
+    matches: new MatchesService(linkedAccounts, matches, now),
+    heroes: new HeroCatalogService(
+      linkedAccounts,
+      api,
+      new ApiCacheRepository(database),
+      logger,
+      now,
+    ),
     details,
-    // The synchronisation runs the detail queue after the history: it gets the one `details`.
-    sync: new SyncService({ accountSource, api, details, matches, syncState, logger, now }),
+    sync,
+    account,
   };
 }

@@ -6,6 +6,7 @@
  */
 import initSqlJs, { type SqlJsStatic } from 'sql.js';
 import { SqlJsDatabase } from '../adapters/dev/sql-js-database.adapter';
+import type { LinkedAccount } from '../core/account/linked-account';
 import { parseAccountId, type AccountId } from '../core/domain/account';
 import { PAIGE_HERO_ID } from '../core/domain/hero';
 import { parseMatchId, type MatchId, type MatchSummary } from '../core/domain/match';
@@ -40,6 +41,29 @@ export function testAccountId(value: number): AccountId {
 
 /** The account of the tests that do not care which one. */
 export const TEST_ACCOUNT_ID = testAccountId(123456789);
+
+/**
+ * Build the linked account of a test: a player named "Fixture Player" with no avatar, linked at the
+ * start of the epoch and whose profile was never fetched, unless overridden.
+ *
+ * @param accountId - The linked account's id.
+ * @param overrides - Fields to change.
+ * @returns The linked account.
+ */
+export function testLinkedAccount(
+  accountId: AccountId,
+  overrides: Partial<LinkedAccount> = {},
+): LinkedAccount {
+  return {
+    accountId,
+    personaName: 'Fixture Player',
+    avatarBase64: null,
+    avatarHash: null,
+    linkedAt: 0,
+    profileFetchedAt: null,
+    ...overrides,
+  };
+}
 
 /**
  * Make a match id for a test.

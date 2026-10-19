@@ -81,6 +81,25 @@ pub fn run() {
         // `fs:default` is never granted. `plugins.fs.scopeDroppedPaths` is `false` in
         // `tauri.conf.json`, so a file dropped on the window never joins that scope.
         .plugin(tauri_plugin_fs::init())
+        // One-shot loopback listener of the Steam sign-in: the webview starts it on a port the
+        // system chooses, 127.0.0.1 only, and it ends after the first request that carries the
+        // callback URL. The plugin grants nothing by itself: the window may only start and cancel
+        // the listener, and receive its events, because of the entries in
+        // `capabilities/default.json`. Version 2.1.0 ships no default permission set; none is
+        // ever granted, so that a later version adding one cannot widen the window unseen.
+        .plugin(tauri_plugin_oauth::init())
+        // Opens Steam's sign-in page in the system browser. The window may open one URL pattern,
+        // Steam's OpenID login page, because the scope lives in `capabilities/default.json`
+        // (`opener:allow-open-url`; `opener:default` is never granted, it would open any
+        // `http(s)`, `mailto:` and `tel:` link and reveal files in the explorer). The script the
+        // plugin injects to open a clicked `target="_blank"` link, or a Ctrl/Shift-clicked one, is
+        // switched off: the sign-in page is opened by the sign-in flow of the app only (which
+        // starts the listener first), never by a click on a link.
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         // Opens the database and applies its pending migrations, also before any window exists.
         .plugin(sql_plugin());
 
@@ -179,7 +198,8 @@ fn migrations() -> Vec<Migration> {
 /// Cancels every top-level navigation that would leave the app (clicked external links,
 /// `window.location` changes, injected redirects). Sub-resources are governed by the CSP, and
 /// `window.open`/`target="_blank"` are already denied by Tauri when no new-window handler is set.
-/// External links must be opened in the system browser through a dedicated plugin (later milestones).
+/// External pages are opened by the opener plugin only, in the system browser, and its scope in
+/// `capabilities/default.json` holds Steam's sign-in page and nothing else.
 fn navigation_guard<R: Runtime>() -> TauriPlugin<R> {
     PluginBuilder::new("navigation-guard")
         .on_navigation(|webview, url| {
@@ -452,7 +472,11 @@ mod tests {
                 "store:allow-save",
                 {
                     "identifier": "http:default",
-                    "allow": [{ "url": "https://api.deadlock-api.com/*" }]
+                    "allow": [
+                        { "url": "https://api.deadlock-api.com/*" },
+                        { "url": "https://steamcommunity.com/openid/login" },
+                        { "url": "https://avatars.steamstatic.com/*" }
+                    ]
                 },
                 "sql:allow-select",
                 "sql:allow-execute",
@@ -469,6 +493,14 @@ mod tests {
                         { "path": "$APPLOCALDATA/archive" },
                         { "path": "$APPLOCALDATA/archive/**" }
                     ]
+                },
+                "oauth:allow-start",
+                "oauth:allow-cancel",
+                "core:event:allow-listen",
+                "core:event:allow-unlisten",
+                {
+                    "identifier": "opener:allow-open-url",
+                    "allow": [{ "url": "https://steamcommunity.com/openid/login*" }]
                 }
             ])
         );
@@ -481,6 +513,80 @@ mod tests {
             .as_str()
             .or_else(|| permission["identifier"].as_str())
             .expect("a permission must be a string or an object with an identifier")
+    }
+
+    /// The permission entries of the main window whose identifier starts with `prefix` (`"core:"`,
+    /// `"opener:"`…), in file order and exactly as written in the capability.
+    fn permissions_starting_with(prefix: &str) -> Vec<serde_json::Value> {
+        let capability = default_capability();
+        let permissions = capability["permissions"]
+            .as_array()
+            .expect("permissions must be a list");
+        permissions
+            .iter()
+            .filter(|permission| permission_identifier(permission).starts_with(prefix))
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn sign_in_listener_permissions_are_start_and_cancel() {
+        // The webview starts the one-shot loopback listener of the Steam sign-in and stops it when
+        // the player cancels or the flow times out: nothing else. `oauth:default` is not granted so
+        // that a later version of the plugin cannot add a command to the window unseen.
+        assert_eq!(
+            permissions_starting_with("oauth:"),
+            [
+                serde_json::json!("oauth:allow-start"),
+                serde_json::json!("oauth:allow-cancel")
+            ]
+        );
+    }
+
+    #[test]
+    fn main_window_core_permissions_are_the_event_listener_only() {
+        // The sign-in callback reaches the webview as an event, and `listen` / `unlisten` are the
+        // only core commands it needs. `core:default` (all the core plugins, with the window,
+        // webview, app and path APIs) is not granted, nor is any other `core:` entry.
+        assert_eq!(
+            permissions_starting_with("core:"),
+            [
+                serde_json::json!("core:event:allow-listen"),
+                serde_json::json!("core:event:allow-unlisten")
+            ]
+        );
+    }
+
+    #[test]
+    fn main_window_opens_only_the_steam_sign_in_page() {
+        // `opener:default` would let the webview open any URL and reveal paths in the file
+        // explorer. The only opener entry is `open-url`, scoped to Steam's sign-in page (the glob
+        // ends in `*` because the page is opened with the OpenID parameters in its query string).
+        assert_eq!(
+            permissions_starting_with("opener:"),
+            [serde_json::json!({
+                "identifier": "opener:allow-open-url",
+                "allow": [{ "url": "https://steamcommunity.com/openid/login*" }]
+            })]
+        );
+    }
+
+    #[test]
+    fn main_window_reaches_only_the_reviewed_hosts() {
+        // One entry, three URLs: the API, the exact page that confirms a Steam sign-in (a POST,
+        // so no wildcard) and the avatar host. A fourth URL, or a wildcard on the Steam page,
+        // would let the webview send requests to a place that was never reviewed.
+        assert_eq!(
+            permissions_starting_with("http:"),
+            [serde_json::json!({
+                "identifier": "http:default",
+                "allow": [
+                    { "url": "https://api.deadlock-api.com/*" },
+                    { "url": "https://steamcommunity.com/openid/login" },
+                    { "url": "https://avatars.steamstatic.com/*" }
+                ]
+            })]
+        );
     }
 
     #[test]

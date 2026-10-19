@@ -10,19 +10,18 @@
  */
 import initSqlJs from 'sql.js';
 import sqlWasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
-import type { AccountSource } from '../../ports/account-source.port';
 import type { ArchiveStore } from '../../ports/archive-store.port';
 import type { Database } from '../../ports/database.port';
 import type { HttpClient } from '../../ports/http-client.port';
 import type { Logger } from '../../ports/logger.port';
 import type { SettingsStore } from '../../ports/settings-store.port';
+import type { SignInGateway } from '../../ports/sign-in-gateway.port';
 import { createFixtureApi, FixtureHttpClient } from './fixture-http-client.adapter';
-import { FIXTURE_ACCOUNT_ID } from './fixtures/match-history.fixture';
+import { FixtureSignInGateway } from './fixture-sign-in-gateway.adapter';
 import { LocalStorageSettingsStore } from './local-storage-settings-store.adapter';
 import { MemoryArchiveStore } from './memory-archive-store.adapter';
 import { MemoryLogger } from './memory-logger.adapter';
 import { SqlJsDatabase } from './sql-js-database.adapter';
-import { StaticAccountSource } from './static-account-source.adapter';
 
 /**
  * Text present in every development-only bundle: the CI check fails if a production build
@@ -39,7 +38,12 @@ export interface BrowserDevAdapters {
   readonly settingsStore: SettingsStore;
   readonly http: HttpClient;
   readonly database: Database;
-  readonly accountSource: AccountSource;
+  /**
+   * Plays Steam's part: once the login page is opened, it answers after a delay, as Steam would,
+   * with the callback of the fixture account. It links nothing itself: the sign-in flow checks that
+   * answer and makes the link.
+   */
+  readonly signInGateway: SignInGateway;
   readonly archiveStore: ArchiveStore;
 }
 
@@ -47,7 +51,10 @@ export interface BrowserDevAdapters {
  * The adapters of the browser dev mode (`pnpm dev`): no network, no Tauri. deadlock-api is
  * imitated with the synthetic fixtures (answers are delayed so loading states show), the database
  * is sql.js in memory, the archive of the match details is kept in memory too, the settings live in
- * `localStorage` and the logs go to the console.
+ * `localStorage` and the logs go to the console. No account is linked at the start. The Steam
+ * sign-in is imitated too: the gateway answers as Steam would, 800 ms after the browser is opened,
+ * so the "waiting for Steam" state shows. It links nothing by itself: the sign-in flow does, once it
+ * accepts the answer.
  *
  * @returns The adapters.
  */
@@ -60,7 +67,7 @@ export function createBrowserDevAdapters(): BrowserDevAdapters {
     http: new FixtureHttpClient(createFixtureApi({ now: Date.now() }), { delayMs: 400 }),
     // In the browser, sql.js fetches its WebAssembly file from the URL Vite serves it at.
     database: new SqlJsDatabase(() => initSqlJs({ locateFile: () => sqlWasmUrl })),
-    accountSource: new StaticAccountSource(FIXTURE_ACCOUNT_ID),
+    signInGateway: new FixtureSignInGateway({ delayMs: 800 }),
     // Like the database, it is empty at every reload of the page.
     archiveStore: new MemoryArchiveStore(),
   };

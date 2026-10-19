@@ -5,11 +5,16 @@
  * in the database. When it cannot be refreshed (offline, deadlock-api unavailable), the last
  * catalogue downloaded is used, however old.
  *
+ * Until an account is linked, the app contacts nobody: the catalogue is then only read from the
+ * cache, whatever its age. The service enforces it itself, so no caller can break it by forgetting
+ * to check the account first.
+ *
  * @packageDocumentation
  */
 import { z } from 'zod';
 import type { Hero } from '../core/domain/hero';
 import { errorLogContext, toAppError } from '../core/errors/app-error';
+import type { AccountSource } from '../ports/account-source.port';
 import type { Logger } from '../ports/logger.port';
 import type { ApiCacheRepository } from './api-cache.repository';
 import type { DeadlockApiService } from './deadlock-api.service';
@@ -27,23 +32,27 @@ const cachedHeroesSchema = z
 
 /** Provides the hero catalogue. */
 export class HeroCatalogService {
+  readonly #accountSource: AccountSource;
   readonly #api: DeadlockApiService;
   readonly #cache: ApiCacheRepository;
   readonly #logger: Logger;
   readonly #now: () => number;
 
   /**
+   * @param accountSource - The linked account: without one, nothing is downloaded.
    * @param api - Downloads the catalogue.
    * @param cache - Keeps it between sessions.
    * @param logger - Structured logger.
    * @param now - Current time (Unix ms).
    */
   constructor(
+    accountSource: AccountSource,
     api: DeadlockApiService,
     cache: ApiCacheRepository,
     logger: Logger,
     now: () => number = Date.now,
   ) {
+    this.#accountSource = accountSource;
     this.#api = api;
     this.#cache = cache;
     this.#logger = logger;
@@ -54,12 +63,19 @@ export class HeroCatalogService {
    * The playable heroes, with their English names.
    *
    * @returns The catalogue: cached when fresh, downloaded otherwise, or the stale cached one when
-   *   it cannot be downloaded.
-   * @throws AppError when the catalogue can be neither read from the cache nor downloaded.
+   *   it cannot be downloaded. Without a linked account, nothing is downloaded: the cached
+   *   catalogue whatever its age, or an empty one when nothing is cached.
+   * @throws AppError when the catalogue can be neither read from the cache nor downloaded, or when
+   *   the linked account cannot be read: an unreadable link is not "no account", and the caller
+   *   handles it like any other failure of the catalogue.
    */
   async getHeroes(): Promise<readonly Hero[]> {
-    const now = this.#now();
+    const accountId = await this.#accountSource.currentAccountId();
     const cached = await this.#readCache();
+    if (accountId === null) {
+      return cached?.heroes ?? [];
+    }
+    const now = this.#now();
     // A catalogue downloaded after `now` means that the system clock moved backwards since: it
     // would stay fresh until the clock catches up, so it is downloaded again instead.
     if (cached !== null && cached.fetchedAt <= now && cached.expiresAt > now) {

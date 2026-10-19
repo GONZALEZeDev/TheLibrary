@@ -3,7 +3,8 @@
  *
  * Besides the usual correctness rules, this file enforces the project conventions:
  * - layer boundaries between src/ folders (block "project/architecture");
- * - `@tauri-apps/*` only in src/adapters/tauri/** and src/main.tsx; src/core only imports `zod`;
+ * - `@tauri-apps/*` and `@fabianlars/tauri-plugin-oauth` (the Steam sign-in listener) only in
+ *   src/adapters/tauri/** and src/main.tsx; src/core only imports `zod`;
  * - relative imports, static or dynamic, without a script extension (`./x`, never `./x.js`), which
  *   the import resolver used by the boundaries rules cannot follow (block
  *   "project/extensionless-imports" for static imports, "project/restricted-syntax" for dynamic ones);
@@ -27,6 +28,13 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 const TEST_FILES = ['src/**/*.test.{ts,tsx}'];
+
+/**
+ * The npm packages that reach the Tauri shell: everything under `@tauri-apps/` and the community
+ * plugin that runs the loopback listener of the Steam sign-in. Only the Tauri adapters and the
+ * composition root may import them (see the "npm packages" policies of the architecture block).
+ */
+const TAURI_PACKAGES = ['@tauri-apps/*', '@fabianlars/tauri-plugin-oauth'];
 
 /** Script files that may not exist in src/: only `.ts` and `.tsx` files are allowed there. */
 const NON_TYPESCRIPT_FILES = 'src/**/*.{js,jsx,mjs,cjs,mts,cts}';
@@ -256,13 +264,13 @@ export default defineConfig([
             // src/ runs in the webview.
             { allow: { to: { module: { origin: 'external' } } } },
             {
-              disallow: { to: { module: { source: '@tauri-apps/*' } } },
+              disallow: { to: { module: { source: TAURI_PACKAGES } } },
               message:
-                '@tauri-apps/* may only be imported from src/adapters/tauri/** and src/main.tsx',
+                '@tauri-apps/* and @fabianlars/tauri-plugin-oauth may only be imported from src/adapters/tauri/** and src/main.tsx',
             },
             {
               from: [{ element: { type: 'adapters-tauri' } }, { file: { categories: 'main' } }],
-              allow: { to: { module: { source: '@tauri-apps/*' } } },
+              allow: { to: { module: { source: TAURI_PACKAGES } } },
             },
             {
               from: { element: { type: 'core' } },
@@ -279,7 +287,8 @@ export default defineConfig([
         },
       ],
       // A file outside the folders above would escape every rule of this block, including the
-      // @tauri-apps/* ban: a new src/ folder must first be declared as an element.
+      // ban on the Tauri packages (`TAURI_PACKAGES`): a new src/ folder must first be declared as
+      // an element.
       'boundaries/no-unknown-files': 'error',
     },
   },

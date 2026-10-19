@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Least-privilege permissions of the main window: logging through the log plugin; read/write access to the settings store and to the database that the shell opened at startup (the window can use them but cannot open another connection); HTTPS requests to deadlock-api only; read/write access to the match archive folder only (the app local data folder, archive/), never to any other file. Nothing else is exposed to the webview.",
+  "description": "Least-privilege permissions of the main window: logging through the log plugin; read/write access to the settings store and to the database that the shell opened at startup (the window can use them but cannot open another connection); HTTPS requests to deadlock-api, Steam's sign-in page and the Steam avatar host only; read/write access to the match archive folder only (the app local data folder, archive/), never to any other file; start and stop the one-shot Steam sign-in listener on 127.0.0.1 and receive its event; open Steam's sign-in page in the system browser; POST the sign-in confirmation to Steam and download the Steam avatar. Nothing else is exposed to the webview.",
   "windows": ["main"],
   "permissions": [
     "log:default",
@@ -11,7 +11,11 @@
     "store:allow-save",
     {
       "identifier": "http:default",
-      "allow": [{ "url": "https://api.deadlock-api.com/*" }]
+      "allow": [
+        { "url": "https://api.deadlock-api.com/*" },
+        { "url": "https://steamcommunity.com/openid/login" },
+        { "url": "https://avatars.steamstatic.com/*" }
+      ]
     },
     "sql:allow-select",
     "sql:allow-execute",
@@ -28,6 +32,14 @@
         { "path": "$APPLOCALDATA/archive" },
         { "path": "$APPLOCALDATA/archive/**" }
       ]
+    },
+    "oauth:allow-start",
+    "oauth:allow-cancel",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://steamcommunity.com/openid/login*" }]
     }
   ]
 }

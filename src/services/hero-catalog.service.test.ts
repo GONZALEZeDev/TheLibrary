@@ -1,5 +1,6 @@
 /**
- * Tests of the hero catalogue: cache freshness, refresh and offline fallback.
+ * Tests of the hero catalogue: cache freshness, refresh and offline fallback, and the guard that
+ * keeps the app silent while no account is linked.
  *
  * @packageDocumentation
  */
@@ -11,8 +12,10 @@ import {
   type FixtureHandler,
 } from '../adapters/dev/fixture-http-client.adapter';
 import { MemoryLogger } from '../adapters/dev/memory-logger.adapter';
+import type { AccountId } from '../core/domain/account';
 import { AppError } from '../core/errors/app-error';
-import { createTestDatabase } from '../test/test-data';
+import type { AccountSource } from '../ports/account-source.port';
+import { createTestDatabase, testAccountId } from '../test/test-data';
 import { ApiCacheRepository } from './api-cache.repository';
 import { DeadlockApiService } from './deadlock-api.service';
 import { HeroCatalogService } from './hero-catalog.service';
@@ -20,15 +23,27 @@ import { SyncStateRepository } from './sync-state.repository';
 
 const START = Date.UTC(2026, 9, 14, 12, 0, 0);
 const DAY = 24 * 60 * 60_000;
+const ACCOUNT_ID = testAccountId(1000001);
 
 /**
- * Build the catalogue service on a shared database, with a controllable clock and handler.
+ * Build the catalogue service on a shared database, with a controllable clock, handler and linked
+ * account. An account is linked unless a test unlinks it.
  *
- * @returns The service, its HTTP client and logger, the clock, and a way to change the handler.
+ * @returns The service, its HTTP client and logger, the clock, a way to change the handler, and the
+ *   linked account: set `link.accountId` to `null` to unlink it, or `link.failure` to make the
+ *   link unreadable.
  */
 function setUp() {
   const clock = { now: START };
   const answer: { handler: FixtureHandler } = { handler: createFixtureApi({ now: START }) };
+  const link: { accountId: AccountId | null; failure: AppError | null } = {
+    accountId: ACCOUNT_ID,
+    failure: null,
+  };
+  const accountSource: AccountSource = {
+    currentAccountId: () =>
+      link.failure === null ? Promise.resolve(link.accountId) : Promise.reject(link.failure),
+  };
   const http = new FixtureHttpClient((request) => answer.handler(request));
   const logger = new MemoryLogger();
   const database = createTestDatabase();
@@ -37,8 +52,14 @@ function setUp() {
     appVersion: '0.1.0',
     now,
   });
-  const catalog = new HeroCatalogService(api, new ApiCacheRepository(database), logger, now);
-  return { catalog, http, logger, clock, answer };
+  const catalog = new HeroCatalogService(
+    accountSource,
+    api,
+    new ApiCacheRepository(database),
+    logger,
+    now,
+  );
+  return { catalog, http, logger, clock, answer, link };
 }
 
 describe('HeroCatalogService', () => {
@@ -117,5 +138,55 @@ describe('HeroCatalogService', () => {
     answer.handler = () => jsonResponse({}, 500);
 
     await expect(catalog.getHeroes()).rejects.toMatchObject({ kind: 'service_unavailable' });
+  });
+
+  describe('without a linked account', () => {
+    it('sends no request without a linked account', async () => {
+      const { catalog, http, link } = setUp();
+      link.accountId = null;
+
+      await expect(catalog.getHeroes()).resolves.toEqual([]);
+
+      expect(http.requests).toHaveLength(0);
+    });
+
+    it('gives the cached catalogue without a linked account', async () => {
+      const { catalog, http, clock, link } = setUp();
+      const heroes = await catalog.getHeroes();
+      // Long past its week of freshness: with an account, it would be downloaded again.
+      clock.now += 30 * DAY;
+      link.accountId = null;
+
+      await expect(catalog.getHeroes()).resolves.toEqual(heroes);
+
+      expect(http.requests).toHaveLength(1);
+    });
+
+    it('downloads the catalogue once an account is linked', async () => {
+      const { catalog, http, link } = setUp();
+      link.accountId = null;
+      // Without an account, nothing is downloaded: this call would fill the cache if it did.
+      await expect(catalog.getHeroes()).resolves.toEqual([]);
+      expect(http.requests).toHaveLength(0);
+
+      link.accountId = ACCOUNT_ID;
+      const heroes = await catalog.getHeroes();
+
+      expect(http.requests).toHaveLength(1);
+      expect(heroes).toContainEqual({ id: 67, name: 'Paige' });
+    });
+
+    it('does not take an unreadable linked account for no account', async () => {
+      const { catalog, http, logger, link } = setUp();
+      await catalog.getHeroes();
+      const logged = logger.entries.length;
+      link.failure = new AppError('storage', 'The linked account is invalid');
+
+      // Like any other failure of the catalogue, it is the caller's to handle (the screen retries).
+      await expect(catalog.getHeroes()).rejects.toBe(link.failure);
+
+      expect(http.requests).toHaveLength(1);
+      expect(logger.entries).toHaveLength(logged);
+    });
   });
 });

@@ -8,6 +8,7 @@
  * @packageDocumentation
  */
 import type { Logger } from '../ports/logger.port';
+import type { AccountService } from './account.service';
 import type { HeroCatalogService } from './hero-catalog.service';
 import type { MatchDetailService } from './match-detail.service';
 import type { MatchesService } from './matches.service';
@@ -28,4 +29,6 @@ export interface AppServices {
   readonly details: MatchDetailService;
   /** Synchronisation of the match history with deadlock-api. */
   readonly sync: SyncService;
+  /** The linked Steam account: link, switch, unlink, and the upkeep of the link. */
+  readonly account: AccountService;
 }

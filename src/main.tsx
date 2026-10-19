@@ -24,7 +24,7 @@ import { TauriDatabase } from './adapters/tauri/tauri-database.adapter';
 import { TauriHttpClient } from './adapters/tauri/tauri-http-client.adapter';
 import { TauriLogger } from './adapters/tauri/tauri-logger.adapter';
 import { TauriSettingsStore } from './adapters/tauri/tauri-settings-store.adapter';
-import { UnlinkedAccountSource } from './adapters/tauri/unlinked-account-source.adapter';
+import { TauriSignInGateway } from './adapters/tauri/tauri-sign-in-gateway.adapter';
 import { errorLogContext, toAppError } from './core/errors/app-error';
 import { resolveInitialLanguage, type Language } from './core/settings/language';
 import type { LogLevel } from './ports/logger.port';
@@ -66,8 +66,9 @@ async function createAdapters(desktop: boolean): Promise<AppAdapters> {
       database: new TauriDatabase(),
       archiveStore: new TauriArchiveStore(),
       compressor,
-      // No account is linked yet: the Steam sign-in replaces this source later in this milestone.
-      accountSource: new UnlinkedAccountSource(),
+      // The listener and the browser of the Steam sign-in. There is no adapter for the account: it
+      // is the link stored in the database, which the services read themselves.
+      signInGateway: new TauriSignInGateway(),
     };
   }
   if (import.meta.env.DEV) {
@@ -225,10 +226,13 @@ async function bootstrap(
     </StrictMode>,
   );
 
-  // Started once the first render is scheduled, so that it never delays the window: the first
-  // synchronisation runs right away, the next ones on the timer of `SyncService.start`.
+  // Started once the first render is scheduled, so that it never delays the window. The account
+  // service starts the synchronisation, but first runs the startup cleanup (data left by an
+  // interrupted unlink or switch, and the compaction it owes): the first synchronisation must not
+  // run while another account's data is being deleted. Then the first synchronisation runs right
+  // away, the next ones on the timer of `SyncService.start`.
   setTimeout(() => {
-    services.sync.start();
+    void services.account.start();
   }, 0);
 }
 

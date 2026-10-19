@@ -49,6 +49,14 @@ tauri-plugin-http = { version = "2.8.2", default-features = false, features = [
 # match archive folder. 2.7.1 matches `@tauri-apps/plugin-fs` (the Tauri CLI compares both), and
 # 2.7.0 or later is required: it fixes the scope check of symlinked ancestors.
 tauri-plugin-fs = "2.7.1"
+# One-shot loopback listener of the Steam sign-in (ADR 0005); community plugin, reviewed. Keep this
+# crate and the npm package `@fabianlars/tauri-plugin-oauth` on the same release (2.1.0) by hand:
+# the Tauri CLI does not compare this pair, since it only pairs `tauri-plugin-<x>` with
+# `@tauri-apps/plugin-<x>`.
+tauri-plugin-oauth = "2.1.0"
+# Opens Steam's sign-in page in the system browser; scoped to that page in the capability. 2.7.0
+# matches `@tauri-apps/plugin-opener` (the Tauri CLI compares both): keep `Cargo.lock` on it.
+tauri-plugin-opener = "2.7.0"
 # SQLite database of the app; the only database driver compiled in.
 tauri-plugin-sql = { version = "2.5.0", features = ["sqlite"] }
 log = "0.4"

@@ -1,5 +1,5 @@
 /**
- * {@link AccountSource} returning a fixed account, for tests and the development builds.
+ * {@link AccountSource} returning a fixed account, for tests.
  *
  * @packageDocumentation
  */

@@ -6,13 +6,24 @@
     "label": "Main navigation",
     "dashboard": "Dashboard",
     "matches": "Matches",
-    "settings": "Settings"
+    "settings": "Settings",
+    "account": "Steam account: {{name}}"
   },
   "dashboard": {
     "title": "Dashboard",
-    "empty": {
-      "title": "No data yet",
-      "description": "Link your Steam account in Settings to start tracking your Paige matches."
+    "loading": "Loading…",
+    "invitation": {
+      "title": "Link your Steam account",
+      "description": "Link your Steam account so TheLibrary can analyse your matches."
+    },
+    "stats": {
+      "title": "{{hero}}, last {{days}} days",
+      "scope": "Normal-mode matches, unranked and ranked.",
+      "matches": "Matches played",
+      "wins": "Wins",
+      "winRate": "Win rate",
+      "kda": "Average K / D / A",
+      "empty": "No match in this period."
     }
   },
   "matches": {
@@ -87,10 +98,51 @@
   },
   "settings": {
     "title": "Settings",
+    "account": {
+      "title": "Steam account",
+      "loading": "Loading…",
+      "linkedOn": "Linked on {{date}}.",
+      "notLinked": "No Steam account is linked."
+    },
     "language": {
       "title": "Language",
       "description": "Choose the language of the interface.",
       "saving": "Saving…"
+    }
+  },
+  "account": {
+    "placeholderName": "Steam player",
+    "link": {
+      "button": "Link my Steam account",
+      "title": "Link your Steam account",
+      "explanation": "Steam's sign-in page opens in your browser. Steam will show the site as 127.0.0.1: that is TheLibrary on this PC. TheLibrary never sees your password.",
+      "continue": "Continue",
+      "cancel": "Cancel",
+      "close": "Close",
+      "retry": "Try again",
+      "waiting": "Waiting for Steam in your browser…",
+      "outcome": {
+        "cancelled": "Sign-in cancelled.",
+        "timed_out": "Sign-in timed out.",
+        "cancelled_on_steam": "Sign-in cancelled on Steam.",
+        "refused": "Steam did not confirm this sign-in. Try again.",
+        "steam_unavailable": "Steam is unavailable right now. Try again later.",
+        "start_failed": "The sign-in could not start.",
+        "already_linked": "This account is already linked."
+      }
+    },
+    "switch": {
+      "button": "Use another Steam account",
+      "warning": "Linking another account deletes all the data of {{name}} on this PC: its matches, archived details and history."
+    },
+    "unlink": {
+      "button": "Unlink",
+      "title": "Unlink {{name}}?",
+      "warning": "All their data on this PC will be deleted: matches, archived details and history. This cannot be undone.",
+      "confirm": "Unlink and delete",
+      "running": "Deleting…",
+      "done": "Account unlinked.",
+      "incomplete": "Some files could not be removed yet; TheLibrary will finish at its next start."
     }
   },
   "language": {

@@ -24,7 +24,7 @@ import {
   type TestServicesOptions,
 } from '../../../test/create-test-services';
 import { matchSummary } from '../../../test/test-data';
-import { clickSyncNow } from '../../../test/user-actions';
+import { clickSyncNow, waitUntilIdle } from '../../../test/user-actions';
 import { AppProviders } from '../../app/AppProviders';
 import { createAppRouter } from '../../app/router';
 import { createI18n } from '../../i18n/i18n';
@@ -45,6 +45,13 @@ const MATCH_COUNT = 12;
  * Paige matches whose detail it has: {@link expectedDetailRows} checks that the history offers both.
  */
 const DETAIL_MATCH_COUNT = 14;
+
+/**
+ * How long a test waits for a link to show its matches, in milliseconds. A link is a chain of
+ * services (the listener, Steam, the profile, the database, then the first synchronisation), not a
+ * single read: the default of Testing Library (one second) is too tight for a busy machine.
+ */
+const LINK_WAIT_MS = 4_000;
 
 /** The labels the Detail column gives to a Paige match, in the language of the interface. */
 interface DetailLabels {
@@ -215,6 +222,42 @@ describe('MatchesPage', () => {
       await screen.findByRole('heading', { level: 2, name: 'No account linked' }),
     ).toBeInTheDocument();
     expect(http.requests).toEqual([]);
+  });
+
+  it('links an account from the empty match list', async () => {
+    const user = userEvent.setup();
+    const { services } = await renderMatchesPage({
+      accountId: null,
+      handler: createFixtureApi({ now: NOW, matchCount: MATCH_COUNT }),
+    });
+    expect(
+      await screen.findByRole('heading', { level: 2, name: 'No account linked' }),
+    ).toBeInTheDocument();
+
+    // The real button, in the empty state: the dialog explains, then Steam answers on Continue. The
+    // sidebar has a button of the same name, so the one of the page is looked for in the page
+    // content only.
+    await user.click(
+      within(screen.getByRole('main')).getByRole('button', { name: 'Link my Steam account' }),
+    );
+    await user.click(await screen.findByRole('button', { name: 'Continue' }));
+
+    // The link starts the first synchronisation: the list shows the matches of the fixtures once
+    // it has stored them, and the empty state is gone.
+    const table = await screen.findByRole(
+      'table',
+      { name: 'Most recent matches' },
+      { timeout: LINK_WAIT_MS },
+    );
+    expect(readDetailRows(table).map((row) => row.matchId)).toEqual(
+      createMatchHistoryFixture({ now: NOW, count: MATCH_COUNT }).map((row) => row.match_id),
+    );
+    expect(
+      screen.queryByRole('heading', { level: 2, name: 'No account linked' }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Link my Steam account' })).not.toBeInTheDocument();
+    // The test must not end under the background work of the link (the detail queue).
+    await waitUntilIdle(services.sync, LINK_WAIT_MS);
   });
 
   it('shows an empty history before the first synchronisation', async () => {

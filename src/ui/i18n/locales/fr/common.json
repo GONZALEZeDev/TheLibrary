@@ -6,13 +6,24 @@
     "label": "Navigation principale",
     "dashboard": "Tableau de bord",
     "matches": "Parties",
-    "settings": "Réglages"
+    "settings": "Réglages",
+    "account": "Compte Steam : {{name}}"
   },
   "dashboard": {
     "title": "Tableau de bord",
-    "empty": {
-      "title": "Pas encore de données",
-      "description": "Lie ton compte Steam dans les Réglages pour commencer à suivre tes parties Paige."
+    "loading": "Chargement…",
+    "invitation": {
+      "title": "Lier ton compte Steam",
+      "description": "Lier ton compte Steam permet à TheLibrary d'analyser tes parties."
+    },
+    "stats": {
+      "title": "{{hero}}, {{days}} derniers jours",
+      "scope": "Parties en mode normal, classées ou non.",
+      "matches": "Parties jouées",
+      "wins": "Victoires",
+      "winRate": "Taux de victoire",
+      "kda": "K / D / A moyen",
+      "empty": "Aucune partie sur cette période."
     }
   },
   "matches": {
@@ -87,10 +98,51 @@
   },
   "settings": {
     "title": "Réglages",
+    "account": {
+      "title": "Compte Steam",
+      "loading": "Chargement…",
+      "linkedOn": "Lié le {{date}}.",
+      "notLinked": "Aucun compte Steam n'est lié."
+    },
     "language": {
       "title": "Langue",
       "description": "Choisis la langue de l'interface.",
       "saving": "Enregistrement…"
+    }
+  },
+  "account": {
+    "placeholderName": "Joueur Steam",
+    "link": {
+      "button": "Lier mon compte Steam",
+      "title": "Lier ton compte Steam",
+      "explanation": "La page de connexion de Steam s'ouvre dans ton navigateur. Steam affichera le site « 127.0.0.1 » : c'est TheLibrary sur ce PC. TheLibrary ne voit jamais ton mot de passe.",
+      "continue": "Continuer",
+      "cancel": "Annuler",
+      "close": "Fermer",
+      "retry": "Réessayer",
+      "waiting": "En attente de Steam dans ton navigateur…",
+      "outcome": {
+        "cancelled": "Connexion annulée.",
+        "timed_out": "La connexion a expiré.",
+        "cancelled_on_steam": "Connexion annulée sur Steam.",
+        "refused": "Steam n'a pas confirmé cette connexion. Réessaie.",
+        "steam_unavailable": "Steam est indisponible pour le moment. Réessaie plus tard.",
+        "start_failed": "La connexion n'a pas pu démarrer.",
+        "already_linked": "Ce compte est déjà lié."
+      }
+    },
+    "switch": {
+      "button": "Utiliser un autre compte Steam",
+      "warning": "Lier un autre compte supprime toutes les données de {{name}} sur ce PC : ses parties, ses détails archivés et son historique."
+    },
+    "unlink": {
+      "button": "Délier",
+      "title": "Délier {{name}} ?",
+      "warning": "Toutes ses données sur ce PC seront supprimées : parties, détails archivés et historique. C'est définitif.",
+      "confirm": "Délier et supprimer",
+      "running": "Suppression…",
+      "done": "Compte délié.",
+      "incomplete": "Certains fichiers n'ont pas encore pu être supprimés ; TheLibrary terminera au prochain démarrage."
     }
   },
   "language": {

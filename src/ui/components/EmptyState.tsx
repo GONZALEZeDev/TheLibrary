@@ -5,6 +5,7 @@
  * @packageDocumentation
  */
 import type { LucideIcon } from 'lucide-react';
+import type { ReactNode } from 'react';
 
 /** Props of {@link EmptyState}. */
 export interface EmptyStateProps {
@@ -14,6 +15,8 @@ export interface EmptyStateProps {
   readonly title: string;
   /** One or two sentences explaining what will appear here, or what to do. */
   readonly description: string;
+  /** Optional action (typically a button) rendered below the description. */
+  readonly children?: ReactNode;
 }
 
 /**
@@ -21,12 +24,14 @@ export interface EmptyStateProps {
  *
  * @returns The empty-state block.
  */
-export function EmptyState({ icon: Icon, title, description }: EmptyStateProps) {
+export function EmptyState({ icon: Icon, title, description, children }: EmptyStateProps) {
   return (
     <div className="flex flex-col items-center rounded-xl border border-dashed border-border bg-surface px-8 py-16 text-center">
       <Icon aria-hidden="true" className="mb-4 size-10 text-accent-bright" />
       <h2 className="text-lg font-medium">{title}</h2>
       <p className="mt-2 max-w-md text-sm text-fg-muted">{description}</p>
+      {/* A falsy child (`cond && <Button />`) must not leave an empty, margin-only wrapper. */}
+      {children ? <div className="mt-6">{children}</div> : null}
     </div>
   );
 }

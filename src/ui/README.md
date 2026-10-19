@@ -2,13 +2,13 @@
 
 ## Structure
 
-| Folder                | Purpose                                                                             |
-| --------------------- | ----------------------------------------------------------------------------------- |
-| `app/`                | App shell, router, providers, query client, route error screen                      |
-| `features/<feature>/` | Screens of one feature (dashboard, matches, match-detail, settings) and their hooks |
-| `components/`         | Shared presentational components                                                    |
-| `i18n/`               | i18next setup and the `en`/`fr` catalogues                                          |
-| `theme/`              | `theme.css` only (design tokens); Inter comes from `@fontsource-variable/inter`     |
+| Folder                | Purpose                                                                                                     |
+| --------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `app/`                | App shell, router, providers, query client, route error screen                                              |
+| `features/<feature>/` | Screens and components of one feature (account, dashboard, matches, match-detail, settings) and their hooks |
+| `components/`         | Shared presentational components, the shared button styles and the focus helper                             |
+| `i18n/`               | i18next setup and the `en`/`fr` catalogues                                                                  |
+| `theme/`              | `theme.css` only (design tokens); Inter comes from `@fontsource-variable/inter`                             |
 
 ## Rules
 

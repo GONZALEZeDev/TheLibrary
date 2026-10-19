@@ -1,6 +1,6 @@
 /**
- * TanStack Query hooks of the match history screen: the stored matches, the hero names and the
- * state of the synchronisation.
+ * TanStack Query hooks of the match history screen and the dashboard: the stored matches, the
+ * numbers of a period, the hero names and the state of the synchronisation.
  *
  * Every query goes through a service and reads local data, except the hero names, downloaded only
  * when their weekly cache is stale: they work offline. Query keys never contain an account id: the
@@ -11,6 +11,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useSyncExternalStore } from 'react';
 import type { Hero, HeroId } from '../../../core/domain/hero';
+import type { Period } from '../../../core/domain/period';
 import { useServices } from '../../app/ServicesContext';
 
 /** Number of matches shown in the list. */
@@ -29,7 +30,13 @@ export const DETAILS_QUERY_KEY = ['details'] as const;
 export const DETAILS_SUMMARY_QUERY_KEY = [...DETAILS_QUERY_KEY, 'summary'] as const;
 
 /** Prefix of every query about the synchronisation. */
-const SYNC_QUERY_KEY = ['sync'] as const;
+export const SYNC_QUERY_KEY = ['sync'] as const;
+
+/**
+ * Key of the query that reads the hero catalogue. Without an account the catalogue is empty (the app
+ * contacts nobody), so an account change must read it again: see `resetAccountData`.
+ */
+export const HEROES_QUERY_KEY = ['heroes'] as const;
 
 /**
  * Shortest time between two refreshes caused by the progress of the detail queue. The queue
@@ -49,6 +56,24 @@ export function useRecentMatches() {
   return useQuery({
     queryKey: [...MATCHES_QUERY_KEY, 'recent'],
     queryFn: () => matches.listRecent(RECENT_MATCHES_LIMIT),
+  });
+}
+
+/**
+ * The numbers of a hero over a period, for the dashboard tiles.
+ *
+ * The key sits under {@link MATCHES_QUERY_KEY}, so whatever refreshes the matches (a
+ * synchronisation, the detail queue, an account change) refreshes the tiles too.
+ *
+ * @param period - The period to sum up.
+ * @param heroId - The hero.
+ * @returns The TanStack Query result holding the summary: `no_account`, `empty` or the `stats`.
+ */
+export function usePeriodSummary(period: Period, heroId: HeroId) {
+  const { matches } = useServices();
+  return useQuery({
+    queryKey: [...MATCHES_QUERY_KEY, 'period', period, heroId],
+    queryFn: () => matches.getPeriodSummary(period, heroId),
   });
 }
 
@@ -74,7 +99,7 @@ function namesById(heroes: readonly Hero[]): ReadonlyMap<HeroId, string> {
 export function useHeroNames(enabled: boolean) {
   const { heroes } = useServices();
   return useQuery({
-    queryKey: ['heroes'],
+    queryKey: HEROES_QUERY_KEY,
     queryFn: () => heroes.getHeroes(),
     enabled,
     select: namesById,

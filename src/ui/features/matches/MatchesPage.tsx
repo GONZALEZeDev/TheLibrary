@@ -13,6 +13,7 @@ import type { HeroId } from '../../../core/domain/hero';
 import { toAppError } from '../../../core/errors/app-error';
 import { EmptyState } from '../../components/EmptyState';
 import { PageHeader } from '../../components/PageHeader';
+import { LinkAccountButton } from '../account/LinkAccountButton';
 import { MatchesTable } from './MatchesTable';
 import { SyncBanner } from './SyncBanner';
 import { useHeroNames, useRecentMatches } from './use-matches';
@@ -47,12 +48,16 @@ function renderList(
   }
   const { accountLinked, total, matches } = recent.data;
   if (!accountLinked) {
+    // A new player can link from wherever they land: the link resets this query, so the list is
+    // replaced by the matches the first synchronisation brings.
     return (
       <EmptyState
         icon={UserRound}
         title={t('matches.noAccount.title')}
         description={t('matches.noAccount.description')}
-      />
+      >
+        <LinkAccountButton />
+      </EmptyState>
     );
   }
   if (total === 0) {

@@ -1,6 +1,6 @@
 /**
- * Settings screen. Milestone M1 only has the language section; the account, sync,
- * storage, diagnostics and about sections arrive with their features.
+ * Settings screen: one card per setting, the linked Steam account (see {@link AccountSection}) and
+ * the language of the interface.
  *
  * @packageDocumentation
  */
@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next';
 import { toAppError } from '../../../core/errors/app-error';
 import { FALLBACK_LANGUAGE, isLanguage } from '../../../core/settings/language';
 import { PageHeader } from '../../components/PageHeader';
+import { AccountSection } from './AccountSection';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { useChangeLanguage, useSettings } from './use-settings';
 
@@ -33,34 +34,37 @@ export function SettingsPage() {
   return (
     <>
       <PageHeader title={t('settings.title')} />
-      <section
-        aria-labelledby={languageHeadingId}
-        className="rounded-xl border border-border bg-surface p-6"
-      >
-        <h2 id={languageHeadingId} className="text-base font-medium">
-          {t('settings.language.title')}
-        </h2>
-        <p className="mt-1 text-sm text-fg-muted">{t('settings.language.description')}</p>
-        <div className="mt-4 flex items-center gap-3">
-          <LanguageSwitcher
-            value={selectedLanguage}
-            onChange={(language) => {
-              // One save at a time: a pick made while a choice is being saved is ignored.
-              if (!changeLanguage.isPending) {
-                changeLanguage.mutate(language);
-              }
-            }}
-          />
-          {changeLanguage.isPending && (
-            <span className="text-sm text-fg-muted">{t('settings.language.saving')}</span>
+      <div className="space-y-6">
+        <AccountSection />
+        <section
+          aria-labelledby={languageHeadingId}
+          className="rounded-xl border border-border bg-surface p-6"
+        >
+          <h2 id={languageHeadingId} className="text-base font-medium">
+            {t('settings.language.title')}
+          </h2>
+          <p className="mt-1 text-sm text-fg-muted">{t('settings.language.description')}</p>
+          <div className="mt-4 flex items-center gap-3">
+            <LanguageSwitcher
+              value={selectedLanguage}
+              onChange={(language) => {
+                // One save at a time: a pick made while a choice is being saved is ignored.
+                if (!changeLanguage.isPending) {
+                  changeLanguage.mutate(language);
+                }
+              }}
+            />
+            {changeLanguage.isPending && (
+              <span className="text-sm text-fg-muted">{t('settings.language.saving')}</span>
+            )}
+          </div>
+          {changeLanguage.isError && (
+            <p role="alert" className="mt-3 text-sm text-loss">
+              {t(`errors.kind.${toAppError(changeLanguage.error).kind}`)}
+            </p>
           )}
-        </div>
-        {changeLanguage.isError && (
-          <p role="alert" className="mt-3 text-sm text-loss">
-            {t(`errors.kind.${toAppError(changeLanguage.error).kind}`)}
-          </p>
-        )}
-      </section>
+        </section>
+      </div>
     </>
   );
 }

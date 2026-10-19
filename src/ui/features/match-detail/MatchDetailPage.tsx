@@ -23,6 +23,7 @@ import type { ArchiveFacts } from '../../../core/match-detail/archive-facts';
 import type { MatchDetailView } from '../../../services/match-detail.service';
 import { EmptyState } from '../../components/EmptyState';
 import { PageHeader } from '../../components/PageHeader';
+import { LinkAccountButton } from '../account/LinkAccountButton';
 import { formatDuration } from '../matches/MatchesTable';
 import { useRefreshOnSync, useSyncRunning } from '../matches/use-matches';
 import { useMatchDetail, useRetryDetail } from './use-match-detail';
@@ -151,13 +152,16 @@ function renderView(view: MatchDetailView, t: TFunction, format: Formatters, ret
     case 'ready':
       return renderFacts(view.facts, view.archivedBytes, t, format);
     case 'no_account':
-      // Said like the matches page says it: there is no match without an account.
+      // Said like the matches page says it: there is no match without an account. The player can
+      // link one from here, as from the matches page.
       return (
         <EmptyState
           icon={UserRound}
           title={t('matches.noAccount.title')}
           description={t('matches.noAccount.description')}
-        />
+        >
+          <LinkAccountButton />
+        </EmptyState>
       );
     case 'not_eligible':
       return renderExplanation([t('matchDetail.notEligible')]);

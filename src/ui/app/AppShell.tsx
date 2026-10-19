@@ -1,12 +1,13 @@
 /**
- * Application frame: a fixed sidebar with the two tabs and the settings, and the area
- * where the active page renders.
+ * Application frame: a fixed sidebar with the two tabs, the settings and the linked Steam account,
+ * and the area where the active page renders.
  *
  * @packageDocumentation
  */
 import { Link, Outlet } from '@tanstack/react-router';
 import { BookOpen, History, LayoutDashboard, Settings } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { SidebarAccount } from '../features/account/SidebarAccount';
 
 /**
  * Look of the sidebar links, spread on each `<Link>`. Colours are set only in the active and
@@ -56,6 +57,8 @@ export function AppShell() {
             {t('nav.settings')}
           </Link>
         </nav>
+        {/* The account closes the sidebar, under the navigation whose last link is the settings. */}
+        <SidebarAccount />
       </aside>
       <main className="flex-1 overflow-y-auto px-10 py-8">
         <Outlet />

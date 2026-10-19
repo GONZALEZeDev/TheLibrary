@@ -13,7 +13,7 @@
  */
 import type { QueryClient } from '@tanstack/react-query';
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -475,6 +475,26 @@ describe('MatchDetailPage', () => {
       await screen.findByRole('heading', { level: 2, name: 'No account linked' }),
     ).toBeInTheDocument();
     expect(screen.queryByRole('term')).not.toBeInTheDocument();
+    expect(testServices.http.requests).toEqual([]);
+  });
+
+  it('offers to link an account from a match page without an account', async () => {
+    const user = userEvent.setup();
+    const testServices = createTestServices({ now: () => NOW, accountId: null });
+
+    await renderMatchDetail(ARCHIVED_ID, testServices);
+
+    expect(
+      await screen.findByRole('heading', { level: 2, name: 'No account linked' }),
+    ).toBeInTheDocument();
+    // The button is the real one: it opens the dialog of the sign-in, which starts nothing until the
+    // player goes on. The sidebar has a button of the same name, so the one of the page is looked for
+    // in the page content only.
+    await user.click(
+      within(screen.getByRole('main')).getByRole('button', { name: 'Link my Steam account' }),
+    );
+    expect(await screen.findByRole('dialog', { name: 'Link your Steam account' })).toBeVisible();
+    expect(testServices.signInGateway.openedUrls).toEqual([]);
     expect(testServices.http.requests).toEqual([]);
   });
 

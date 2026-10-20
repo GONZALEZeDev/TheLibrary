@@ -3,7 +3,7 @@
  *
  * `create-app-services.ts` builds this object from the adapters of the current environment; the UI
  * receives it through React context (`ui/app/ServicesContext.tsx`) and never builds services or
- * adapters itself. It grows milestone by milestone (analysis…).
+ * adapters itself. Every service the UI needs is a member of this object.
  *
  * @packageDocumentation
  */

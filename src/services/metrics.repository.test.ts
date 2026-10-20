@@ -580,6 +580,236 @@ describe('MetricsRepository', () => {
     });
   });
 
+  describe('listToProjectUpTo', () => {
+    /**
+     * Seed the matches and the projections the tests of the projection on demand read; the match to
+     * analyse is #7. Its window of earlier archived matches is #5, #3, #2, #11, #10 and #1, from the
+     * most recent, and of those #5, #2, #11, #10 and #1 need a projection, in that order.
+     *
+     * @param database - The database.
+     */
+    async function seedHistory(database: Database): Promise<void> {
+      await seedMatches(database, [
+        { n: 1, startTime: 1_000 }, // never projected: needs one
+        { n: 2, startTime: 2_000 }, // projected with an old version: needs one
+        { n: 3, startTime: 3_000 }, // projected with the version: in the window, done
+        { n: 4, startTime: 3_500 }, // failed with the version: not in the window, not retried
+        { n: 5, startTime: 3_600 }, // failed with an old version: needs one
+        { n: 6, startTime: 4_000, detailStatus: 'pending' }, // detail not archived: not in the window
+        { n: 7, startTime: 5_000 }, // the match to analyse
+        { n: 8, startTime: 5_000 }, // same start time as the match: not earlier
+        { n: 9, startTime: 6_000 }, // later than the match
+        { n: 10, startTime: 1_500 },
+        { n: 11, startTime: 1_500 }, // same start time as match 10: the higher id comes first
+        { n: 1, accountId: OTHER_ACCOUNT_ID, startTime: 500 }, // another account: left out
+        { n: 2, accountId: OTHER_ACCOUNT_ID, startTime: 600 },
+      ]);
+      const repository = new MetricsRepository(database);
+      const save = (n: number, record: ProjectionRecord) =>
+        repository.saveProjection(ACCOUNT_ID, matchId(n), record, new Map());
+      await save(2, projection({ version: 0 }));
+      await save(3, projection());
+      await save(4, projection({ failed: true }));
+      await save(5, projection({ version: 0, failed: true }));
+    }
+
+    it('lists the match first, then the earlier ones that need a projection, most recent first', async () => {
+      const database = createTestDatabase();
+      await seedHistory(database);
+      const repository = new MetricsRepository(database);
+
+      await expect(
+        repository.listToProjectUpTo(ACCOUNT_ID, matchId(7), VERSION, 10),
+      ).resolves.toEqual([
+        matchId(7),
+        matchId(5),
+        matchId(2),
+        matchId(11),
+        matchId(10),
+        matchId(1),
+      ]);
+    });
+
+    it.each([
+      // The window is the `limit` most recent earlier archived matches, whatever their projection:
+      // #3 is projected, and still uses up a place of it. #4 failed with the version, as `listPrevious`
+      // sees it, so it is not in the window: with a limit of 3 the window is #5, #3 and #2.
+      { limit: 1, expected: [7, 5] },
+      { limit: 2, expected: [7, 5] },
+      { limit: 3, expected: [7, 5, 2] },
+      { limit: 4, expected: [7, 5, 2, 11] },
+      { limit: 5, expected: [7, 5, 2, 11, 10] },
+      { limit: 6, expected: [7, 5, 2, 11, 10, 1] },
+      // A window larger than the history reaches every earlier archived match, and no more.
+      { limit: 500, expected: [7, 5, 2, 11, 10, 1] },
+    ])('lists the match and the window of $limit earlier matches', async ({ limit, expected }) => {
+      const database = createTestDatabase();
+      await seedHistory(database);
+      const repository = new MetricsRepository(database);
+
+      await expect(
+        repository.listToProjectUpTo(ACCOUNT_ID, matchId(7), VERSION, limit),
+      ).resolves.toEqual(expected.map(matchId));
+    });
+
+    it('lists nothing more when the matches it listed are projected, instead of going further back', async () => {
+      const database = createTestDatabase();
+      await seedHistory(database);
+      const repository = new MetricsRepository(database);
+      const listed = await repository.listToProjectUpTo(ACCOUNT_ID, matchId(7), VERSION, 3);
+      expect(listed).toEqual([matchId(7), matchId(5), matchId(2)]);
+      for (const id of listed) {
+        await repository.saveProjection(ACCOUNT_ID, id, projection(), new Map());
+      }
+
+      // #11, #10 and #1 still need a projection, but they are not in the window of #7.
+      await expect(
+        repository.listToProjectUpTo(ACCOUNT_ID, matchId(7), VERSION, 3),
+      ).resolves.toEqual([]);
+    });
+
+    it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+      'lists only the match itself for a limit of %s',
+      async (limit) => {
+        const database = createTestDatabase();
+        await seedHistory(database);
+        const repository = new MetricsRepository(database);
+
+        // A negative limit means "no limit" to SQLite: it must not list the whole history.
+        await expect(
+          repository.listToProjectUpTo(ACCOUNT_ID, matchId(7), VERSION, limit),
+        ).resolves.toEqual([matchId(7)]);
+        // And nothing at all when the match does not need a projection either.
+        await expect(
+          repository.listToProjectUpTo(ACCOUNT_ID, matchId(3), VERSION, limit),
+        ).resolves.toEqual([]);
+      },
+    );
+
+    it('leaves the match out when it is projected with the version or failed with it', async () => {
+      const database = createTestDatabase();
+      await seedHistory(database);
+      const repository = new MetricsRepository(database);
+      await repository.saveProjection(ACCOUNT_ID, matchId(7), projection(), new Map());
+
+      await expect(
+        repository.listToProjectUpTo(ACCOUNT_ID, matchId(7), VERSION, 10),
+      ).resolves.toEqual([matchId(5), matchId(2), matchId(11), matchId(10), matchId(1)]);
+
+      await repository.saveProjection(
+        ACCOUNT_ID,
+        matchId(7),
+        projection({ failed: true }),
+        new Map(),
+      );
+
+      await expect(
+        repository.listToProjectUpTo(ACCOUNT_ID, matchId(7), VERSION, 10),
+      ).resolves.toEqual([matchId(5), matchId(2), matchId(11), matchId(10), matchId(1)]);
+      // A newer version of the projection asks for all of it again.
+      await expect(
+        repository.listToProjectUpTo(ACCOUNT_ID, matchId(7), VERSION + 1, 10),
+      ).resolves.toEqual([
+        matchId(7),
+        matchId(5),
+        matchId(4),
+        matchId(3),
+        matchId(2),
+        matchId(11),
+        matchId(10),
+        matchId(1),
+      ]);
+    });
+
+    it('lists the window of the projected matches as the habits read it', async () => {
+      const database = createTestDatabase();
+      await seedHistory(database);
+      const repository = new MetricsRepository(database);
+
+      const listed = await repository.listToProjectUpTo(ACCOUNT_ID, matchId(7), VERSION, 4);
+      for (const id of listed) {
+        await repository.saveProjection(ACCOUNT_ID, id, projection(), new Map());
+      }
+
+      // Everything the call listed is now a previous match of #7, and nothing else is: the window
+      // of the projection is the window of the habits.
+      const previous = await repository.listPrevious(ACCOUNT_ID, matchId(7), VERSION, 4);
+      expect(previous.map((match) => match.matchId)).toEqual([
+        matchId(5),
+        matchId(3),
+        matchId(2),
+        matchId(11),
+      ]);
+      expect(listed.slice(1)).toEqual([matchId(5), matchId(2), matchId(11)]);
+    });
+
+    it('lists nothing for a match whose detail is not archived', async () => {
+      const database = createTestDatabase();
+      await seedHistory(database);
+      const repository = new MetricsRepository(database);
+
+      // #6 is `pending`: neither the match nor its earlier ones are listed, whatever the limit.
+      await expect(
+        repository.listToProjectUpTo(ACCOUNT_ID, matchId(6), VERSION, 10),
+      ).resolves.toEqual([]);
+      await expect(
+        repository.listToProjectUpTo(ACCOUNT_ID, matchId(6), VERSION, 0),
+      ).resolves.toEqual([]);
+    });
+
+    it('lists nothing for a match that is not stored', async () => {
+      const database = createTestDatabase();
+      await seedHistory(database);
+      const repository = new MetricsRepository(database);
+
+      await expect(
+        repository.listToProjectUpTo(ACCOUNT_ID, matchId(500), VERSION, 10),
+      ).resolves.toEqual([]);
+    });
+
+    it('keeps the matches of each account apart', async () => {
+      const database = createTestDatabase();
+      await seedHistory(database);
+      const repository = new MetricsRepository(database);
+
+      // The match of one account is no match of the other, and each one sees its own earlier ones.
+      await expect(
+        repository.listToProjectUpTo(OTHER_ACCOUNT_ID, matchId(7), VERSION, 10),
+      ).resolves.toEqual([]);
+      await expect(
+        repository.listToProjectUpTo(OTHER_ACCOUNT_ID, matchId(2), VERSION, 10),
+      ).resolves.toEqual([matchId(2), matchId(1)]);
+      await expect(
+        repository.listToProjectUpTo(ACCOUNT_ID, matchId(2), VERSION, 10),
+      ).resolves.toEqual([matchId(2), matchId(11), matchId(10), matchId(1)]);
+
+      // The other account projects the same two match ids (#2 and #1, which both accounts hold): that
+      // says nothing about the matches of ACCOUNT_ID, in the match itself or in its window.
+      for (const n of [1, 2]) {
+        await repository.saveProjection(OTHER_ACCOUNT_ID, matchId(n), projection(), new Map());
+      }
+      await expect(
+        repository.listToProjectUpTo(OTHER_ACCOUNT_ID, matchId(2), VERSION, 10),
+      ).resolves.toEqual([]);
+      await expect(
+        repository.listToProjectUpTo(ACCOUNT_ID, matchId(2), VERSION, 10),
+      ).resolves.toEqual([matchId(2), matchId(11), matchId(10), matchId(1)]);
+    });
+
+    it('asks the database for the earlier matches only when the limit allows some', async () => {
+      const database = createTestDatabase();
+      await seedHistory(database);
+      const recorder = recordStatements(database);
+      const repository = new MetricsRepository(recorder.database);
+
+      await repository.listToProjectUpTo(ACCOUNT_ID, matchId(7), VERSION, 0);
+      expect(recorder.statements).toHaveLength(1);
+
+      await repository.listToProjectUpTo(ACCOUNT_ID, matchId(7), VERSION, 5);
+      expect(recorder.statements).toHaveLength(3);
+    });
+  });
+
   describe('listPrevious', () => {
     /**
      * Seed the matches and the projections the tests of the previous matches read; the match under
@@ -827,6 +1057,48 @@ describe('MetricsRepository', () => {
       ).rejects.toMatchObject({ kind: 'storage', context: { field: 'match_id' } });
     });
 
+    it('reports a damaged match id of the match to project as a storage error', async () => {
+      const repository = new MetricsRepository(answering([{ match_id: -5 }]));
+
+      // With a limit that allows no earlier match, the first statement is the only one.
+      await expect(
+        repository.listToProjectUpTo(ACCOUNT_ID, matchId(0), VERSION, 0),
+      ).rejects.toMatchObject({ kind: 'storage', context: { field: 'match_id' } });
+    });
+
+    it('reports a damaged match id of the earlier matches to project as a storage error', async () => {
+      // The first statement (the match itself) answers no row; only the second one is damaged.
+      let calls = 0;
+      const damagedSecond: Database = {
+        execute: () => Promise.resolve(0),
+        select: () => {
+          calls += 1;
+          return Promise.resolve(calls === 1 ? [] : [{ match_id: -5 }]);
+        },
+      };
+
+      await expect(
+        new MetricsRepository(damagedSecond).listToProjectUpTo(ACCOUNT_ID, matchId(0), VERSION, 5),
+      ).rejects.toMatchObject({ kind: 'storage', context: { field: 'match_id' } });
+      expect(calls).toBe(2);
+    });
+
+    it('reports a failure of the query of the earlier matches to project as a storage error', async () => {
+      let calls = 0;
+      const failingSecond: Database = {
+        execute: () => Promise.resolve(0),
+        select: () => {
+          calls += 1;
+          return calls === 1 ? Promise.resolve([]) : Promise.reject(new Error('disk I/O error'));
+        },
+      };
+
+      await expect(
+        new MetricsRepository(failingSecond).listToProjectUpTo(ACCOUNT_ID, matchId(0), VERSION, 5),
+      ).rejects.toMatchObject({ kind: 'storage', cause: new Error('disk I/O error') });
+      expect(calls).toBe(2);
+    });
+
     it('reports an unexpected count as a storage error', async () => {
       const repository = new MetricsRepository(answering([{ total: -1 }]));
 
@@ -846,6 +1118,7 @@ describe('MetricsRepository', () => {
         () =>
           repository.saveProjection(ACCOUNT_ID, matchId(0), projection(), metricValues({ a: 1 })),
         () => repository.listToProject(ACCOUNT_ID, VERSION),
+        () => repository.listToProjectUpTo(ACCOUNT_ID, matchId(0), VERSION, 5),
         () => repository.getProjection(ACCOUNT_ID, matchId(0)),
         () => repository.getValues(ACCOUNT_ID, matchId(0)),
         () => repository.listPrevious(ACCOUNT_ID, matchId(0), VERSION, 5),
@@ -931,15 +1204,15 @@ describe('MetricsRepository', () => {
         (account_id, match_id, projection_version, player_badge, has_leaver, failed, projected_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7)`;
 
-      await database.execute(insert, [ACCOUNT_ID, 1, 1, null, 0, 0, 0]);
-      await database.execute(insert, [ACCOUNT_ID, 2, 1, 1, 0, 0, 0]);
-      await database.execute(insert, [ACCOUNT_ID, 3, 1, 116, 1, 1, 0]);
+      await database.execute(insert, [ACCOUNT_ID, matchId(1), 1, null, 0, 0, 0]);
+      await database.execute(insert, [ACCOUNT_ID, matchId(2), 1, 1, 0, 0, 0]);
+      await database.execute(insert, [ACCOUNT_ID, matchId(3), 1, 116, 1, 1, 0]);
 
       for (const bad of [
-        [4, 0, 0, 0], // badge 0 is "no rank known": the projection stores NULL instead
-        [5, 117, 0, 0],
-        [6, 65, 2, 0], // a boolean is 0 or 1
-        [7, 65, 0, 2],
+        [matchId(4), 0, 0, 0], // badge 0 is "no rank known": the projection stores NULL instead
+        [matchId(5), 117, 0, 0],
+        [matchId(6), 65, 2, 0], // a boolean is 0 or 1
+        [matchId(7), 65, 0, 2],
       ] as const) {
         const [match, badge, hasLeaver, failed] = bad;
         await expect(

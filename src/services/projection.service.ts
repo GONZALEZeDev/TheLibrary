@@ -1,13 +1,26 @@
 /**
- * The projection: turns every archived match into the metric values the analysis stores, so that the
+ * The projection: turns archived matches into the metric values the analysis stores, so that the
  * pages never read an archive to compare a match.
  *
  * Analysing a match starts from its archive, a large compressed file. The projection reads each
  * archive once, runs the metrics of the registry on it (`../core/analysis/registry`) and keeps the
- * values in the database (`./metrics.repository`). It is a catch-up: it works on the matches whose
- * detail is archived and that have no projection of the current version, which is every new match
- * after a synchronisation, and every match after the version changes (the archives are on the disk
- * already, so a new version needs no network). A synchronisation runs it after the detail queue.
+ * values in the database (`./metrics.repository`). It works on the matches whose detail is archived
+ * and that have no projection of the current version, which is every new match, and every match
+ * after the version changes (the archives are on the disk already, so a new version needs no
+ * network). There are two ways to ask for it, which share the rules below:
+ * - {@link ProjectionService.catchUp} is for every archived match that lacks a projection, most
+ *   recent first. The synchronisation runs it at the end of each of its runs, so that the matches it
+ *   archived, and every match after a new version, are analysed before their page is opened;
+ * - {@link ProjectionService.projectMatch} is for one match, when its page is opened and finds it
+ *   not analysed yet (before the end of the run that archived it, or after a new version and before
+ *   the next run): it projects the match and the earlier archived matches its habits are made of,
+ *   and nothing else.
+ *
+ * The projections run one at a time, whoever asks: a call made while a projection runs waits for it
+ * to end, then runs. Side by side, two projections would list the same matches and project them
+ * twice, and two saves of one match at once can leave a projection row standing over metrics that
+ * were deleted. A call that waited finds done what the earlier one projected, and projects what is
+ * left. However a projection ends, the next one runs.
  *
  * What a match can end in, and what it costs:
  * - the archive is projected: its values are stored, with the badge of the player, whether somebody
@@ -24,16 +37,19 @@
  *   (`skipped`): the file cannot be read, the compressor or the database fails, or the code has a
  *   bug on this archive. It is told in the log, once, and the run goes on with the next match, so
  *   that one archive that always fails does not keep the others from being projected. The skipped
- *   match is tried again at the next run;
+ *   match still lacks a projection, so the next run that lists it tries it again: the next
+ *   synchronisation, or the next opening of a page whose window holds it (the analysis finds that
+ *   window incomplete, and asks again);
  * - three failures in a row mean that the cause is not one archive but the disk, the compressor or
  *   the database, which would fail the same way on every match: the run stops (`stoppedBy:
  *   'storage'`). Any match that gets through (projected, failed or reset) ends the streak. The
- *   matches already projected stay so, and the next run goes on from there. The list of the matches
- *   to project failing stops the run at once, since there is nothing to go on with.
+ *   matches already projected stay so, and the next run that lists the others goes on from there
+ *   (the next synchronisation, or the next opening of a page). The list of the matches to project
+ *   failing stops the run at once, since there is nothing to go on with.
  *
  * A run never throws: what went wrong is in its report and in the log. Between two matches it gives
  * the event loop a turn, so that the compression of the archives and the metrics, which run on the
- * thread of the interface, do not freeze it for the whole catch-up.
+ * thread of the interface, do not freeze it for the whole run.
  *
  * The log never holds an account id, a value of an archive or the message of the error of a metric,
  * which could quote one: a line holds the match, the key of the metric, and the kind of the failure
@@ -41,13 +57,14 @@
  *
  * @packageDocumentation
  */
+import { PERSONAL_WINDOW } from '../core/analysis/insights/thresholds';
 import { buildMatchContext, type MatchContext } from '../core/analysis/match-context';
 import type { MetricKey } from '../core/analysis/metric';
 import { projectMetrics, PROJECTION_VERSION } from '../core/analysis/registry';
 import type { AccountId } from '../core/domain/account';
 import type { MatchId } from '../core/domain/match';
 import { isAppError, toAppError } from '../core/errors/app-error';
-import type { Logger } from '../ports/logger.port';
+import type { LogContext, Logger } from '../ports/logger.port';
 import type { ArchiveReaderService } from './archive-reader.service';
 import type { MatchDetailRepository } from './match-detail.repository';
 import { describeErrorForLog } from './match-detail-verdicts';
@@ -96,6 +113,15 @@ const LOG_SCOPE = 'projection';
  */
 const MAX_CONSECUTIVE_FAILURES = 3;
 
+/** What a run reports when the list of its matches cannot be read: it stops before the first match. */
+const STOPPED_AT_ONCE: ProjectionReport = {
+  projected: 0,
+  failed: 0,
+  reset: 0,
+  skipped: 0,
+  stoppedBy: 'storage',
+};
+
 /** What a run counts as it goes, and the metrics it already told about. */
 interface RunState {
   projected: number;
@@ -111,8 +137,8 @@ interface RunState {
  * which is in a later task, after the events (the clicks, the typing) that are already waiting.
  *
  * It is a message and not a timer because Chromium throttles the timers of a window that is hidden
- * or minimised, down to one per minute, which would stretch a catch-up of a few hundred matches to
- * hours when the app synchronises from the tray. Message events are not throttled.
+ * or minimised, down to one per minute, which would stretch a run of a few hundred matches to hours
+ * while the window is out of sight. Message events are not throttled.
  *
  * @returns A promise resolved when the message is received. The channel is closed by then.
  */
@@ -138,6 +164,12 @@ export class ProjectionService {
   readonly #yieldToEventLoop: () => Promise<void>;
 
   /**
+   * Resolves when every projection asked for so far has ended, whatever way: it never rejects. The
+   * next projection waits for it, which is what makes the projections follow one another.
+   */
+  #tail: Promise<void> = Promise.resolve();
+
+  /**
    * @param dependencies - See {@link ProjectionServiceDependencies}.
    */
   constructor(dependencies: ProjectionServiceDependencies) {
@@ -150,66 +182,163 @@ export class ProjectionService {
   }
 
   /**
-   * Project every archived match that has no projection of the current version, most recent first.
+   * Project every archived match that has no projection of the current version, most recent first:
+   * what the synchronisation runs at the end of each of its runs. It waits for the projection that
+   * is running, if any, then runs (see the module).
    *
    * @param accountId - The tracked account.
-   * @param syncRunId - Id of the synchronisation that runs the projection, to tie the log lines to it.
+   * @param syncRunId - Id of the run that asks for the projection, to tie the log lines to it.
    * @returns How the run went. It never rejects: a failure is in the report (`skipped`, and
    *   `stoppedBy` when it ends the run) and in the log.
    */
-  async catchUp(accountId: AccountId, syncRunId: string): Promise<ProjectionReport> {
+  catchUp(accountId: AccountId, syncRunId: string): Promise<ProjectionReport> {
+    return this.#inTurn(() => this.#catchUpNow(accountId, syncRunId));
+  }
+
+  /**
+   * Project a match and the earlier archived matches its habits are made of, those of them that
+   * have no projection of the current version: what the page of a match needs before it can show
+   * the analysis. The match comes first, then the earlier ones, most recent first. The earlier
+   * matches are the {@link PERSONAL_WINDOW} archived matches that precede the match, leaving out the
+   * ones the analysis could not read (the habits do not count them either): once they are projected,
+   * asking again projects nothing, whatever the older matches lack. A match the analysis cannot read
+   * is found out by projecting it, so the window then moves back by one match at the next call.
+   *
+   * It waits for the projection that is running, if any, then runs (see the module): after a
+   * catch-up of the synchronisation, it finds the window projected already, and projects nothing.
+   *
+   * @param accountId - The tracked account.
+   * @param matchId - The match to analyse.
+   * @returns How the run went. It never rejects: a failure is in the report (`skipped`, and
+   *   `stoppedBy` when it ends the run) and in the log. A match that is not stored, or whose detail
+   *   is not archived, or whose window is projected already, gives a report with no match in it:
+   *   nothing is projected for a match the page shows no analysis of.
+   */
+  projectMatch(accountId: AccountId, matchId: MatchId): Promise<ProjectionReport> {
+    return this.#inTurn(() => this.#projectMatchNow(accountId, matchId));
+  }
+
+  /**
+   * Run a projection once the ones asked for before it have ended, and make the next one wait for it
+   * in turn. The turn passes on however the projection ends: a projection never rejects, but one
+   * that does all the same (a logger that throws, against the contract of its port) must neither
+   * keep the next ones waiting nor make them fail.
+   *
+   * @param projection - The work of the projection; it is called once the earlier ones have ended.
+   * @returns What the projection resolves to, or rejects with.
+   */
+  #inTurn(projection: () => Promise<ProjectionReport>): Promise<ProjectionReport> {
+    const run = this.#tail.then(projection);
+    this.#tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  /**
+   * The work of {@link ProjectionService.catchUp}, once its turn has come.
+   *
+   * @param accountId - The tracked account.
+   * @param syncRunId - Id of the run that asks for the projection, to tie the log lines to it.
+   * @returns How the run went. It never rejects.
+   */
+  async #catchUpNow(accountId: AccountId, syncRunId: string): Promise<ProjectionReport> {
+    // From the start of the work, not of the call: the time spent waiting for the turn was another
+    // projection's.
     const startedAt = this.#now();
-    const run: RunState = { projected: 0, failed: 0, reset: 0, skipped: 0, toldKeys: new Set() };
+    const tags: LogContext = { syncRunId };
 
     let matchIds: readonly MatchId[];
     try {
       matchIds = await this.#metrics.listToProject(accountId, PROJECTION_VERSION);
     } catch (error) {
       // Nothing to go on with: no match is known.
-      this.#logFailure('Projection stopped', error, accountId, syncRunId);
-      return { projected: 0, failed: 0, reset: 0, skipped: 0, stoppedBy: 'storage' };
+      this.#logFailure('Projection stopped', error, accountId, tags);
+      return STOPPED_AT_ONCE;
     }
 
+    const report = await this.#projectAll(accountId, matchIds, tags);
+    this.#logDone(report, startedAt, tags);
+    return report;
+  }
+
+  /**
+   * The work of {@link ProjectionService.projectMatch}, once its turn has come.
+   *
+   * @param accountId - The tracked account.
+   * @param matchId - The match to analyse.
+   * @returns How the run went. It never rejects.
+   */
+  async #projectMatchNow(accountId: AccountId, matchId: MatchId): Promise<ProjectionReport> {
+    // From the start of the work, as for a catch-up.
+    const startedAt = this.#now();
+
+    let matchIds: readonly MatchId[];
+    try {
+      matchIds = await this.#metrics.listToProjectUpTo(
+        accountId,
+        matchId,
+        PROJECTION_VERSION,
+        PERSONAL_WINDOW,
+      );
+    } catch (error) {
+      // Nothing to go on with: no match is known.
+      this.#logFailure('Projection stopped', error, accountId, {}, matchId);
+      return STOPPED_AT_ONCE;
+    }
+
+    // No run id: a line about a match names that match, and the line that closes the run names the
+    // match the page was opened on, which is not always the same.
+    const report = await this.#projectAll(accountId, matchIds, {});
+    this.#logDone(report, startedAt, { matchId });
+    return report;
+  }
+
+  /**
+   * Project the matches of a list, one after the other, with the rules both entry points share: a
+   * match that cannot be read goes back to `pending`, one the analysis cannot read is stored as
+   * failed, a failure that is not about a match leaves it as it was, and the run stops after
+   * {@link MAX_CONSECUTIVE_FAILURES} such failures in a row. It gives the event loop a turn between
+   * two matches.
+   *
+   * @param accountId - The tracked account.
+   * @param matchIds - The matches to project, in the order to project them.
+   * @param tags - What every line about a match holds besides its own fields: the run it belongs to.
+   * @returns How the run went. It never rejects.
+   */
+  async #projectAll(
+    accountId: AccountId,
+    matchIds: readonly MatchId[],
+    tags: LogContext,
+  ): Promise<ProjectionReport> {
+    const run: RunState = { projected: 0, failed: 0, reset: 0, skipped: 0, toldKeys: new Set() };
     let stoppedBy: ProjectionReport['stoppedBy'] = null;
     // The matches that failed one after the other, up to the one being projected.
     let failuresInARow = 0;
     for (const [index, matchId] of matchIds.entries()) {
       try {
-        // Between two matches, never before the first one: a catch-up with nothing to do is instant.
+        // Between two matches, never before the first one: a run with nothing to do is instant.
         if (index > 0) {
           await this.#yieldToEventLoop();
         }
-        await this.#projectMatch(accountId, syncRunId, matchId, run);
+        await this.#projectOne(accountId, tags, matchId, run);
         // Projected, failed or reset: the match got through, so the failures were not general.
         failuresInARow = 0;
       } catch (error) {
-        // Nothing was recorded for this match: it stays as it was, and the next run tries it again.
+        // Nothing was recorded for this match: it stays as it was, and the next run that lists it
+        // tries it again.
         run.skipped += 1;
         failuresInARow += 1;
         if (failuresInARow >= MAX_CONSECUTIVE_FAILURES) {
           // Each failure is logged once: the last one is the line that stops the run.
-          this.#logFailure('Projection stopped', error, accountId, syncRunId, matchId);
+          this.#logFailure('Projection stopped', error, accountId, tags, matchId);
           stoppedBy = 'storage';
           break;
         }
-        this.#logFailure('Match not projected', error, accountId, syncRunId, matchId);
+        this.#logFailure('Match not projected', error, accountId, tags, matchId);
       }
     }
-
-    // Routine when nothing was done (the common case: every synchronisation runs a catch-up).
-    this.#logger.log(
-      run.projected + run.failed + run.reset + run.skipped > 0 ? 'info' : 'debug',
-      LOG_SCOPE,
-      'Projection done',
-      {
-        syncRunId,
-        projected: run.projected,
-        failed: run.failed,
-        reset: run.reset,
-        skipped: run.skipped,
-        durationMs: this.#now() - startedAt,
-      },
-    );
     return {
       projected: run.projected,
       failed: run.failed,
@@ -220,18 +349,38 @@ export class ProjectionService {
   }
 
   /**
+   * Tell what a run did, in one line: at the `info` level when it did something, and at the `debug`
+   * level when it did nothing, which is routine (the window of a match is projected already).
+   *
+   * @param report - How the run went.
+   * @param startedAt - When the run started (Unix ms).
+   * @param tags - What names the run in the line: its id, or the match it was asked for.
+   */
+  #logDone(report: ProjectionReport, startedAt: number, tags: LogContext): void {
+    const counted = report.projected + report.failed + report.reset + report.skipped;
+    this.#logger.log(counted > 0 ? 'info' : 'debug', LOG_SCOPE, 'Projection done', {
+      ...tags,
+      projected: report.projected,
+      failed: report.failed,
+      reset: report.reset,
+      skipped: report.skipped,
+      durationMs: this.#now() - startedAt,
+    });
+  }
+
+  /**
    * Project one match and record the outcome.
    *
    * @param accountId - The tracked account.
-   * @param syncRunId - Id of the run in the logs.
+   * @param tags - What every line about a match holds besides its own fields: the run it belongs to.
    * @param matchId - The match.
    * @param run - What the run counts.
    * @throws The error that keeps the match from being projected (the file, the compressor, the
    *   database, or a bug): nothing was recorded for the match.
    */
-  async #projectMatch(
+  async #projectOne(
     accountId: AccountId,
-    syncRunId: string,
+    tags: LogContext,
     matchId: MatchId,
     run: RunState,
   ): Promise<void> {
@@ -268,7 +417,7 @@ export class ProjectionService {
       run.failed += 1;
       const { issue } = error.context;
       this.#logger.log('warn', LOG_SCOPE, 'Match could not be analysed', {
-        syncRunId,
+        ...tags,
         matchId,
         issue: typeof issue === 'string' ? issue : 'unknown',
       });
@@ -276,7 +425,7 @@ export class ProjectionService {
     }
 
     const values = projectMetrics(context, (key, error) => {
-      this.#logMetricFailure(run, syncRunId, matchId, key, error);
+      this.#logMetricFailure(run, tags, matchId, key, error);
     });
     await this.#metrics.saveProjection(
       accountId,
@@ -303,14 +452,14 @@ export class ProjectionService {
    * about a metric is not worth losing the projection of a match, or the run.
    *
    * @param run - What the run counts, and the metrics it told about.
-   * @param syncRunId - Id of the run in the logs.
+   * @param tags - What every line about a match holds besides its own fields: the run it belongs to.
    * @param matchId - The match being projected.
    * @param key - The key of the metric that failed.
    * @param error - What the metric threw.
    */
   #logMetricFailure(
     run: RunState,
-    syncRunId: string,
+    tags: LogContext,
     matchId: MatchId,
     key: MetricKey,
     error: unknown,
@@ -321,7 +470,7 @@ export class ProjectionService {
       }
       run.toldKeys.add(key);
       this.#logger.log('info', LOG_SCOPE, 'Metric not computed', {
-        syncRunId,
+        ...tags,
         matchId,
         key,
         kind: toAppError(error).kind,
@@ -342,19 +491,20 @@ export class ProjectionService {
    *   the failure that ends the run.
    * @param error - What was caught.
    * @param accountId - The tracked account, kept out of the log.
-   * @param syncRunId - Id of the run in the logs.
-   * @param matchId - The match being projected when it failed, if any.
+   * @param tags - What every line about a match holds besides its own fields: the run it belongs to.
+   * @param matchId - The match being projected when it failed, or the match the run was asked for
+   *   when the list of its matches failed; none when the run is not about one match.
    */
   #logFailure(
     message: 'Match not projected' | 'Projection stopped',
     error: unknown,
     accountId: AccountId,
-    syncRunId: string,
+    tags: LogContext,
     matchId?: MatchId,
   ): void {
     this.#logger.log('warn', LOG_SCOPE, message, {
       ...describeErrorForLog(error, accountId, !isAppError(error)),
-      syncRunId,
+      ...tags,
       ...(matchId === undefined ? {} : { matchId }),
     });
   }

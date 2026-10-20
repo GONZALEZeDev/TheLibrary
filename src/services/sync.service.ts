@@ -13,27 +13,27 @@
  * (budget, pause) or that failed (a refusal, an error of the service) says nothing of the match
  * details, which have their own budget and their own pause handling. The one exception is a history
  * request that did not reach deadlock-api (`network`, `timeout`): the details would fail the same
- * way, so the run ends there. A `detail` run is the queue alone (see {@link SyncTrigger}).
+ * way, so the queue is not tried. A `detail` run is the queue alone (see {@link SyncTrigger}).
  *
  * The listeners are told when a run starts and ends, and once more when its history step has saved
  * its outcome, before the queue starts: the queue can take many seconds, and the interface must not
  * wait for it to show the matches and the state of the history.
  *
- * The run also keeps the analysis up to date, in this order:
- * - the projection catch-up comes first, as soon as the account is known, before the history and the
- *   protected-account check: it works from the archives on disk, so it needs no network and no
- *   request budget, and the matches archived by an earlier run (or before an update of the
- *   projection) are analysed even when the account is protected or the network is down;
- * - the rank refresh follows the history step, whatever came of it, unless the history did not reach
- *   deadlock-api (`network`, `timeout`) or there was no history step (a `detail` run, a protected
- *   account's automatic run): the rank has its own budget and its own checks, and a day-old rank is
- *   all the analysis needs;
- * - a second catch-up follows the queue when it archived matches, so that they are analysed in the
- *   run that downloaded them.
+ * The run also keeps the analysis up to date:
+ * - the rank of the account is refreshed right after the history step, whatever came of it, unless
+ *   the history did not reach deadlock-api (`network`, `timeout`) or there was no history step (a
+ *   `detail` run, a protected account's automatic run): the rank has its own budget and its own
+ *   checks, and a day-old rank is all the analysis needs;
+ * - the archived matches that are not analysed yet are projected last, at the end of every run with
+ *   a linked account: after the detail queue, so that the matches it archived are analysed in the
+ *   run that downloaded them, and also in the runs that end early (the network is down, the account
+ *   is protected): the projection works from the archives on disk, so it needs no network and no
+ *   request budget. The listeners are told when it did something, and the line that ends the run
+ *   counts the matches it projected.
  *
- * All of it runs inside the run, which is what lets the suspension around a change of account wait for
- * it. Neither the catch-up nor the rank refresh ever stops the run: they report their failures
- * instead of throwing, and a bug in one of them is logged and left at that.
+ * Both run inside the run, which is what lets the suspension around a change of account wait for
+ * them. Neither ever stops or fails the run: the rank service and the projection report their
+ * failures instead of throwing, and a bug in one of them is logged and left at that.
  *
  * The synchronisation can be suspended around a change of account (see {@link SyncService.suspend}).
  * A running detail queue captured the id of the account it was started for: left alone while the
@@ -42,14 +42,19 @@
  * before it erases or switches an account: that waits for the run going to end, then refuses every
  * new run (the timer included, and the retry of a match detail) until it is resumed.
  *
+ * The same holds for the work that is done on demand for the linked account outside a run, such as
+ * the analysis of a match whose page is opened before a run has analysed it: it goes through
+ * {@link SyncService.runExclusive}, which the suspension waits for and which it refuses afterwards.
+ *
  * @packageDocumentation
  */
 import type { AccountId } from '../core/domain/account';
 import type { MatchId } from '../core/domain/match';
 import {
+  AppError,
   errorLogContext,
+  isAppError,
   toAppError,
-  type AppError,
   type AppErrorKind,
 } from '../core/errors/app-error';
 import {
@@ -73,7 +78,7 @@ import type { SyncStateRepository } from './sync-state.repository';
  * - `manual` is the user's own request, history and details;
  * - `detail` is the user's own request too (the "Retry" of a match detail), but for the details
  *   only: the history step is left out, so it sends no history request and changes nothing of what
- *   the history banner shows (the projection of the archived matches runs in it all the same);
+ *   the history banner shows (the archived matches are analysed at its end all the same);
  * - `link` is the first synchronisation after an account was linked: the user's own request too,
  *   with the history and the details, so it is not held to the automatic part of the history budget
  *   and it is not stopped by a protected account.
@@ -100,6 +105,27 @@ type RunOutcome = LastSync['outcome'] | 'no_account' | 'protected_account' | 'de
  */
 const UNREACHABLE_KINDS: readonly AppErrorKind[] = ['network', 'timeout'];
 
+/** The `reason` that marks the context of the refusal of an exclusive task during a suspension. */
+const SUSPENDED_REASON = 'suspended';
+
+/**
+ * Tell whether an error is the refusal of {@link SyncService.runExclusive} while the
+ * synchronisation is suspended, as opposed to a failure of the task or a bug. The refusal is an
+ * {@link AppError} of kind `unexpected`, like any error nobody planned for, but it carries
+ * `context.reason = 'suspended'`; this is the one place that knows how to tell it.
+ *
+ * The page treats it as "not now" (an account is being switched or erased, and the page is about to
+ * go away), not as a failure to report to the user.
+ *
+ * @param error - Anything, typically what a rejected `runExclusive` gave.
+ * @returns `true` for the refusal of an exclusive task during a suspension.
+ */
+export function isSuspensionRefusal(error: unknown): boolean {
+  return (
+    isAppError(error) && error.kind === 'unexpected' && error.context.reason === SUSPENDED_REASON
+  );
+}
+
 /** The synchronisation that is running: its id in the logs, and the promise every trigger shares. */
 interface RunningSync {
   readonly syncRunId: string;
@@ -112,9 +138,15 @@ interface RunResult {
   readonly outcome: RunOutcome;
   /** How the detail queue went, or `null` when it did not run (or failed to report). */
   readonly detail: DetailRunReport | null;
-  /** How many matches the run projected, the two catch-ups together. */
+  /** How many matches the projection at the end of the run stored; 0 when it did not run or failed. */
   readonly projected: number;
 }
+
+/**
+ * What the steps of a run that download came to: the outcome of the history and the report of the
+ * queue, everything of {@link RunResult} but the projection that follows them.
+ */
+type DownloadResult = Omit<RunResult, 'projected'>;
 
 /**
  * Tell whether nobody asked for a synchronisation: the start of the app and its timer. The others
@@ -134,7 +166,7 @@ export interface SyncServiceDependencies {
   /** The detail queue the synchronisation runs after the history, and the retry of one match. */
   readonly details: MatchDetailService;
   readonly matches: MatchesRepository;
-  /** The projection of the archived matches into metrics, caught up inside every run. */
+  /** The projection of the archived matches into metrics, caught up at the end of every run. */
   readonly projection: ProjectionService;
   /** The rank of the linked account, refreshed after the history step of a run. */
   readonly rank: PlayerRankService;
@@ -167,6 +199,11 @@ export class SyncService {
   #timerWanted = false;
   /** Whether the synchronisation is suspended around a change of account. */
   #suspended = false;
+  /**
+   * The exclusive tasks that are running ({@link SyncService.runExclusive}), each as a promise that
+   * resolves when the task has ended, whatever way: none of them ever rejects.
+   */
+  readonly #exclusive = new Set<Promise<void>>();
   readonly #listeners = new Set<() => void>();
 
   /**
@@ -266,6 +303,59 @@ export class SyncService {
   }
 
   /**
+   * Run a task that writes for the linked account outside a synchronisation run, such as the
+   * analysis of a match when its page is opened, in a section the suspension waits for.
+   *
+   * Why this exists: the suspension around a change of account (see {@link SyncService.suspend})
+   * waits for the run going, but an on-demand task writes rows of the linked account too. Left
+   * alone while the account is erased or switched, it would go on writing for an account that is
+   * being erased, and bring its rows back. So the suspension also waits for every task started
+   * here, and a task that is started while the synchronisation is suspended is refused before it
+   * runs, and logged at `debug` like a refused synchronisation.
+   *
+   * The task starts at once, and may run alongside a synchronisation run and alongside other
+   * tasks. An analysis projects matches, as the end of a run does: the projection service runs one
+   * projection at a time, whoever asks, so the two never write the same match at once. The
+   * projection also puts a match whose archive cannot be read back to `pending`, and the detail
+   * status is a column the detail queue writes too. That is harmless: a match goes from `ready` to
+   * `pending` before the queue can take it.
+   *
+   * What the task must do:
+   * - read the linked account itself, inside the section. An account id captured before an account
+   *   change and admitted after {@link SyncService.resume} would write for the erased account;
+   * - keep the network work out of the section, since an account change waits for the task to end;
+   * - end by itself, for the same reason, and not suspend the synchronisation itself.
+   *
+   * Whatever the task throws goes to its caller, and does not keep the suspension waiting.
+   *
+   * @param task - The work to do; it is called before this method returns.
+   * @returns What the task resolves to.
+   * @throws AppError of kind `unexpected` when the synchronisation is suspended: the task did not
+   *   run. The error carries `context.reason = 'suspended'`, and {@link isSuspensionRefusal} tells
+   *   it from a failure. Otherwise, what the task throws, unchanged.
+   */
+  async runExclusive<T>(task: () => Promise<T>): Promise<T> {
+    if (this.#suspended) {
+      this.#logRefusal('exclusive');
+      throw new AppError('unexpected', 'The task was refused while the account changes', {
+        context: { reason: SUSPENDED_REASON },
+      });
+    }
+    // A task that throws before it returns a promise rejects this method, with nothing to wait for.
+    const running = task();
+    // What the suspension waits for: it never rejects, so a task that throws cannot block it.
+    const ended = running.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.#exclusive.add(ended);
+    void ended.then(() => {
+      this.#exclusive.delete(ended);
+    });
+    return running;
+  }
+
+  /**
    * Start the automatic synchronisations: one right away, then one every
    * {@link SYNC_INTERVAL_MS}. Calling it again has no effect.
    *
@@ -296,32 +386,35 @@ export class SyncService {
   /**
    * Suspend the synchronisation around a change of account, so that nothing writes for an account
    * while it is erased or switched. It stops the timer (remembering that it was started), then
-   * waits for the run going, if any, to end: the run, and the joiners that wait for it, end
-   * normally. From then on {@link SyncService.syncNow} and {@link SyncService.retryDetail} refuse,
-   * and once the returned promise has resolved no run is going and none can start until
-   * {@link SyncService.resume}.
+   * waits for the run going, if any, and for every running exclusive task
+   * ({@link SyncService.runExclusive}) to end: the run, and the joiners that wait for it, end
+   * normally. From then on {@link SyncService.syncNow}, {@link SyncService.retryDetail} and
+   * {@link SyncService.runExclusive} refuse, and once the returned promise has resolved no run and no
+   * task is going and none can start until {@link SyncService.resume}.
    *
    * Why this is needed: a running detail queue captured the id of its account when it started, and
    * would go on writing for that account (it could even create the archive folder again after its
-   * deletion). The run is waited for rather than cancelled, so it ends the way it always does and
-   * saves its outcome.
+   * deletion); an exclusive task would do the same. They are waited for rather than cancelled, so
+   * they end the way they always do and save their outcome.
    *
    * Calling it again is harmless: the remembered state of the timer is kept, and the promise
-   * resolves once the running run has ended.
+   * resolves once the running run and tasks have ended.
    *
-   * @returns A promise resolved once no run is going; it never rejects.
+   * @returns A promise resolved once no run and no task is going; it never rejects, whatever way a
+   *   task ended.
    */
   suspend(): Promise<void> {
     this.#suspended = true;
     this.#stopTimer();
-    return this.#running?.done ?? Promise.resolve();
+    // None of them rejects: a run never does, and a task is tracked by a promise that never does.
+    return Promise.all([this.#running?.done, ...this.#exclusive]).then(() => undefined);
   }
 
   /**
-   * Accept the synchronisations again after {@link SyncService.suspend}, and restart the timer if it
-   * was started. It does not synchronise at once: the caller that resumes decides whether a run is
-   * needed (after a link it runs a `link` synchronisation itself). Without a suspension it does
-   * nothing.
+   * Accept the synchronisations and the exclusive tasks again after {@link SyncService.suspend}, and
+   * restart the timer if it was started. It does not synchronise at once: the caller that resumes
+   * decides whether a run is needed (after a link it runs a `link` synchronisation itself). Without
+   * a suspension it does nothing.
    */
   resume(): void {
     if (!this.#suspended) {
@@ -399,13 +492,13 @@ export class SyncService {
   }
 
   /**
-   * Log that a synchronisation (or the retry of a match detail) was refused because the
-   * synchronisation is suspended. At `debug`: the account service that suspended it knows, and a
-   * refusal is not a failure.
+   * Log that a synchronisation, the retry of a match detail or an exclusive task was refused
+   * because the synchronisation is suspended. At `debug`: the account service that suspended it
+   * knows, and a refusal is not a failure.
    *
-   * @param trigger - What would have started it.
+   * @param trigger - What would have started it: a trigger, or `exclusive` for an exclusive task.
    */
-  #logRefusal(trigger: SyncTrigger): void {
+  #logRefusal(trigger: SyncTrigger | 'exclusive'): void {
     this.#logger.log('debug', 'sync', 'Synchronisation refused while the account changes', {
       trigger,
     });
@@ -456,42 +549,62 @@ export class SyncService {
   }
 
   /**
-   * Synchronise the linked account and save the outcome of the history step: the projection
-   * catch-up, the history, the rank, then the detail queue and a second catch-up.
+   * Synchronise the linked account: download what is due (see `#download`), then project the
+   * archived matches that are not analysed yet.
    *
-   * The catch-up comes first and is not held to anything the rest of the run is: it works from the
-   * archives on disk, so it runs for a protected account's automatic run, for a `detail` run and
-   * whatever the network does.
-   *
-   * A `detail` run skips the history step altogether: it requests no history and saves nothing of
-   * the history state (`lastSync`, the protected flag), so the history banner is left as it was.
-   * The queue then runs for any trigger but one whose history failed to reach deadlock-api.
-   *
-   * The rank is refreshed right after the history step, once the listeners know about the history,
-   * for any history that reached deadlock-api, whether or not it was requested or accepted: the
-   * rank has its own pause and budget checks. A `detail` run and a run that ends at the network
-   * leave it alone.
+   * The projection comes last, whatever the download came to: after the queue, so that the matches
+   * it archived are analysed in the run that downloaded them, and in a run that ended early as well
+   * (a protected account's automatic run, a history that did not reach deadlock-api, a pause or a
+   * spent budget), since it works from the archives on disk and sends no request.
    *
    * @param trigger - What started it.
    * @param syncRunId - Id of this synchronisation in the logs.
    * @returns How it ended.
-   * @throws AppError when the account or its saved state cannot be read. A failure of the history
-   *   is not thrown: it is saved and logged here, and the run goes on to the queue.
+   * @throws AppError when the account or its saved state cannot be read: the run then fails without
+   *   projecting, since the database the projection reads and writes is the one that fails. A
+   *   failure of the history is not thrown: it is saved and logged, and the run goes on.
    */
   async #synchronise(trigger: SyncTrigger, syncRunId: string): Promise<RunResult> {
     const accountId = await this.#accountSource.currentAccountId();
     if (accountId === null) {
       return { outcome: 'no_account', detail: null, projected: 0 };
     }
-    // Before the history and the protected check: the archives need no request, and a match archived
-    // by an earlier run, or whose projection is out of date, is analysed even when this run goes no
-    // further.
-    let projected = await this.#catchUp(accountId, syncRunId);
+    const download = await this.#download(accountId, trigger, syncRunId);
+    const projected = await this.#catchUp(accountId, syncRunId);
+    return { ...download, projected };
+  }
+
+  /**
+   * Download what is due for the account and save the outcome of the history step: the history, the
+   * rank, then the detail queue.
+   *
+   * A `detail` run skips the history step altogether: it requests no history and saves nothing of
+   * the history state (`lastSync`, the protected flag), so the history banner is left as it was.
+   * The queue then runs for any trigger but one whose history failed to reach deadlock-api.
+   *
+   * The rank is refreshed right after the history step, once the listeners know about the history,
+   * after any history step that did not end at the network (`network`, `timeout`): a history refused
+   * by its budget or by a pause, or one that failed with an answer of deadlock-api, still leads to
+   * the refresh, which applies its own pause and budget. A `detail` run, a protected account's
+   * automatic run and a run that ends at the network leave it alone.
+   *
+   * @param accountId - The linked account.
+   * @param trigger - What started the run.
+   * @param syncRunId - Id of this synchronisation in the logs.
+   * @returns How the history and the queue went.
+   * @throws AppError when the saved state of the account cannot be read. A failure of the history
+   *   is not thrown: it is saved and logged here, and the run goes on to the queue.
+   */
+  async #download(
+    accountId: AccountId,
+    trigger: SyncTrigger,
+    syncRunId: string,
+  ): Promise<DownloadResult> {
     const state = await this.#syncState.getAccountState(accountId);
     // A protected account answers 403 to every request: only the user may try again. The timer and
     // the start of the app stay quiet; the user's own requests, the details' included, go through.
     if (state.protectedAccount && isAutomatic(trigger)) {
-      return { outcome: 'protected_account', detail: null, projected };
+      return { outcome: 'protected_account', detail: null };
     }
     let outcome: RunOutcome = 'detail_only';
     let unreachable = false;
@@ -508,29 +621,25 @@ export class SyncService {
     }
     // The queue is not tried when the network is down: its first request would fail the same way.
     if (unreachable) {
-      return { outcome, detail: null, projected };
+      return { outcome, detail: null };
     }
     if (trigger !== 'detail') {
       // The history step has saved its matches and its outcome: tell the listeners now, so that the
       // interface shows them at once instead of after the queue, which can take many seconds. A
-      // `detail` run has no history step, so it has nothing new to show before its end.
+      // `detail` run has no history step, so it has nothing new to show at this point.
       this.#notify();
       // After the notification, so that the interface does not wait for the rank request.
       await this.#refreshRank(accountId, syncRunId);
     }
     const detail = await this.#runQueue(accountId, syncRunId);
-    // The queue archived matches: analyse them now, in the run that downloaded them, rather than at
-    // the start of the next one.
-    if (detail !== null && detail.archived > 0) {
-      projected += await this.#catchUp(accountId, syncRunId);
-    }
-    return { outcome, detail, projected };
+    return { outcome, detail };
   }
 
   /**
    * Project the archived matches that are not projected yet, and tell the listeners when it did
-   * anything: the interface reads the analysis again. The projection reports its failures instead
-   * of throwing, so an error here is a bug: it is logged, and it does not stop the synchronisation.
+   * anything (projected, failed, reset or skipped a match): the interface reads the analysis and
+   * the state of the details again. The projection reports its failures instead of throwing, so an
+   * error here is a bug: it is logged, and it neither stops nor fails the synchronisation.
    *
    * @param accountId - The account.
    * @param syncRunId - Id of this synchronisation in the logs.

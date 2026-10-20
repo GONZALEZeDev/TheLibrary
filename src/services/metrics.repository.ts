@@ -22,9 +22,10 @@
 import { z } from 'zod';
 import { parseAccountId, type AccountId } from '../core/domain/account';
 import { matchIdSchema, type MatchId } from '../core/domain/match';
+import { MAX_BADGE, MIN_BADGE } from '../core/domain/rank';
 import { AppError } from '../core/errors/app-error';
 import type { DetailStatus } from '../core/match-detail/detail-status';
-import type { Database, SqlValue } from '../ports/database.port';
+import type { Database, SqlRow, SqlValue } from '../ports/database.port';
 
 /** The values of the metrics of one match, by metric key; `null` when the metric was not computed. */
 export type MetricValues = ReadonlyMap<string, number | null>;
@@ -33,7 +34,10 @@ export type MetricValues = ReadonlyMap<string, number | null>;
 export interface ProjectionRecord {
   /** The version of the metric definitions that produced the metrics. */
   readonly version: number;
-  /** The badge the player had in the match (1 to 116); `null` when the match shows none. */
+  /**
+   * The badge the player had in the match, from `MIN_BADGE` to `MAX_BADGE` (`core/domain/rank`);
+   * `null` when the match shows none.
+   */
   readonly playerBadge: number | null;
   /** Whether a player left the match. */
   readonly hasLeaver: boolean;
@@ -64,15 +68,12 @@ export interface PreviousMatch {
 /** The status of a match whose detail is archived: the only matches that can be projected. */
 const READY: DetailStatus = 'ready';
 
-/** The highest rank badge: sub-rank 6 of tier 11. Equal to the limit in the table. */
-const MAX_BADGE = 116;
-
 /** Columns written for each metric, in the order of the parameters of a row. */
 const METRIC_COLUMNS = ['account_id', 'match_id', 'metric_key', 'value'] as const;
 
 /**
  * Metrics written per statement. 50 rows of 4 columns make 200 parameters, far below SQLite's limit
- * (32,766), while the 36 metrics of a match still take one statement (the same size as the batch of
+ * (32,766), while the 36 values of a match still take one statement (the same size as the batch of
  * the match history).
  */
 const BATCH_SIZE = 50;
@@ -87,7 +88,7 @@ const flagSchema = z.union([z.literal(0), z.literal(1)]);
  */
 const projectionRowSchema = z.object({
   projection_version: z.int(),
-  player_badge: z.int().min(1).max(MAX_BADGE).nullable(),
+  player_badge: z.int().min(MIN_BADGE).max(MAX_BADGE).nullable(),
   has_leaver: flagSchema,
   failed: flagSchema,
   projected_at: z.int(),
@@ -149,6 +150,19 @@ function parseRow<T>(schema: z.ZodType<T>, row: unknown, message: string): T {
   return parsed.data;
 }
 
+/**
+ * Read the match ids of rows that hold one in a `match_id` column, in the order of the rows.
+ *
+ * @param rows - The rows of a query.
+ * @returns The match ids.
+ * @throws AppError of kind `storage` when a row holds no valid match id (never the value).
+ */
+function parseMatchIds(rows: readonly SqlRow[]): MatchId[] {
+  return rows.map(
+    (row) => parseRow(matchIdRowSchema, row, 'A stored match id is invalid').match_id,
+  );
+}
+
 /** Reads and writes the `match_projections` and `match_metrics` tables. */
 export class MetricsRepository {
   readonly #database: Database;
@@ -169,8 +183,11 @@ export class MetricsRepository {
    * (in batches of 50), and the projection row is written **last**. The row is what says the match
    * is done, so it is the first thing taken away and the last thing given back: a crash or a
    * failure at any point in between leaves no projection row, whatever version the old one had, and
-   * {@link MetricsRepository.listToProject} lists the match again at the next run. A projection row
-   * therefore never stands over metrics that were deleted or not all written.
+   * the match needs a projection again: {@link MetricsRepository.listToProject} and
+   * {@link MetricsRepository.listToProjectUpTo} list it, so it is projected again at the end of the
+   * next synchronisation, or sooner when the page of the match, or of a later match whose window
+   * holds it, is opened. A projection row therefore never stands over metrics that were deleted or
+   * not all written.
    *
    * The projection and the values are checked before the first write: a projection that the table
    * would refuse, or a value that is not a finite number, leaves everything stored untouched.
@@ -300,9 +317,96 @@ export class MetricsRepository {
         ),
       'Could not list the matches to project',
     );
-    return rows.map(
-      (row) => parseRow(matchIdRowSchema, row, 'A stored match id is invalid').match_id,
+    return parseMatchIds(rows);
+  }
+
+  /**
+   * The matches to project so that one match can be analysed: the match itself, when it needs a
+   * projection, then those of the matches played before it that need one. A match needs a
+   * projection when its detail is archived (`ready`) and it has none of this version, because it
+   * has none or one of another version; a match whose projection of this version failed does not
+   * need one, as in {@link MetricsRepository.listToProject}.
+   *
+   * The habits of a match are made of the matches played right before it, so `limit` is the size of
+   * that window: the `limit` most recent `ready` matches that started strictly before the match (two
+   * matches of the same second are not earlier than each other), leaving out the ones that failed
+   * with this version, which {@link MetricsRepository.listPrevious} does not count either. The ones
+   * of the window that need a projection are listed; the others are in the window all the same, so
+   * asking again for a match lists nothing instead of going back further. Once they are projected,
+   * `listPrevious` finds the window again, less the matches the analysis could not read.
+   *
+   * A match whose detail is not archived (or that is not stored) has no window: nothing is
+   * listed for it, since the page of such a match shows no analysis.
+   *
+   * It takes two statements: the match, then the window. The second is not sent when `limit` allows
+   * no earlier match.
+   *
+   * @param accountId - The player.
+   * @param matchId - The match to analyse.
+   * @param version - The current version of the projection.
+   * @param limit - Size of the window of earlier matches; fewer than 1 (or not a whole number)
+   *   gives none, so only the match itself.
+   * @returns The match itself first (if it needs a projection), then the matches of the window that
+   *   need one, most recent first (the highest id first when two matches started at the same
+   *   second); empty when `matchId` is not stored for the player or its detail is not archived, or
+   *   nothing needs a projection.
+   * @throws AppError of kind `storage` when the database fails or returns an invalid row.
+   */
+  async listToProjectUpTo(
+    accountId: AccountId,
+    matchId: MatchId,
+    version: number,
+    limit: number,
+  ): Promise<readonly MatchId[]> {
+    const matchRows = await this.#run(
+      () =>
+        this.#database.select(
+          `SELECT m.match_id
+           FROM matches AS m
+           LEFT JOIN match_projections AS p
+             ON p.account_id = m.account_id AND p.match_id = m.match_id
+           WHERE m.account_id = $1 AND m.match_id = $2 AND m.detail_status = $3
+             AND (p.match_id IS NULL OR p.projection_version <> $4)`,
+          [accountId, matchId, READY, version],
+        ),
+      'Could not list the match to project',
     );
+    const matchIds = parseMatchIds(matchRows);
+    // SQLite reads a negative `LIMIT` as "no limit": the whole history must not come back from a
+    // limit that is a mistake.
+    if (!Number.isInteger(limit) || limit < 1) {
+      return matchIds;
+    }
+
+    // The window is cut first (the inner query), then the matches of it that need a projection are
+    // kept (the outer one): a limit applied after that filter would reach further back every time
+    // it is asked. The window is read for an archived match only (`ref.detail_status`), and leaves
+    // out the matches that failed with this version, as `listPrevious` does, so that what is
+    // projected is exactly what the habits are made of. `$3` and `$4` are used twice: the same
+    // parameter, bound once.
+    const earlierRows = await this.#run(
+      () =>
+        this.#database.select(
+          `SELECT w.match_id
+           FROM (
+             SELECT m.account_id, m.match_id, m.start_time, p.projection_version
+             FROM matches AS ref
+             JOIN matches AS m ON m.account_id = ref.account_id AND m.start_time < ref.start_time
+             LEFT JOIN match_projections AS p
+               ON p.account_id = m.account_id AND p.match_id = m.match_id
+             WHERE ref.account_id = $1 AND ref.match_id = $2 AND ref.detail_status = $3
+               AND m.detail_status = $3
+               AND (p.match_id IS NULL OR p.projection_version <> $4 OR p.failed = 0)
+             ORDER BY m.start_time DESC, m.match_id DESC
+             LIMIT $5
+           ) AS w
+           WHERE w.projection_version IS NULL OR w.projection_version <> $4
+           ORDER BY w.start_time DESC, w.match_id DESC`,
+          [accountId, matchId, READY, version, limit],
+        ),
+      'Could not list the earlier matches to project',
+    );
+    return [...matchIds, ...parseMatchIds(earlierRows)];
   }
 
   /**

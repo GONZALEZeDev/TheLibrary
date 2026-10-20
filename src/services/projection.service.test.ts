@@ -1,7 +1,9 @@
 /**
- * Tests of the projection (`ProjectionService.catchUp`), end to end on the development adapters: the
- * archives are written by the real detail queue, during a synchronisation of the synthetic history,
- * and the metrics are stored in an in-memory database with the real migrations.
+ * Tests of the projection (`ProjectionService.catchUp` and `ProjectionService.projectMatch`, and the
+ * order they run in), end to end on the development adapters: the archives are written by the real
+ * detail queue, during a synchronisation of the synthetic history, and the metrics are stored in an
+ * in-memory database with the real migrations. The synchronisation projects what it archives; the
+ * tests forget those projections and start from archived matches that are not projected.
  *
  * The synthetic history holds Paige matches the API has a detail for, ranked and unranked ones. A
  * test that needs an archive the projection cannot analyse (or one that lacks some statistics)
@@ -18,6 +20,7 @@ import {
 } from '../adapters/dev/fixtures/match-history.fixture';
 import { fixtureTrackedBadge } from '../adapters/dev/fixtures/match-metadata.fixture';
 import { MemoryLogger, type LogEntry } from '../adapters/dev/memory-logger.adapter';
+import { PERSONAL_WINDOW } from '../core/analysis/insights/thresholds';
 import { buildMatchContext } from '../core/analysis/match-context';
 import { accuracyMetric } from '../core/analysis/metrics/accuracy.metric';
 import { kdaMetric } from '../core/analysis/metrics/kda.metric';
@@ -28,6 +31,7 @@ import { accountFolderName, archivePath } from '../core/match-detail/archive-lay
 import type { LogContext, LogLevel } from '../ports/logger.port';
 import { createTestServices } from '../test/create-test-services';
 import { DirectCompressor } from '../test/direct-compressor';
+import { testMatchId } from '../test/test-data';
 import { ArchiveReaderService } from './archive-reader.service';
 import { MatchDetailRepository } from './match-detail.repository';
 import { MetricsRepository } from './metrics.repository';
@@ -69,8 +73,20 @@ const NOTHING: ProjectionReport = {
   stoppedBy: null,
 };
 
-/** The synthetic history the synchronisation saves: 30 matches, most recent first. */
-const HISTORY = createMatchHistoryFixture({ now: START, count: 30 });
+/** How many matches the synthetic history holds by default; about 40 % of them are Paige matches. */
+const MATCH_COUNT = 30;
+
+/**
+ * How many matches the synthetic history holds for the tests of the projection on demand, which
+ * need more archived matches than the window of the habits: about 40 % of them are Paige matches.
+ */
+const LONG_MATCH_COUNT = 90;
+
+/**
+ * The synthetic history the synchronisation saves, most recent first. The history is generated in
+ * order, so the shorter ones are the start of this one.
+ */
+const HISTORY = createMatchHistoryFixture({ now: START, count: LONG_MATCH_COUNT });
 
 /** The part of a player of an archive that the tests edit. */
 interface EditablePlayer {
@@ -96,15 +112,16 @@ interface EditablePlayers {
 
 /**
  * Archive the matches of the synthetic history and build the projection like the app does, on the
- * development adapters. The projection reads through its own logger and a clock the test controls:
- * every yield to the event loop moves it forward.
+ * development adapters, with no match projected. The projection reads through its own logger and a
+ * clock the test controls: every yield to the event loop moves it forward.
  *
+ * @param matchCount - How many matches the synthetic history holds.
  * @returns The service, the archives it works on and everything a test may inspect or break.
  */
-async function setUp() {
+async function setUp(matchCount = MATCH_COUNT) {
   const compressor = new DirectCompressor();
   const { services, database, archiveStore } = createTestServices({
-    handler: createFixtureApi({ now: START, matchCount: 30 }),
+    handler: createFixtureApi({ now: START, matchCount }),
     now: () => START,
     compressor,
   });
@@ -128,9 +145,10 @@ async function setUp() {
     now: () => clock.now,
     yieldToEventLoop,
   });
-  // The synchronisation that archived them projected them too: forget it, to start unprojected.
+  // The synchronisation analyses the matches it archives: forget its projections, so that every
+  // archived match is to project, as after a new version. The matches the projection has to work on
+  // are the archived ones, most recent first.
   await metrics.deleteAccount(ACCOUNT);
-  // The matches the projection has to work on: the archived ones, most recent first.
   const archived = await metrics.listToProject(ACCOUNT, PROJECTION_VERSION);
   expect(archived.length, 'the history holds several archived matches').toBeGreaterThanOrEqual(6);
   return {
@@ -262,6 +280,29 @@ function linesOf(logger: MemoryLogger, message: string): LogEntry[] {
  */
 function expectNoAccountId(logger: MemoryLogger): void {
   expect(JSON.stringify(logger.entries)).not.toContain(String(ACCOUNT));
+}
+
+/**
+ * A gate: whoever awaits `opened` waits until the test calls `open`.
+ *
+ * @returns The promise and the function that settles it.
+ */
+function createGate(): { readonly opened: Promise<void>; readonly open: () => void } {
+  let open = (): void => undefined;
+  const opened = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { opened, open };
+}
+
+/**
+ * Let the pending work of the other promises run (a macrotask later), so that whatever could start
+ * or settle by itself has done so.
+ *
+ * @returns A promise resolved after a timer of 0 ms.
+ */
+async function settle(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
 afterEach(() => {
@@ -960,5 +1001,541 @@ describe('ProjectionService.catchUp', () => {
     expect(report).toEqual({ ...NOTHING, projected: archived.length });
     expect(linesOf(logger, 'Projection stopped')).toEqual([]);
     expect(linesOf(logger, 'Match not projected')).toEqual([]);
+  });
+});
+
+describe('ProjectionService.projectMatch', () => {
+  /**
+   * Set up a history long enough for a match to have more archived matches before it than the
+   * window of the habits, and one after it.
+   *
+   * @returns What {@link setUp} builds, and the matches by their place: the match under analysis,
+   *   the one that is more recent, the ones of its window, and the older ones.
+   */
+  async function setUpLongHistory() {
+    const context = await setUp(LONG_MATCH_COUNT);
+    const { archived } = context;
+    const later = archived[0] ?? expect.unreachable('the history holds archived matches');
+    const target = archived[1] ?? expect.unreachable('the history holds several archived matches');
+    const earlier = archived.slice(2, 2 + PERSONAL_WINDOW);
+    const older = archived.slice(2 + PERSONAL_WINDOW);
+    expect(earlier, 'the match has a full window of archived matches before it').toHaveLength(
+      PERSONAL_WINDOW,
+    );
+    expect(older.length, 'archived matches are left beyond the window').toBeGreaterThan(0);
+    return { ...context, later, target, earlier, older };
+  }
+
+  it('projects the match and the 20 matches before it, and leaves the others alone', async () => {
+    const context = await setUpLongHistory();
+    const { service, metrics, logger, yieldToEventLoop, later, target, earlier, older } = context;
+    const listing = vi.spyOn(metrics, 'listToProjectUpTo');
+
+    const report = await service.projectMatch(ACCOUNT, target);
+
+    expect(report).toEqual({ ...NOTHING, projected: 1 + PERSONAL_WINDOW });
+    // It asks for the window of the habits.
+    expect(listing).toHaveBeenCalledWith(ACCOUNT, target, PROJECTION_VERSION, PERSONAL_WINDOW);
+    // The match first, then the earlier ones from the most recent, each stored as the registry
+    // projects it.
+    for (const [index, matchId] of [target, ...earlier].entries()) {
+      await expect(metrics.getProjection(ACCOUNT, matchId)).resolves.toMatchObject({
+        matchId,
+        version: PROJECTION_VERSION,
+        playerBadge: expectedBadge(matchId),
+        hasLeaver: false,
+        failed: false,
+        projectedAt: PROJECTION_START + index * YIELD_STEP_MS,
+      });
+      await expect(metrics.getValues(ACCOUNT, matchId)).resolves.toEqual(
+        await registryValues(context, matchId),
+      );
+    }
+    // What was projected is exactly the habits of the match: the analysis reads these same matches.
+    const previous = await metrics.listPrevious(
+      ACCOUNT,
+      target,
+      PROJECTION_VERSION,
+      PERSONAL_WINDOW,
+    );
+    expect(previous.map((match) => match.matchId)).toEqual(earlier);
+    // The match that is more recent, and the ones before the window, are left as they were.
+    for (const matchId of [later, ...older]) {
+      await expect(metrics.getProjection(ACCOUNT, matchId)).resolves.toBeNull();
+    }
+    await expect(metrics.listToProject(ACCOUNT, PROJECTION_VERSION)).resolves.toEqual([
+      later,
+      ...older,
+    ]);
+    expect(yieldToEventLoop).toHaveBeenCalledTimes(PERSONAL_WINDOW);
+    // It says what it did in one line, with the match it was asked for and no run id.
+    expect(logger.entries).toEqual([
+      {
+        level: 'info',
+        scope: 'projection',
+        message: 'Projection done',
+        context: {
+          matchId: target,
+          projected: 1 + PERSONAL_WINDOW,
+          failed: 0,
+          reset: 0,
+          skipped: 0,
+          durationMs: PERSONAL_WINDOW * YIELD_STEP_MS,
+        },
+      },
+    ]);
+    expectNoAccountId(logger);
+  });
+
+  it('projects nothing the second time, instead of going further back, and says so at the debug level', async () => {
+    const { service, metrics, logger, target, earlier } = await setUpLongHistory();
+    await service.projectMatch(ACCOUNT, target);
+    const first = earlier[0] ?? expect.unreachable();
+    const stored = await metrics.getProjection(ACCOUNT, first);
+    logger.entries.length = 0;
+
+    // The matches before the window still lack a projection: they are not the match's habits.
+    await expect(service.projectMatch(ACCOUNT, target)).resolves.toEqual(NOTHING);
+
+    await expect(metrics.getProjection(ACCOUNT, first)).resolves.toEqual(stored);
+    expect(logger.entries).toEqual([
+      {
+        level: 'debug',
+        scope: 'projection',
+        message: 'Projection done',
+        context: {
+          matchId: target,
+          projected: 0,
+          failed: 0,
+          reset: 0,
+          skipped: 0,
+          durationMs: 0,
+        },
+      },
+    ]);
+  });
+
+  it('projects the match alone when no archived match is before it', async () => {
+    const { service, metrics, yieldToEventLoop, archived } = await setUp();
+    const oldest = archived[archived.length - 1] ?? expect.unreachable();
+
+    const report = await service.projectMatch(ACCOUNT, oldest);
+
+    expect(report).toEqual({ ...NOTHING, projected: 1 });
+    expect(yieldToEventLoop).not.toHaveBeenCalled();
+    await expect(metrics.listToProject(ACCOUNT, PROJECTION_VERSION)).resolves.toEqual(
+      archived.slice(0, -1),
+    );
+  });
+
+  it('projects nothing for a match that is not stored', async () => {
+    const { service, metrics, logger, archived } = await setUp();
+
+    const report = await service.projectMatch(ACCOUNT, testMatchId(100_000_001));
+
+    expect(report).toEqual(NOTHING);
+    await expect(metrics.listToProject(ACCOUNT, PROJECTION_VERSION)).resolves.toEqual(archived);
+    expect(linesOf(logger, 'Projection done')).toMatchObject([
+      { level: 'debug', context: { projected: 0 } },
+    ]);
+  });
+
+  it('re-projects the match and its window after a version bump, and only them', async () => {
+    const { service, metrics, archived, later, target, earlier, older } = await setUpLongHistory();
+    // The state an older version of the app left: every match projected with version 0.
+    for (const matchId of archived) {
+      await metrics.saveProjection(
+        ACCOUNT,
+        matchId,
+        {
+          version: PROJECTION_VERSION - 1,
+          playerBadge: null,
+          hasLeaver: true,
+          failed: false,
+          projectedAt: 1,
+        },
+        new Map([['stale_metric', 1]]),
+      );
+    }
+
+    const report = await service.projectMatch(ACCOUNT, target);
+
+    expect(report).toEqual({ ...NOTHING, projected: 1 + PERSONAL_WINDOW });
+    for (const matchId of [target, ...earlier]) {
+      await expect(metrics.getProjection(ACCOUNT, matchId)).resolves.toMatchObject({
+        version: PROJECTION_VERSION,
+        hasLeaver: false,
+      });
+      expect((await metrics.getValues(ACCOUNT, matchId)).has('stale_metric')).toBe(false);
+    }
+    // The others wait for the page of their own match.
+    await expect(metrics.listToProject(ACCOUNT, PROJECTION_VERSION)).resolves.toEqual([
+      later,
+      ...older,
+    ]);
+    await expect(metrics.getProjection(ACCOUNT, later)).resolves.toMatchObject({
+      version: PROJECTION_VERSION - 1,
+    });
+  });
+
+  it('puts a match with no archive back to pending, and goes on with the others', async () => {
+    const context = await setUpLongHistory();
+    const { service, metrics, details, logger, target, earlier, older } = context;
+    const lost = earlier[3] ?? expect.unreachable();
+    await deleteArchive(context, lost);
+
+    const report = await service.projectMatch(ACCOUNT, target);
+
+    expect(report).toEqual({ ...NOTHING, projected: PERSONAL_WINDOW, reset: 1 });
+    await expect(details.getDetail(ACCOUNT, lost)).resolves.toMatchObject({
+      status: 'pending',
+      attempts: 0,
+      archivedBytes: null,
+    });
+    await expect(metrics.getProjection(ACCOUNT, lost)).resolves.toBeNull();
+    expect(linesOf(logger, 'Projection done')).toMatchObject([
+      {
+        level: 'info',
+        context: { matchId: target, projected: PERSONAL_WINDOW, failed: 0, reset: 1 },
+      },
+    ]);
+    expectNoAccountId(logger);
+
+    // The match is not archived any more, so it left the window: the next older one took its place.
+    await expect(service.projectMatch(ACCOUNT, target)).resolves.toEqual({
+      ...NOTHING,
+      projected: 1,
+    });
+    await expect(
+      metrics.getProjection(ACCOUNT, older[0] ?? expect.unreachable()),
+    ).resolves.not.toBe(null);
+  });
+
+  it('stores a match it cannot read as failed, with no run id in the line about it', async () => {
+    const context = await setUpLongHistory();
+    const { service, metrics, logger, target, earlier } = context;
+    const broken = earlier[0] ?? expect.unreachable();
+    // The tracked player has lost their souls in this archive: the analysis cannot read the match.
+    await editArchive(context, broken, ({ tracked }) => {
+      delete tracked.net_worth;
+    });
+
+    const report = await service.projectMatch(ACCOUNT, target);
+
+    expect(report).toEqual({ ...NOTHING, projected: PERSONAL_WINDOW, failed: 1 });
+    await expect(metrics.getProjection(ACCOUNT, broken)).resolves.toMatchObject({
+      version: PROJECTION_VERSION,
+      failed: true,
+    });
+    expect(linesOf(logger, 'Match could not be analysed')).toEqual([
+      {
+        level: 'warn',
+        scope: 'projection',
+        message: 'Match could not be analysed',
+        context: {
+          matchId: broken,
+          issue: expect.stringMatching(/^players\.\d+\.net_worth: \w+$/) as unknown,
+        },
+      },
+    ]);
+    expect(JSON.stringify(logger.entries)).not.toContain(FAKE_OTHER_PLAYER);
+    expectNoAccountId(logger);
+    // The habits of the match hold what could be read: the analysis counts 19 of the 20.
+    const habits = async () =>
+      (await metrics.listPrevious(ACCOUNT, target, PROJECTION_VERSION, PERSONAL_WINDOW)).map(
+        (match) => match.matchId,
+      );
+    await expect(habits()).resolves.toEqual(earlier.slice(1));
+
+    // The verdict stands: the match is not tried again. It is out of the window now, as it is out
+    // of the habits, so the next older match takes its place and is projected, and then it is done.
+    const next = context.older[0] ?? expect.unreachable();
+    await expect(service.projectMatch(ACCOUNT, target)).resolves.toEqual({
+      ...NOTHING,
+      projected: 1,
+    });
+    await expect(metrics.getProjection(ACCOUNT, broken)).resolves.toMatchObject({ failed: true });
+    await expect(habits()).resolves.toEqual([...earlier.slice(1), next]);
+    await expect(service.projectMatch(ACCOUNT, target)).resolves.toEqual(NOTHING);
+  });
+
+  it('projects nothing for a match whose detail is not archived', async () => {
+    const context = await setUpLongHistory();
+    const { service, metrics, details, logger, target, earlier } = context;
+    await details.resetToPending(ACCOUNT, target);
+
+    const report = await service.projectMatch(ACCOUNT, target);
+
+    // Neither the match nor its earlier ones: the page of such a match shows no analysis.
+    expect(report).toEqual(NOTHING);
+    for (const matchId of [target, ...earlier]) {
+      await expect(metrics.getProjection(ACCOUNT, matchId)).resolves.toBeNull();
+    }
+    expect(linesOf(logger, 'Projection done')).toMatchObject([
+      { level: 'debug', context: { matchId: target, projected: 0 } },
+    ]);
+  });
+
+  it('stops after three matches in a row that cannot be projected, without throwing', async () => {
+    const { service, metrics, details, logger, yieldToEventLoop, compressor, target, earlier } =
+      await setUpLongHistory();
+    // The compressor is broken: that says nothing about the archives.
+    vi.spyOn(compressor, 'decompress').mockRejectedValue(
+      new AppError('storage', 'The compressor failed'),
+    );
+
+    const report = await service.projectMatch(ACCOUNT, target);
+
+    expect(report).toEqual({ ...NOTHING, skipped: FAILURES_IN_A_ROW, stoppedBy: 'storage' });
+    expect(yieldToEventLoop).toHaveBeenCalledTimes(FAILURES_IN_A_ROW - 1);
+    // Nothing was touched: no projection, no match put back to pending.
+    await expect(metrics.getProjection(ACCOUNT, target)).resolves.toBeNull();
+    await expect(details.getDetail(ACCOUNT, target)).resolves.toMatchObject({ status: 'ready' });
+    expect(logger.entries).toEqual([
+      {
+        level: 'warn',
+        scope: 'projection',
+        message: 'Match not projected',
+        context: { kind: 'storage', matchId: target },
+      },
+      {
+        level: 'warn',
+        scope: 'projection',
+        message: 'Match not projected',
+        context: { kind: 'storage', matchId: earlier[0] },
+      },
+      {
+        level: 'warn',
+        scope: 'projection',
+        message: 'Projection stopped',
+        context: { kind: 'storage', matchId: earlier[1] },
+      },
+      {
+        level: 'info',
+        scope: 'projection',
+        message: 'Projection done',
+        context: {
+          matchId: target,
+          projected: 0,
+          failed: 0,
+          reset: 0,
+          skipped: FAILURES_IN_A_ROW,
+          durationMs: (FAILURES_IN_A_ROW - 1) * YIELD_STEP_MS,
+        },
+      },
+    ]);
+    expectNoAccountId(logger);
+  });
+
+  it('skips a match whose file cannot be read, and projects the others', async () => {
+    const context = await setUpLongHistory();
+    const { service, metrics, logger, target, earlier } = context;
+    const unreadable = earlier[5] ?? expect.unreachable();
+    failReadsOf(context, [unreadable]);
+
+    const report = await service.projectMatch(ACCOUNT, target);
+
+    expect(report).toEqual({ ...NOTHING, projected: PERSONAL_WINDOW, skipped: 1 });
+    // The match is left as it was, and is still in the window, so it is the next call's to retry.
+    await expect(metrics.getProjection(ACCOUNT, unreadable)).resolves.toBeNull();
+    expect(linesOf(logger, 'Match not projected')).toEqual([
+      {
+        level: 'warn',
+        scope: 'projection',
+        message: 'Match not projected',
+        context: {
+          kind: 'storage',
+          step: 'read',
+          cause: `Access is denied to archive/{account_id}/${String(unreadable)}.json.zst`,
+          matchId: unreadable,
+        },
+      },
+    ]);
+    expectNoAccountId(logger);
+  });
+
+  it('stops when it cannot list the matches, with the kind of the failure only', async () => {
+    const { service, metrics, logger, target } = await setUpLongHistory();
+    vi.spyOn(metrics, 'listToProjectUpTo').mockRejectedValueOnce(
+      new AppError('storage', 'Could not list the match to project', {
+        cause: new Error(`database is locked (${String(ACCOUNT)})`),
+      }),
+    );
+
+    const report = await service.projectMatch(ACCOUNT, target);
+
+    // At once: no match is known, so there is nothing to skip.
+    expect(report).toEqual({ ...NOTHING, stoppedBy: 'storage' });
+    expect(logger.entries).toEqual([
+      {
+        level: 'warn',
+        scope: 'projection',
+        message: 'Projection stopped',
+        context: { kind: 'storage', cause: 'database is locked ({account_id})', matchId: target },
+      },
+    ]);
+  });
+});
+
+describe('ProjectionService, one projection at a time', () => {
+  /** What a test asks the projection for: a catch-up, or the projection of a match. */
+  type Ask = 'catch-up' | 'match';
+
+  /**
+   * Record, in the order it happens, what the projections do: the start of a run (the listing of
+   * its matches, named after what was asked), the save of each match (`save`) and the end of a run
+   * (the line that closes it, `done`). The first listing waits for `held`, which keeps the first run
+   * going while the test asks for the next one.
+   *
+   * @param context - What {@link setUp} built.
+   * @param held - What the first listing waits for.
+   * @returns The events, oldest first; the array fills as the projections run.
+   */
+  function recordRuns(context: TestContext, held: Promise<void>): string[] {
+    const { metrics, logger } = context;
+    const events: string[] = [];
+    let isFirst = true;
+    /**
+     * Record the start of a run, and hold it if it is the first one.
+     *
+     * @param ask - What the run was asked for.
+     */
+    const start = async (ask: Ask): Promise<void> => {
+      events.push(ask);
+      if (isFirst) {
+        isFirst = false;
+        await held;
+      }
+    };
+    const listToProject = metrics.listToProject.bind(metrics);
+    vi.spyOn(metrics, 'listToProject').mockImplementation(async (...args) => {
+      await start('catch-up');
+      return listToProject(...args);
+    });
+    const listToProjectUpTo = metrics.listToProjectUpTo.bind(metrics);
+    vi.spyOn(metrics, 'listToProjectUpTo').mockImplementation(async (...args) => {
+      await start('match');
+      return listToProjectUpTo(...args);
+    });
+    const save = metrics.saveProjection.bind(metrics);
+    vi.spyOn(metrics, 'saveProjection').mockImplementation(async (...args) => {
+      events.push('save');
+      await save(...args);
+    });
+    const log = logger.log.bind(logger);
+    vi.spyOn(logger, 'log').mockImplementation((level, scope, message, logContext) => {
+      if (message === 'Projection done') {
+        events.push('done');
+      }
+      log(level, scope, message, logContext);
+    });
+    return events;
+  }
+
+  it.each([
+    {
+      first: 'catch-up',
+      second: 'match',
+      // The catch-up projects every archived match: the match then finds its window done.
+      projectedFirst: (archivedCount: number) => archivedCount,
+      projectedSecond: () => 0,
+    },
+    {
+      first: 'match',
+      second: 'catch-up',
+      // The oldest match has no earlier one: it is projected alone, and the catch-up does the rest.
+      projectedFirst: () => 1,
+      projectedSecond: (archivedCount: number) => archivedCount - 1,
+    },
+  ] as const)(
+    'never runs two projections side by side: a $second asked during a $first waits for it',
+    async ({ first, second, projectedFirst, projectedSecond }) => {
+      const context = await setUp();
+      const { service, archived } = context;
+      const oldest = archived.at(-1) ?? expect.unreachable('the history holds archived matches');
+      const gate = createGate();
+      const events = recordRuns(context, gate.opened);
+      const ask = (what: Ask): Promise<ProjectionReport> =>
+        what === 'catch-up' ? service.catchUp(ACCOUNT, RUN) : service.projectMatch(ACCOUNT, oldest);
+
+      const firstRun = ask(first);
+      const secondRun = ask(second);
+      await settle();
+
+      // The first run is held as it starts, and the second one has not started: it waits its turn.
+      expect(events).toEqual([first]);
+      gate.open();
+      const [firstReport, secondReport] = await Promise.all([firstRun, secondRun]);
+
+      // The second run started once the first had ended, and projected what the first one left:
+      // every archived match was projected once.
+      const saves = (count: number) => Array.from({ length: count }, () => 'save');
+      expect(events).toEqual([
+        first,
+        ...saves(projectedFirst(archived.length)),
+        'done',
+        second,
+        ...saves(projectedSecond(archived.length)),
+        'done',
+      ]);
+      expect(firstReport).toEqual({ ...NOTHING, projected: projectedFirst(archived.length) });
+      expect(secondReport).toEqual({ ...NOTHING, projected: projectedSecond(archived.length) });
+    },
+  );
+
+  it('lets the next projection run after one that stopped', async () => {
+    const { service, compressor, archived } = await setUp();
+    const oldest = archived.at(-1) ?? expect.unreachable('the history holds archived matches');
+    // The compressor fails three times in a row, which stops the run that meets it, then works.
+    const spy = vi.spyOn(compressor, 'decompress');
+    for (let failure = 0; failure < FAILURES_IN_A_ROW; failure += 1) {
+      spy.mockRejectedValueOnce(new AppError('storage', 'The compressor failed'));
+    }
+
+    // Asked together: the projection of the match waits for the catch-up, which stops.
+    const stopping = service.catchUp(ACCOUNT, RUN);
+    const next = service.projectMatch(ACCOUNT, oldest);
+
+    await expect(stopping).resolves.toEqual({
+      ...NOTHING,
+      skipped: FAILURES_IN_A_ROW,
+      stoppedBy: 'storage',
+    });
+    // The oldest match is not one the catch-up reached: the next run projects it.
+    await expect(next).resolves.toEqual({ ...NOTHING, projected: 1 });
+  });
+
+  it('lets the next projection run after one that rejected', async () => {
+    const { reader, metrics, details, yieldToEventLoop, archived } = await setUp();
+    const oldest = archived.at(-1) ?? expect.unreachable('the history holds archived matches');
+    /** A logger that breaks the contract of its port once: it throws on the first line of an end. */
+    class BrokenOnceLogger extends MemoryLogger {
+      #broken = false;
+
+      override log(level: LogLevel, scope: string, message: string, logContext?: LogContext): void {
+        if (message === 'Projection done' && !this.#broken) {
+          this.#broken = true;
+          throw new Error('The log is full');
+        }
+        super.log(level, scope, message, logContext);
+      }
+    }
+    const service = new ProjectionService({
+      reader,
+      metrics,
+      details,
+      logger: new BrokenOnceLogger(),
+      yieldToEventLoop,
+    });
+
+    // Asked together: the catch-up waits for the projection of the match, which rejects once it has
+    // projected the match.
+    const rejecting = service.projectMatch(ACCOUNT, oldest);
+    const next = service.catchUp(ACCOUNT, RUN);
+
+    await expect(rejecting).rejects.toThrow('The log is full');
+    // The catch-up ran all the same, on what the run that rejected left, and so does the next one.
+    await expect(next).resolves.toEqual({ ...NOTHING, projected: archived.length - 1 });
+    await expect(service.catchUp(ACCOUNT, 'run-0002')).resolves.toEqual(NOTHING);
   });
 });

@@ -95,8 +95,8 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
   // One reader for the whole app: every service that works from the archives reads them through it,
   // so one set of rules says what an unreadable archive is and how it is logged.
   const reader = new ArchiveReaderService({ archive: archiveStore, compressor, logger });
-  // The detail state of the matches is read and written by the detail queue and by the projection
-  // (an archive that cannot be read puts its match back in the queue): the one repository for both.
+  // The detail state of the matches is written by the detail queue and read by the analysis: the one
+  // repository for both.
   const detailRepository = new MatchDetailRepository(database);
   const details = new MatchDetailService({
     accountSource: linkedAccounts,
@@ -108,18 +108,8 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     logger,
     now,
   });
-  // The values of the metrics of every match are written by the projection and read by the
-  // analysis: the one repository for both.
+  // The values of the metrics of every match, read by the analysis and erased with the account.
   const metrics = new MetricsRepository(database);
-  // Turns the archived matches into the values of their metrics, from the very `reader` and
-  // `detailRepository` of the detail queue.
-  const projection = new ProjectionService({
-    reader,
-    metrics,
-    details: detailRepository,
-    logger,
-    now,
-  });
   // Keeps the rank of the linked account, through the one `api` (and so its rank budget and pause).
   const rank = new PlayerRankService({ api, accounts: linkedAccounts, logger, now });
   // The slow-changing API responses (the hero names and the community data) share one cache table.
@@ -132,19 +122,20 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     logger,
     now,
   });
-  // Compares a match with the community and with the habits of the player, from the projection the
-  // synchronisation keeps up to date and from the very `reader` and `detailRepository` above.
-  const analysis = new AnalysisService({
-    accountSource: linkedAccounts,
+  // Turns the archived matches into the values of their metrics, through the very `reader` and
+  // `detailRepository` above. The synchronisation runs it at the end of each run, and the analysis
+  // for a match whose page finds it not analysed yet: one instance for both, since it is the one
+  // that runs their projections one at a time.
+  const projection = new ProjectionService({
+    reader,
     metrics,
     details: detailRepository,
-    reader,
-    benchmarks,
-    accounts: linkedAccounts,
     logger,
+    now,
   });
   // The synchronisation runs the detail queue after the history: it gets the one `details`, and
-  // keeps the projection and the rank up to date inside its runs, which the suspension waits for.
+  // keeps the rank and the analysis of the archived matches up to date inside its runs, which the
+  // suspension waits for.
   const sync = new SyncService({
     accountSource: linkedAccounts,
     api,
@@ -155,6 +146,21 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     syncState,
     logger,
     now,
+  });
+  // Compares a match with the community and with the habits of the player, from the projections
+  // stored and from the very `reader` and `detailRepository` above. It projects a match whose page
+  // asks for the analysis before a synchronisation did, inside the exclusive section of `sync`: an
+  // account change waits for it, and the `sync` has to exist first.
+  const analysis = new AnalysisService({
+    accountSource: linkedAccounts,
+    metrics,
+    details: detailRepository,
+    reader,
+    benchmarks,
+    accounts: linkedAccounts,
+    projection,
+    exclusive: sync,
+    logger,
   });
   // Deletes the data of an account from the very instances the other services work with, so that
   // nothing of an account stays in a repository, the archive or the memory of the detail queue.

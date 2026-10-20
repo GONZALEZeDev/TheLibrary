@@ -1,6 +1,6 @@
 /**
- * Test helpers: the application services built on the development adapters, and a TanStack Query
- * client suited to tests.
+ * Test helpers: the application services built on the development adapters, a projection of the
+ * archived matches outside a synchronisation, and a TanStack Query client suited to tests.
  *
  * @packageDocumentation
  */
@@ -21,8 +21,12 @@ import type { Database } from '../ports/database.port';
 import type { Logger } from '../ports/logger.port';
 import type { SettingsStore } from '../ports/settings-store.port';
 import type { AppServices } from '../services/app-services';
+import { ArchiveReaderService } from '../services/archive-reader.service';
 import { createAppServices } from '../services/create-app-services';
 import { LinkedAccountRepository } from '../services/linked-account.repository';
+import { MatchDetailRepository } from '../services/match-detail.repository';
+import { MetricsRepository } from '../services/metrics.repository';
+import { ProjectionService, type ProjectionReport } from '../services/projection.service';
 import { createQueryClient } from '../ui/app/query-client';
 import { DirectCompressor } from './direct-compressor';
 import { SeededDatabase } from './seeded-database';
@@ -79,6 +83,13 @@ export interface TestServices {
   readonly logger: MemoryLogger;
   readonly http: FixtureHttpClient;
   /**
+   * The account the services were built for: {@link TestServicesOptions.accountId}, or the account
+   * of the fixtures when none was given; `null` when the services were built with `accountId: null`,
+   * which links nothing (the database passed in may hold a link of its own, which this does not
+   * tell).
+   */
+  readonly accountId: AccountId | null;
+  /**
    * The database the services use: the one given in the options, or the fresh one, wrapped in a
    * {@link SeededDatabase} that links the account first when there is one. Statements of a test
    * run through it too, so they see the link.
@@ -91,6 +102,12 @@ export interface TestServices {
    * helpers (`failNextWrite`, `addTemporaryFile`) and its `files` are available.
    */
   readonly archiveStore: MemoryArchiveStore;
+  /**
+   * The compressor the services use: the one given in the options, or the fresh
+   * {@link DirectCompressor}. A test that reads or writes the archives itself needs the very codec
+   * the services wrote them with.
+   */
+  readonly compressor: Compressor;
   /**
    * The time, in milliseconds, the services skipped so far instead of waiting: it is what the
    * services' clock is ahead of `TestServicesOptions.now`. It grows when the detail queue waits
@@ -151,6 +168,7 @@ export function createTestServices(options: TestServicesOptions = {}): TestServi
           ),
         );
   const archiveStore = options.archiveStore ?? new MemoryArchiveStore();
+  const compressor = options.compressor ?? new DirectCompressor();
   const signInGateway = options.signInGateway ?? new FixtureSignInGateway({ now });
   const services = createAppServices(
     {
@@ -160,7 +178,7 @@ export function createTestServices(options: TestServicesOptions = {}): TestServi
       database,
       signInGateway,
       archiveStore,
-      compressor: options.compressor ?? new DirectCompressor(),
+      compressor,
     },
     { appVersion: '0.0.0-test', now, sleep },
   );
@@ -168,11 +186,64 @@ export function createTestServices(options: TestServicesOptions = {}): TestServi
     services,
     logger,
     http,
+    accountId,
     database,
     signInGateway,
     archiveStore,
+    compressor,
     skippedMs: () => skipped,
   };
+}
+
+/** Options of {@link projectArchivedMatches}. */
+export interface ProjectArchivedMatchesOptions {
+  /**
+   * The account whose matches are projected; the account the services were built for by default
+   * ({@link TestServices.accountId}).
+   */
+  readonly accountId?: AccountId;
+  /** The clock the projections are dated with (Unix ms); `Date.now` by default. */
+  readonly now?: () => number;
+}
+
+/**
+ * Project every archived match of a test's account that has no projection of the current version,
+ * most recent first, so that each of them can be analysed at once. Every archived match is analysed
+ * after each synchronisation already (a page analyses a match still missing as a fallback), so a
+ * synchronisation leaves nothing for this to do. It is for the tests that need projections a
+ * synchronisation did not make: matches the test archived itself, or whose projections it deleted
+ * (they are then projected again, dated with the test's own clock). It builds one
+ * {@link ProjectionService} on the adapters of the test, with the very compressor, archive store and
+ * database the services use, and runs its catch-up. That instance does not wait for the projections
+ * of the services, so call it while no synchronisation and no analysis is running.
+ *
+ * @param test - The services of the test, see {@link createTestServices}.
+ * @param options - See {@link ProjectArchivedMatchesOptions}.
+ * @returns How the run went; the projection itself never rejects, see
+ *   {@link ProjectionService.catchUp}.
+ * @throws Error when no account is given and the services were built without one (a mistake in the
+ *   test).
+ */
+export async function projectArchivedMatches(
+  test: TestServices,
+  options: ProjectArchivedMatchesOptions = {},
+): Promise<ProjectionReport> {
+  const accountId = options.accountId ?? test.accountId;
+  if (accountId === null) {
+    throw new Error('projectArchivedMatches needs an account: the services were built without one');
+  }
+  const projection = new ProjectionService({
+    reader: new ArchiveReaderService({
+      archive: test.archiveStore,
+      compressor: test.compressor,
+      logger: test.logger,
+    }),
+    metrics: new MetricsRepository(test.database),
+    details: new MatchDetailRepository(test.database),
+    logger: test.logger,
+    now: options.now ?? Date.now,
+  });
+  return projection.catchUp(accountId, 'run-0001');
 }
 
 /**

@@ -77,6 +77,7 @@
   },
   "matchDetail": {
     "title": "Partie {{matchId}}",
+    "back": "Revenir aux parties",
     "notEligible": "Le détail est archivé pour tes parties Paige en mode normal des 90 derniers jours.",
     "waiting": "Détail en attente.",
     "nextAttempt": "Prochaine tentative : {{time}}.",
@@ -95,6 +96,108 @@
       "archive": "Archive",
       "archiveValue": "{{size}} Ko, {{date}}"
     }
+  },
+  "analysis": {
+    "title": "Analyse",
+    "summaryTitle": "Tes forces et faiblesses sur la partie",
+    "strengths": "Points forts",
+    "weaknesses": "Points faibles",
+    "noInsight": "Rien ne ressort dans cette partie.",
+    "pending": "Analyse en cours…",
+    "failed": "Cette partie n'a pas pu être analysée.",
+    "analysing": {
+      "title": "Analyse de la partie en cours…",
+      "body": "TheLibrary calcule les statistiques de cette partie et de tes parties précédentes à partir de leurs archives. Cela ne prend un moment que la première fois.",
+      "failed": "L'analyse n'a pas pu être faite.",
+      "close": "Fermer"
+    },
+    "family": {
+      "combat": "Combat",
+      "survival": "Survie",
+      "farm": "Farm",
+      "support": "Soutien",
+      "objectives": "Objectifs",
+      "laning": "Phase de lane"
+    },
+    "metric": {
+      "kda": "KDA",
+      "player_damage_per_min": "Dégâts aux héros par min",
+      "accuracy": "Précision",
+      "deaths": "Morts",
+      "damage_taken_per_min": "Dégâts subis par min",
+      "souls_per_min": "Âmes par min",
+      "last_hits": "Last hits",
+      "denies": "Denies",
+      "teammate_healing": "Soins aux alliés",
+      "teammate_barriering": "Barrières aux alliés",
+      "boss_damage_per_min": "Dégâts aux objectifs par min",
+      "souls_at_10min": "Âmes à 10:00",
+      "lane_souls_diff_at_10min": "Écart d'âmes en lane à 10:00"
+    },
+    "phaseStat": {
+      "souls": "Âmes",
+      "hero_damage": "Dégâts aux héros",
+      "objective_damage": "Dégâts aux objectifs",
+      "kills": "Kills"
+    },
+    "phaseMetric": "{{stat}} en {{phase}}",
+    "phase": {
+      "early": "Early",
+      "mid": "Mid",
+      "late": "Late"
+    },
+    "phaseRange": "{{from}} → {{to}}",
+    "phaseTable": {
+      "title": "Par phase"
+    },
+    "teamShare": "{{share}} de l'équipe",
+    "tooShort": "Trop courte pour comparer",
+    "curve": {
+      "well_above": "Bien au-dessus de ton rang",
+      "above": "Au-dessus de ton rang",
+      "around": "Dans la moyenne de ton rang",
+      "below": "En dessous de ton rang",
+      "well_below": "Bien en dessous de ton rang"
+    },
+    "cohort": {
+      "tier": "Comparé aux joueurs de Paige {{tier}}, parties de {{window}}, 30 derniers jours",
+      "all": "Comparé aux joueurs de Paige de tous les rangs, parties de {{window}}, 30 derniers jours",
+      "fallback": "Comparé aux joueurs de Paige de tous les rangs, parties de {{window}}, 30 derniers jours (pas assez de parties à ton rang)",
+      "loading": "Chargement de la comparaison avec ton rang…",
+      "unavailable": "Pas de comparaison avec ton rang pour le moment",
+      "stale": "(données du {{date}})"
+    },
+    "window": {
+      "under": "moins de 20 min",
+      "range": "{{from}} à {{to}} min",
+      "over": "45 min et plus"
+    },
+    "personal": {
+      "notEnough": "Pas encore assez de données",
+      "median": "Ta médiane : {{value}}",
+      "matches": "{{count}} parties de référence",
+      "difference": "{{difference}} vs tes habitudes"
+    },
+    "evidence": {
+      "percentile": "Percentile {{value}} de ton rang",
+      "lowerIsBetter": "(moins c'est mieux)"
+    },
+    "noComparison": "Pas de comparaison avec ton rang",
+    "confidence": {
+      "high": "Confiance élevée",
+      "medium": "Confiance moyenne",
+      "low": "Confiance faible"
+    },
+    "flag": {
+      "strength": "point fort",
+      "weakness": "point faible"
+    },
+    "reason": {
+      "community": "Retenu pour ta place dans ton rang",
+      "personal": "Retenu pour l'écart avec tes habitudes",
+      "both": "Retenu pour ta place dans ton rang et l'écart avec tes habitudes"
+    },
+    "points": "{{value}} pts"
   },
   "settings": {
     "title": "Réglages",

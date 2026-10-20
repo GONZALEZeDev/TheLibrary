@@ -6,9 +6,10 @@
  * cached under {@link ACCOUNT_QUERY_KEY}, and the service tells when it changes: the hook reads it
  * again whoever changed it (the dialog, the settings, the daily refresh of the profile).
  *
- * The match history, the synchronisation, the match details and the hero catalogue all depend on the
- * account, and the services resolve it themselves, so their query keys do not carry it. Nothing in
- * the cache tells an account's rows from another's: an account change therefore has to clear them
+ * The match history, the synchronisation, the match details (and the analysis of a match, which sits
+ * under them), the download of the community data of a match and the hero catalogue all depend on
+ * the account, and the services resolve it themselves, so their query keys do not carry it. Nothing
+ * in the cache tells an account's rows from another's: an account change therefore has to clear them
  * all (see {@link resetAccountData}), or the screens would show the previous account's data.
  *
  * @packageDocumentation
@@ -16,6 +17,7 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect } from 'react';
 import { useServices } from '../../app/ServicesContext';
+import { ANALYSIS_COMMUNITY_QUERY_KEY } from '../match-detail/use-match-analysis';
 import {
   DETAILS_QUERY_KEY,
   HEROES_QUERY_KEY,
@@ -41,6 +43,7 @@ const ACCOUNT_DEPENDENT_KEYS = [
   DETAILS_QUERY_KEY,
   ACCOUNT_QUERY_KEY,
   HEROES_QUERY_KEY,
+  ANALYSIS_COMMUNITY_QUERY_KEY,
 ] as const;
 
 /**
@@ -65,7 +68,8 @@ export function useLinkedAccount() {
 
 /**
  * Forget everything the screens know about the account: its matches, the state of its
- * synchronisation, the details of its matches, the account itself and the hero catalogue.
+ * synchronisation, the details and the analyses of its matches, the community data downloaded for
+ * them, the account itself and the hero catalogue.
  *
  * The queries are reset, not just invalidated: an invalidated query keeps showing its old data until
  * the new data arrives, and those rows belong to an account that may be erased. A reset query has no

@@ -77,6 +77,7 @@
   },
   "matchDetail": {
     "title": "Match {{matchId}}",
+    "back": "Back to matches",
     "notEligible": "Match details are archived for your normal-mode Paige matches of the last 90 days.",
     "waiting": "Waiting for the match detail.",
     "nextAttempt": "Next attempt: {{time}}.",
@@ -95,6 +96,108 @@
       "archive": "Archive",
       "archiveValue": "{{size}} KB, {{date}}"
     }
+  },
+  "analysis": {
+    "title": "Analysis",
+    "summaryTitle": "Your strengths and weaknesses in this match",
+    "strengths": "Strengths",
+    "weaknesses": "Weaknesses",
+    "noInsight": "Nothing stands out in this match.",
+    "pending": "Analysis in progress…",
+    "failed": "This match could not be analysed.",
+    "analysing": {
+      "title": "Analysing the match…",
+      "body": "TheLibrary is computing the metrics of this match and of your previous matches, from their archives. It takes a moment the first time only.",
+      "failed": "The analysis could not be done.",
+      "close": "Close"
+    },
+    "family": {
+      "combat": "Combat",
+      "survival": "Survival",
+      "farm": "Farm",
+      "support": "Support",
+      "objectives": "Objectives",
+      "laning": "Laning"
+    },
+    "metric": {
+      "kda": "KDA",
+      "player_damage_per_min": "Damage to heroes per min",
+      "accuracy": "Accuracy",
+      "deaths": "Deaths",
+      "damage_taken_per_min": "Damage taken per min",
+      "souls_per_min": "Souls per min",
+      "last_hits": "Last hits",
+      "denies": "Denies",
+      "teammate_healing": "Healing to allies",
+      "teammate_barriering": "Barriers to allies",
+      "boss_damage_per_min": "Damage to objectives per min",
+      "souls_at_10min": "Souls at 10:00",
+      "lane_souls_diff_at_10min": "Lane souls difference at 10:00"
+    },
+    "phaseStat": {
+      "souls": "Souls",
+      "hero_damage": "Damage to heroes",
+      "objective_damage": "Damage to objectives",
+      "kills": "Kills"
+    },
+    "phaseMetric": "{{stat}} in {{phase}}",
+    "phase": {
+      "early": "Early",
+      "mid": "Mid",
+      "late": "Late"
+    },
+    "phaseRange": "{{from}} → {{to}}",
+    "phaseTable": {
+      "title": "By phase"
+    },
+    "teamShare": "{{share}} of the team",
+    "tooShort": "Too short to compare",
+    "curve": {
+      "well_above": "Well above your rank",
+      "above": "Above your rank",
+      "around": "Around your rank's average",
+      "below": "Below your rank",
+      "well_below": "Well below your rank"
+    },
+    "cohort": {
+      "tier": "Compared with Paige players in {{tier}}, {{window}}, last 30 days",
+      "all": "Compared with Paige players of all ranks, {{window}}, last 30 days",
+      "fallback": "Compared with Paige players of all ranks, {{window}}, last 30 days (not enough matches at your rank)",
+      "loading": "Loading the comparison with your rank…",
+      "unavailable": "No comparison with your rank for now",
+      "stale": "(from {{date}})"
+    },
+    "window": {
+      "under": "matches under 20 min",
+      "range": "{{from}}–{{to}} min matches",
+      "over": "matches of 45 min and longer"
+    },
+    "personal": {
+      "notEnough": "Not enough data yet",
+      "median": "Your median: {{value}}",
+      "matches": "{{count}} reference matches",
+      "difference": "{{difference}} vs your habits"
+    },
+    "evidence": {
+      "percentile": "Percentile {{value}} of your rank",
+      "lowerIsBetter": "(lower is better)"
+    },
+    "noComparison": "No comparison with your rank",
+    "confidence": {
+      "high": "High confidence",
+      "medium": "Medium confidence",
+      "low": "Low confidence"
+    },
+    "flag": {
+      "strength": "strength",
+      "weakness": "weakness"
+    },
+    "reason": {
+      "community": "Picked for your place in your rank",
+      "personal": "Picked for the gap with your habits",
+      "both": "Picked for your place in your rank and the gap with your habits"
+    },
+    "points": "{{value}} pts"
   },
   "settings": {
     "title": "Settings",

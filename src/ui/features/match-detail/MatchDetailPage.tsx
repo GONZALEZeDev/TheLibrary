@@ -8,16 +8,23 @@
  * has a "Retry" button. A failure to read the archive file or to decompress it is not an
  * explanation of the match but an error of the page, shown like any other.
  *
- * Milestone M2b ships the facts and the explanations; the timeline, strengths and weaknesses,
+ * Under the facts of an archived match comes its analysis (`AnalysisSection`): the strengths and
+ * weaknesses, the phase table and the metrics by family. Every archived match is analysed after each
+ * synchronisation, so the page usually finds the analysis made. A match still not analysed (opened
+ * before the end of the synchronisation that archived it, or after a new version of the metrics) is
+ * analysed when its page opens, as a fallback, behind a dialog that says so. The timeline,
  * scoreboard and build order arrive in later milestones.
+ *
+ * Above the title of every state of the page is a link back to the match list.
  *
  * @packageDocumentation
  */
-import { getRouteApi } from '@tanstack/react-router';
+import { getRouteApi, Link } from '@tanstack/react-router';
 import type { TFunction } from 'i18next';
-import { RotateCw, UserRound } from 'lucide-react';
+import { ArrowLeft, RotateCw, UserRound } from 'lucide-react';
 import { Fragment, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { MatchId } from '../../../core/domain/match';
 import { toAppError } from '../../../core/errors/app-error';
 import type { ArchiveFacts } from '../../../core/match-detail/archive-facts';
 import type { MatchDetailView } from '../../../services/match-detail.service';
@@ -26,6 +33,7 @@ import { PageHeader } from '../../components/PageHeader';
 import { LinkAccountButton } from '../account/LinkAccountButton';
 import { formatDuration } from '../matches/MatchesTable';
 import { useRefreshOnSync, useSyncRunning } from '../matches/use-matches';
+import { AnalysisSection } from './AnalysisSection';
 import { useMatchDetail, useRetryDetail } from './use-match-detail';
 
 /** Typed access to the parameters of the `/matches/$matchId` route (see `ui/app/router.ts`). */
@@ -67,6 +75,27 @@ function renderRetryButton(t: TFunction, retry: RetryAction) {
       <RotateCw aria-hidden="true" className={retry.disabled ? 'size-4 animate-spin' : 'size-4'} />
       {t('matchDetail.retry')}
     </button>
+  );
+}
+
+/**
+ * The link back to the match list, above the title of the page.
+ *
+ * It goes to the list as the sidebar does: the router keeps no search parameters of the list to go
+ * back to, and the list does not use its filters yet (see `matchesSearchSchema`).
+ *
+ * @param t - Translation function.
+ * @returns The link.
+ */
+function renderBackLink(t: TFunction) {
+  return (
+    <Link
+      to="/matches"
+      className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-accent-bright underline-offset-4 hover:underline"
+    >
+      <ArrowLeft aria-hidden="true" className="size-4" />
+      {t('matchDetail.back')}
+    </Link>
   );
 }
 
@@ -142,15 +171,30 @@ function renderFacts(facts: ArchiveFacts, archivedBytes: number, t: TFunction, f
  * What the page shows of a match, depending on what the services say of it.
  *
  * @param view - What the services say of the match.
+ * @param matchId - The match, whose analysis comes under its facts.
  * @param t - Translation function.
  * @param format - How to write dates, counts and sizes.
  * @param retry - The "Retry" button, shown for the matches that failed.
- * @returns The facts, or the explanation of why there are none.
+ * @returns The facts and the analysis, or the explanation of why there are none.
  */
-function renderView(view: MatchDetailView, t: TFunction, format: Formatters, retry: RetryAction) {
+function renderView(
+  view: MatchDetailView,
+  matchId: MatchId,
+  t: TFunction,
+  format: Formatters,
+  retry: RetryAction,
+) {
   switch (view.kind) {
     case 'ready':
-      return renderFacts(view.facts, view.archivedBytes, t, format);
+      // The analysis is only for an archived match: the others have nothing to analyse. It is keyed
+      // by the match, so that moving from one match to another does not carry the state of the first
+      // one's analysis over to the second.
+      return (
+        <div className="space-y-6">
+          {renderFacts(view.facts, view.archivedBytes, t, format)}
+          <AnalysisSection key={matchId} matchId={matchId} />
+        </div>
+      );
     case 'no_account':
       // Said like the matches page says it: there is no match without an account. The player can
       // link one from here, as from the matches page.
@@ -210,7 +254,7 @@ export function MatchDetailPage() {
   let body: ReactNode = null;
   if (detail.data !== undefined) {
     // A failed refresh keeps the view already shown: the error only replaces an empty screen.
-    body = renderView(detail.data, t, format, {
+    body = renderView(detail.data, matchId, t, format, {
       // The queue is alone to download details, so a retry waits for the run in progress to end.
       disabled: syncRunning || retry.isPending,
       onRetry: () => {
@@ -228,6 +272,7 @@ export function MatchDetailPage() {
 
   return (
     <>
+      {renderBackLink(t)}
       <PageHeader title={t('matchDetail.title', { matchId })} />
       {body}
     </>

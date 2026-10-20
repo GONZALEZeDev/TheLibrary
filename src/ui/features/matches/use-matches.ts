@@ -21,8 +21,9 @@ export const RECENT_MATCHES_LIMIT = 100;
 export const MATCHES_QUERY_KEY = ['matches'] as const;
 
 /**
- * Prefix of every query about the match details: their summary ({@link DETAILS_SUMMARY_QUERY_KEY})
- * and the detail of one match (read by the match detail page, under `['details', 'match', matchId]`).
+ * Prefix of every query about the match details: their summary ({@link DETAILS_SUMMARY_QUERY_KEY}),
+ * the detail of one match (read by the match detail page, under `['details', 'match', matchId]`) and
+ * its analysis (under `[...DETAILS_QUERY_KEY, 'analysis', matchId]`, see `useMatchAnalysis`).
  */
 export const DETAILS_QUERY_KEY = ['details'] as const;
 

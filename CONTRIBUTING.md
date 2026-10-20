@@ -52,6 +52,10 @@ These rules are enforced by ESLint: a forbidden import fails `pnpm lint` and CI.
 3. Run `pnpm check`, `pnpm build` and `pnpm check:dev-code` (and, if you touched `src-tauri/`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` from `src-tauri/`; the Rust code embeds the `dist/` folder that `pnpm build` produces, so build the frontend first). CI runs the same checks, plus the dependency audits (`pnpm audit`, `cargo audit`).
 4. Open a pull request describing the change and how you tested it. CI must be green.
 
+## Adding a metric
+
+A metric of the match analysis is a `<key>.metric.ts` file under `src/core/analysis/metrics/` with its test beside it, an entry in `src/core/analysis/registry.ts` and its name in both language catalogues. The values of the metrics are stored for every archived match, at the end of each synchronisation, so a new or changed metric also bumps `PROJECTION_VERSION`: the stored matches are then projected again from their archives, with no network access, at the next synchronisation. The steps are in the [core README](src/core/README.md#adding-a-metric), and how a metric is compared with the community and with the player's habits is in [ADR 0004](docs/adr/0004-analysis-references.md).
+
 ## Useful commands
 
 | Command                                | What it does                                                                                                  |

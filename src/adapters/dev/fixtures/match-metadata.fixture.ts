@@ -13,11 +13,19 @@
  *   heroes of the fixture catalogue;
  * - for every player: the cumulative `stats` snapshots, their `items` (purchases and ability
  *   upgrades) and their `death_details`;
+ * - for every player, what the match analysis reads: the `assigned_lane` (1, 4 or 6; two players of
+ *   each team in each lane, the same number being the same lane for both teams), in a ranked match
+ *   the `player_rank_data` with the badge the player had at the start, and the snapshot counters
+ *   `boss_damage`, `shots_hit`, `shots_missed`, `teammate_healing` and `teammate_barriering`;
  * - `match_paths`: one path per player with a position every second;
  * - `damage_matrix`: one dealer per player, plus the non-player dealer (slot 0).
  *
  * The deaths form one ledger (who killed whom, when) from which the deaths, the kills and the
  * `death_details` of all the players are read, so the numbers of the match agree with each other.
+ *
+ * The fields of the analysis are drawn from a second generator, seeded by the match id as well: the
+ * first one keeps the sequence it had before these fields existed, so every other figure of a
+ * detail is still the one it always was.
  *
  * @packageDocumentation
  */
@@ -39,6 +47,16 @@ interface Seat {
   readonly heroId: number;
   /** `true` for the tracked player, the one of the history row. */
   readonly tracked: boolean;
+  /**
+   * The lane they are assigned to (see {@link LANES}): the same number is the same lane for both
+   * teams.
+   */
+  readonly lane: number;
+  /**
+   * The rank badge they had when the match started (`tier × 10 + subrank`). It is written in the
+   * detail of a ranked match only.
+   */
+  readonly badge: number;
 }
 
 /** One death of the match: who died, who killed them, and when. */
@@ -70,7 +88,23 @@ interface Totals {
   readonly playerDamage: number;
   readonly damageTaken: number;
   readonly healing: number;
+  /** Damage dealt to objectives (guardians, walkers, the patron…). */
+  readonly bossDamage: number;
+  /** Shots that hit a target. */
+  readonly shotsHit: number;
+  /** Shots that missed. */
+  readonly shotsMissed: number;
+  /** Healing given to teammates (their own healing excluded). */
+  readonly teammateHealing: number;
+  /** Barrier given to teammates. */
+  readonly teammateBarriering: number;
 }
+
+/** The final numbers that only the match analysis reads, see {@link createAnalysisTotals}. */
+type AnalysisTotals = Pick<
+  Totals,
+  'bossDamage' | 'shotsHit' | 'shotsMissed' | 'teammateHealing' | 'teammateBarriering'
+>;
 
 /** The slots of a match: 1 to 12, as the API numbers them. */
 const SLOTS = Array.from({ length: 12 }, (_, index) => index + 1);
@@ -86,6 +120,36 @@ const FIRST_OTHER_ACCOUNT_ID = 2_000_001;
 
 /** A match id that is a multiple of this has no detail: "the API never received this match". */
 const MISSING_MATCH_MODULO = 7;
+
+/**
+ * The lanes of one team, one entry per player: three lanes (1, 4 and 6) with two players each. The
+ * same number is the same lane on both teams, so the two players of a lane face the two of the other
+ * team.
+ */
+const LANES = [1, 1, 4, 4, 6, 6];
+
+/** The match mode code of a ranked match: only the players of a ranked match have rank data. */
+const RANKED_MATCH_MODE = 4;
+
+/** The lowest and the highest tier of a rank badge (Initiate to Eternus). */
+const MIN_TIER = 1;
+const MAX_TIER = 11;
+
+/** The lowest and the highest subrank of a tier in a rank badge. */
+const MIN_SUBRANK = 1;
+const MAX_SUBRANK = 6;
+
+/** A badge is `tier × BADGE_TIER_FACTOR + subrank`. */
+const BADGE_TIER_FACTOR = 10;
+
+/**
+ * Mixed into the match id to seed the generator of the fields the analysis reads, so that it never
+ * shares a sequence with the generator of the rest of the detail.
+ */
+const ANALYSIS_SEED = 0x2f6e3a91;
+
+/** Mixed into the match id to seed the badge of the tracked player (see `fixtureTrackedBadge`). */
+const TRACKED_BADGE_SEED = 0x5bd1e995;
 
 /** The first `stats` snapshots, in seconds; the following ones are every `LATE_SNAPSHOT_STEP_S`. */
 const EARLY_SNAPSHOTS_S = [180, 360, 540, 720, 900];
@@ -224,6 +288,20 @@ export function isMetadataMissing(matchId: MatchId): boolean {
 }
 
 /**
+ * The rank badge of the tracked player in the detail of a match.
+ *
+ * It is written in the detail only when the match is ranked (`match_mode` 4). It depends on the
+ * match id alone, so that a test can know the badge the analysis must find without reading the
+ * detail.
+ *
+ * @param matchId - The match.
+ * @returns A badge `tier × 10 + subrank`, the tier from 1 to 11 and the subrank from 1 to 6.
+ */
+export function fixtureTrackedBadge(matchId: MatchId): number {
+  return trackedBadgeOf(matchId);
+}
+
+/**
  * Invent the detail of a match of the synthetic history.
  *
  * The slot of the tracked player is `(match_id % 12) + 1`, whatever their team: slots 1 to 6 make
@@ -240,14 +318,17 @@ export function isMetadataMissing(matchId: MatchId): boolean {
  */
 export function createMatchMetadataFixture(row: RawMatchHistoryRow, accountId: AccountId): unknown {
   const random = createRandom(row.match_id);
+  // The lanes, the badges and the totals the analysis reads come from their own generator, so that
+  // the figures drawn from `random` are the same as before these fields were added.
+  const analysisRandom = createRandom(row.match_id ^ ANALYSIS_SEED);
   const durationS = row.match_duration_s;
-  const seats = seatPlayers(random, row, accountId);
+  const seats = seatPlayers(random, analysisRandom, row, accountId);
   const timeline: Timeline = {
     deaths: createDeaths(random, row, seats),
     paths: seats.map((seat) => createPath(random, seat, durationS)),
     snapshotTimes: snapshotTimes(durationS),
   };
-  const players = seats.map((seat) => createPlayer(random, row, seat, timeline));
+  const players = seats.map((seat) => createPlayer(random, analysisRandom, row, seat, timeline));
   return {
     match_info: {
       match_id: row.match_id,
@@ -278,12 +359,22 @@ export function createMatchMetadataFixture(row: RawMatchHistoryRow, accountId: A
 /**
  * Seat the twelve players: the tracked one in their slot, the others around them.
  *
- * @param random - The generator.
+ * Every player gets a lane (two per team in each lane, the tracked player like the others) and a
+ * rank badge: the tracked player's one is {@link fixtureTrackedBadge}, the others are within a tier
+ * of it, as the players of one ranked match are.
+ *
+ * @param random - The generator of the heroes.
+ * @param analysisRandom - The generator of the lanes and of the badges.
  * @param row - The history row of the match.
  * @param accountId - The account of the tracked player.
  * @returns The twelve seats, ordered by slot.
  */
-function seatPlayers(random: Random, row: RawMatchHistoryRow, accountId: AccountId): Seat[] {
+function seatPlayers(
+  random: Random,
+  analysisRandom: Random,
+  row: RawMatchHistoryRow,
+  accountId: AccountId,
+): Seat[] {
   const trackedSlot = (row.match_id % SLOTS.length) + 1;
   // Slots 1 to 6 are one team and 7 to 12 the other. If the history row puts the tracked player in
   // the other team than the half of their slot, the two teams swap numbers.
@@ -303,6 +394,9 @@ function seatPlayers(random: Random, row: RawMatchHistoryRow, accountId: Account
   const teammateHeroes = shuffled(random, playable).filter((heroId) => heroId !== row.hero_id);
   const opponentHeroes = shuffled(random, playable);
 
+  const lanes = assignLanes(analysisRandom, teamOf);
+  const trackedBadge = trackedBadgeOf(row.match_id);
+
   const otherSeat = (slot: number, heroId: number): Seat => ({
     slot,
     team: teamOf(slot),
@@ -310,12 +404,69 @@ function seatPlayers(random: Random, row: RawMatchHistoryRow, accountId: Account
     accountId: FIRST_OTHER_ACCOUNT_ID + otherSlots.indexOf(slot),
     heroId,
     tracked: false,
+    lane: at(lanes, slot - 1),
+    badge: nearbyBadge(analysisRandom, trackedBadge),
   });
   return [
-    { slot: trackedSlot, team: row.player_team, accountId, heroId: row.hero_id, tracked: true },
+    {
+      slot: trackedSlot,
+      team: row.player_team,
+      accountId,
+      heroId: row.hero_id,
+      tracked: true,
+      lane: at(lanes, trackedSlot - 1),
+      badge: trackedBadge,
+    },
     ...teammateSlots.map((slot, index) => otherSeat(slot, at(teammateHeroes, index))),
     ...opponentSlots.map((slot, index) => otherSeat(slot, at(opponentHeroes, index))),
   ].toSorted((first, second) => first.slot - second.slot);
+}
+
+/**
+ * Assign a lane to each of the twelve slots: each team holds the lanes of {@link LANES}, in an
+ * order of its own.
+ *
+ * @param random - The generator.
+ * @param teamOf - The team of a slot.
+ * @returns The lane of each slot, in the order of the slots (the lane of slot `n` is at `n - 1`).
+ */
+function assignLanes(random: Random, teamOf: (slot: number) => number): number[] {
+  const laneOfSlot: number[] = [];
+  for (const team of [0, 1]) {
+    const lanes = shuffled(random, LANES);
+    SLOTS.filter((slot) => teamOf(slot) === team).forEach((slot, index) => {
+      laneOfSlot[slot - 1] = at(lanes, index);
+    });
+  }
+  return laneOfSlot;
+}
+
+/**
+ * The badge of the tracked player of a match, drawn from the match id alone.
+ *
+ * @param matchId - The match id.
+ * @returns A badge `tier × 10 + subrank`, tier from 1 to 11, subrank from 1 to 6.
+ */
+function trackedBadgeOf(matchId: number): number {
+  const random = createRandom(matchId ^ TRACKED_BADGE_SEED);
+  return (
+    between(random, MIN_TIER, MAX_TIER) * BADGE_TIER_FACTOR +
+    between(random, MIN_SUBRANK, MAX_SUBRANK)
+  );
+}
+
+/**
+ * The badge of another player of the match: the tracked player's tier, or the one above or below it
+ * (never outside the tiers there are), and any subrank.
+ *
+ * @param random - The generator.
+ * @param trackedBadge - The badge of the tracked player.
+ * @returns A badge `tier × 10 + subrank`.
+ */
+function nearbyBadge(random: Random, trackedBadge: number): number {
+  const trackedTier = Math.floor(trackedBadge / BADGE_TIER_FACTOR);
+  const tier = clamp(trackedTier + between(random, -1, 1), MIN_TIER, MAX_TIER);
+  return tier * BADGE_TIER_FACTOR + between(random, MIN_SUBRANK, MAX_SUBRANK);
 }
 
 /**
@@ -476,15 +627,23 @@ function positionAt(path: Path, timeS: number): { x: number; y: number; z: numbe
  *
  * The kills and deaths of every player are read from the death ledger; for the tracked player the
  * ledger was built to agree with their history row. Their assists, net worth, last hits, denies and
- * level come from the row too. Everything else is invented.
+ * level come from the row too. Their lane and their badge come from their seat (the badge only in a
+ * ranked match). Everything else is invented.
  *
  * @param random - The generator.
+ * @param analysisRandom - The generator of the totals that only the analysis reads.
  * @param row - The history row of the match.
  * @param seat - The player.
  * @param timeline - The deaths, the paths and the snapshot times of the match.
  * @returns The player in the raw shape of the API.
  */
-function createPlayer(random: Random, row: RawMatchHistoryRow, seat: Seat, timeline: Timeline) {
+function createPlayer(
+  random: Random,
+  analysisRandom: Random,
+  row: RawMatchHistoryRow,
+  seat: Seat,
+  timeline: Timeline,
+) {
   const { deaths, paths } = timeline;
   const durationS = row.match_duration_s;
   const totals: Totals = {
@@ -496,6 +655,7 @@ function createPlayer(random: Random, row: RawMatchHistoryRow, seat: Seat, timel
     playerDamage: between(random, 15_000, 60_000),
     damageTaken: between(random, 15_000, 55_000),
     healing: between(random, 0, 15_000),
+    ...createAnalysisTotals(analysisRandom),
     // The tracked player has the numbers of their history row, whatever was invented above.
     ...(seat.tracked
       ? {
@@ -526,6 +686,10 @@ function createPlayer(random: Random, row: RawMatchHistoryRow, seat: Seat, timel
     last_hits: totals.lastHits,
     denies: totals.denies,
     abandon_match_time_s: 0,
+    assigned_lane: seat.lane,
+    // Like the API: the rank data of a match that is not ranked is `null`.
+    player_rank_data:
+      row.match_mode === RANKED_MATCH_MODE ? { initial_display_rank: seat.badge } : null,
     stats: createStats(seat, totals, deaths, timeline.snapshotTimes, durationS),
     items: createItems(random, durationS),
     death_details: ownDeaths.map((death) => ({
@@ -574,9 +738,35 @@ function createStats(
       player_damage: Math.round(totals.playerDamage * fraction),
       player_damage_taken: Math.round(totals.damageTaken * fraction),
       player_healing: Math.round(totals.healing * fraction),
+      // Objectives fall late in the match, like souls.
+      boss_damage: Math.round(totals.bossDamage * fraction ** 1.4),
+      shots_hit: Math.round(totals.shotsHit * fraction),
+      shots_missed: Math.round(totals.shotsMissed * fraction),
+      teammate_healing: Math.round(totals.teammateHealing * fraction),
+      teammate_barriering: Math.round(totals.teammateBarriering * fraction),
       max_health: 650 + Math.round(fraction * 1_350),
     };
   });
+}
+
+/**
+ * Invent the final numbers of a player that only the match analysis reads.
+ *
+ * About half of the shots hit (35 to 65 %), so that the accuracy of every player is plausible.
+ *
+ * @param random - The generator.
+ * @returns The final damage to objectives, shots and support given to teammates.
+ */
+function createAnalysisTotals(random: Random): AnalysisTotals {
+  const shotsFired = between(random, 400, 1_500);
+  const shotsHit = Math.round(shotsFired * (0.35 + 0.3 * random()));
+  return {
+    bossDamage: between(random, 3_000, 40_000),
+    shotsHit,
+    shotsMissed: shotsFired - shotsHit,
+    teammateHealing: between(random, 0, 10_000),
+    teammateBarriering: between(random, 0, 8_000),
+  };
 }
 
 /**

@@ -19,6 +19,7 @@
  */
 import { interpretResponse, type ApiOutcome } from '../core/deadlock-api/api-response';
 import {
+  ANALYTICS_RATE_LIMIT,
   ASSETS_RATE_LIMIT,
   AUTOMATIC_HISTORY_RATE_LIMIT,
   HISTORY_RATE_LIMIT,
@@ -26,20 +27,36 @@ import {
   METADATA_RATE_LIMIT,
   PROFILE_RATE_LIMIT,
   PROFILE_REFRESH_RATE_LIMIT,
+  RANK_RATE_LIMIT,
 } from '../core/deadlock-api/budgets';
 import {
   heroesRequest,
+  heroSampleRequest,
   matchHistoryRequest,
   matchMetadataRequest,
   MAX_RESPONSE_BYTES,
+  metricBenchmarkRequest,
+  performanceCurveRequest,
+  playerRankRequest,
   redactAccountIds,
   REQUEST_TIMEOUT_MS,
   steamProfileRequest,
   userAgent,
   type ApiRequest,
+  type CohortQuery,
 } from '../core/deadlock-api/endpoints';
+import { parseHeroSample } from '../core/deadlock-api/hero-sample.schema';
 import { parseHeroes } from '../core/deadlock-api/heroes.schema';
 import { parseMatchHistory } from '../core/deadlock-api/match-history.schema';
+import {
+  parseMetricBenchmark,
+  type MetricBenchmark,
+} from '../core/deadlock-api/metric-benchmark.schema';
+import {
+  parsePerformanceCurve,
+  type CurvePoint,
+} from '../core/deadlock-api/performance-curve.schema';
+import { parsePlayerRank } from '../core/deadlock-api/player-rank.schema';
 import { parseSteamProfiles, type SteamProfile } from '../core/deadlock-api/steam-profile.schema';
 import type { AccountId } from '../core/domain/account';
 import type { Hero } from '../core/domain/hero';
@@ -120,6 +137,24 @@ export type SteamProfileFetch =
   | { readonly kind: 'paused'; readonly until: number }
   /** Not requested: the politeness budget allows the next request at `nextAllowedAt` (Unix ms). */
   | { readonly kind: 'budget_exhausted'; readonly nextAllowedAt: number };
+
+/**
+ * Result of the requests for community data ({@link DeadlockApiService.fetchMetricBenchmark},
+ * {@link DeadlockApiService.fetchPerformanceCurve}, {@link DeadlockApiService.fetchHeroSample} and
+ * {@link DeadlockApiService.fetchPlayerRank}).
+ *
+ * @template T - What the request fetches, once validated.
+ */
+export type AnalyticsFetch<T> =
+  /** deadlock-api answered: `value` is the validated data. */
+  | { readonly kind: 'fetched'; readonly value: T }
+  /** Not requested, or refused: deadlock-api asked to pause until `until` (Unix ms). */
+  | { readonly kind: 'paused'; readonly until: number }
+  /** Not requested: the politeness budget allows the next request at `nextAllowedAt` (Unix ms). */
+  | { readonly kind: 'budget_exhausted'; readonly nextAllowedAt: number };
+
+/** Why a request for community data is not sent: the budget of its window is spent. */
+type CommunityBudgetRefusal = Extract<AnalyticsFetch<never>, { kind: 'budget_exhausted' }>;
 
 /** A response, and what it means. */
 interface Exchange {
@@ -205,6 +240,13 @@ export class DeadlockApiService {
    * `#profileRequests`: a refresh is a profile request too.
    */
   #profileRefreshes: readonly number[] = [];
+  /**
+   * Times of the recent analytics requests (benchmark, curve and hero statistics share one window):
+   * per minute, kept in memory.
+   */
+  #analyticsRequests: readonly number[] = [];
+  /** Times of the recent player rank requests: per hour, kept in memory. */
+  #rankRequests: readonly number[] = [];
   /** The slots of the match detail requests in flight. */
   readonly #metadataSlots = new Semaphore(METADATA_MAX_CONCURRENCY);
   /** Settles when the last check of the history budget is done (see `#oneAtATime`). */
@@ -332,6 +374,105 @@ export class DeadlockApiService {
       return { kind: 'paused', until: outcome.until };
     }
     return { kind: 'fetched', profile: parseSteamProfiles(outcome.json, accountId) };
+  }
+
+  /**
+   * Download and validate the community benchmark of a cohort: the percentiles of the metrics the
+   * analysis compares a match with.
+   *
+   * The request follows the rules of every community request (see `#fetchCommunityData`): the pause
+   * comes first, then the shared {@link ANALYTICS_RATE_LIMIT}.
+   *
+   * @param query - The community: a hero, a period, a duration window and a badge range.
+   * @returns The percentiles of each metric the answer holds, or why they were not downloaded.
+   * @throws AppError of kind `timeout`, `network`, `forbidden`, `not_found`,
+   *   `service_unavailable`, `invalid_payload`, `unexpected` or `storage`.
+   */
+  fetchMetricBenchmark(query: CohortQuery): Promise<AnalyticsFetch<MetricBenchmark>> {
+    return this.#fetchCommunityData(metricBenchmarkRequest(query), parseMetricBenchmark);
+  }
+
+  /**
+   * Download and validate the performance curve of a cohort: how the counters of the players grow
+   * over the match, the reference of the metrics that are read at a moment of the match.
+   *
+   * Same rules as {@link DeadlockApiService.fetchMetricBenchmark}.
+   *
+   * @param query - The community: a hero, a period, a duration window and a badge range.
+   * @returns The points of the curve, sorted by time (none when the cohort holds no readable
+   *   point), or why they were not downloaded.
+   * @throws AppError, as {@link DeadlockApiService.fetchMetricBenchmark}.
+   */
+  fetchPerformanceCurve(query: CohortQuery): Promise<AnalyticsFetch<readonly CurvePoint[]>> {
+    return this.#fetchCommunityData(performanceCurveRequest(query), parsePerformanceCurve);
+  }
+
+  /**
+   * Download and validate the size of a cohort: the number of matches the hero of the query was
+   * played in, within the duration window and the badge range of the query.
+   *
+   * The statistics of every hero are downloaded (the endpoint has no hero filter) and the row of the
+   * hero is kept. Same rules as {@link DeadlockApiService.fetchMetricBenchmark}.
+   *
+   * @param query - The community: a hero, a period, a duration window and a badge range.
+   * @returns The number of matches of the hero (0 when the answer has no row for it), or why it was
+   *   not downloaded.
+   * @throws AppError, as {@link DeadlockApiService.fetchMetricBenchmark}.
+   */
+  fetchHeroSample(query: CohortQuery): Promise<AnalyticsFetch<number>> {
+    return this.#fetchCommunityData(heroSampleRequest(query), (json) =>
+      parseHeroSample(json, query.heroId),
+    );
+  }
+
+  /**
+   * Download and validate the rank badge of a player, if the budget and deadlock-api allow it.
+   *
+   * Same rules as {@link DeadlockApiService.fetchMetricBenchmark}, with {@link RANK_RATE_LIMIT} in
+   * place of the analytics budget. The request leaves no account id in the logs nor in an error: the
+   * endpoint is named by its template, as for the match history.
+   *
+   * @param accountId - The player.
+   * @returns The badge (0 when no rank is known), or why it was not downloaded.
+   * @throws AppError, as {@link DeadlockApiService.fetchMetricBenchmark}.
+   */
+  fetchPlayerRank(accountId: AccountId): Promise<AnalyticsFetch<number>> {
+    return this.#fetchCommunityData(playerRankRequest(accountId), parsePlayerRank);
+  }
+
+  /**
+   * Send a request for community data and validate the answer: what the four requests above share.
+   *
+   * The pause comes first: while deadlock-api asked to wait, nothing is sent and nothing is counted.
+   * Then the budget of the family of the request applies (`#admitAnalyticsRequest`, or
+   * `#admitRankRequest` for a rank).
+   *
+   * @param request - The request.
+   * @param parse - Validates the JSON of the answer.
+   * @returns The validated data, or why it was not downloaded.
+   * @throws AppError for a failed request or an answer `parse` refuses, without any account id in its
+   *   message or cause.
+   */
+  async #fetchCommunityData<T>(
+    request: ApiRequest,
+    parse: (json: unknown) => T,
+  ): Promise<AnalyticsFetch<T>> {
+    const runningPause = await this.#activePause(this.#now());
+    if (runningPause !== null) {
+      return { kind: 'paused', until: runningPause };
+    }
+    // Nothing is awaited between the pause check above, the budget check below and the sending, so
+    // the request goes out under the pause just checked and under the budget just counted.
+    const refusal =
+      request.family === 'rank' ? this.#admitRankRequest() : this.#admitAnalyticsRequest();
+    if (refusal !== null) {
+      return refusal;
+    }
+    const outcome = await this.#send(request);
+    if (outcome.kind === 'pause') {
+      return { kind: 'paused', until: outcome.until };
+    }
+    return { kind: 'fetched', value: parse(outcome.json) };
   }
 
   /**
@@ -480,6 +621,39 @@ export class DeadlockApiService {
       kind: 'budget_exhausted',
       nextAllowedAt: Math.max(requests.nextAllowedAt, refreshes?.nextAllowedAt ?? now),
     };
+  }
+
+  /**
+   * Check the budget of the analytics requests, and count the request when it may be sent. The
+   * benchmark, the curve and the hero statistics share this one window. The check and the count are
+   * synchronous, so two overlapping calls cannot both take the last request of the window.
+   *
+   * @returns Why the request may not be sent, or `null` when it was counted.
+   */
+  #admitAnalyticsRequest(): CommunityBudgetRefusal | null {
+    const now = this.#now();
+    const budget = checkRateLimit(this.#analyticsRequests, now, ANALYTICS_RATE_LIMIT);
+    // The times that left the window are dropped even when the request is refused; the request
+    // itself is only added when it is admitted (a refused request is not one that was sent).
+    this.#analyticsRequests = budget.allowed ? [...budget.recent, now] : budget.recent;
+    return budget.allowed
+      ? null
+      : { kind: 'budget_exhausted', nextAllowedAt: budget.nextAllowedAt };
+  }
+
+  /**
+   * Check the budget of the player rank requests, and count the request when it may be sent, as
+   * `#admitAnalyticsRequest` does for its own window.
+   *
+   * @returns Why the request may not be sent, or `null` when it was counted.
+   */
+  #admitRankRequest(): CommunityBudgetRefusal | null {
+    const now = this.#now();
+    const budget = checkRateLimit(this.#rankRequests, now, RANK_RATE_LIMIT);
+    this.#rankRequests = budget.allowed ? [...budget.recent, now] : budget.recent;
+    return budget.allowed
+      ? null
+      : { kind: 'budget_exhausted', nextAllowedAt: budget.nextAllowedAt };
   }
 
   /**

@@ -29,6 +29,12 @@ const AVATAR_HASH = '0123456789abcdef0123456789abcdef01234567';
 /** Another valid avatar hash. */
 const OTHER_AVATAR_HASH = 'fedcba9876543210fedcba9876543210fedcba98';
 
+/** A rank badge: tier 5, sub-rank 3. */
+const RANK_BADGE = 53;
+
+/** When the rank above was fetched, in Unix milliseconds. */
+const RANK_FETCHED_AT = 1_700_000_200_000;
+
 /** The statement that inserts a row by hand, as a test that bypasses the repository does. */
 const RAW_INSERT = `INSERT INTO linked_account
   (id, account_id, persona_name, avatar_base64, avatar_hash, linked_at, profile_fetched_at)
@@ -147,6 +153,35 @@ function storedRow(overrides: SqlRow = {}): SqlRow {
     profile_fetched_at: null,
     ...overrides,
   };
+}
+
+/**
+ * A row of the table as the rank reader selects it: the account id and the two rank columns.
+ *
+ * @param overrides - Columns to change.
+ * @returns The row, as the database returns it.
+ */
+function rankRow(overrides: SqlRow = {}): SqlRow {
+  return {
+    account_id: ACCOUNT_ID,
+    rank_badge: RANK_BADGE,
+    rank_fetched_at: RANK_FETCHED_AT,
+    ...overrides,
+  };
+}
+
+/**
+ * Read the two rank columns of the row as they are stored, without going through the repository.
+ *
+ * @param database - The database.
+ * @returns The columns of the row, or `undefined` when there is no row.
+ */
+async function storedRank(database: Database): Promise<SqlRow | undefined> {
+  const rows = await database.select(
+    'SELECT rank_badge, rank_fetched_at FROM linked_account WHERE id = $1',
+    [1],
+  );
+  return rows[0];
 }
 
 /**
@@ -542,5 +577,405 @@ describe('LinkedAccountRepository', () => {
 
     expect(calls).toBe(0);
     expect(logger.entries).toEqual([]);
+  });
+
+  describe('rank', () => {
+    it('has no rank before one is fetched', async () => {
+      const { repository, database } = createRepository();
+
+      // No account linked at all.
+      await expect(repository.getRank(ACCOUNT_ID)).resolves.toBeNull();
+
+      // An account just linked: the first insert leaves both columns empty.
+      await repository.setLinkedAccount(linkedAccount());
+
+      await expect(repository.getRank(ACCOUNT_ID)).resolves.toBeNull();
+      await expect(storedRank(database)).resolves.toEqual({
+        rank_badge: null,
+        rank_fetched_at: null,
+      });
+    });
+
+    it('reads back the rank', async () => {
+      const { repository, database } = createRepository();
+      const account = linkedAccount();
+      await repository.setLinkedAccount(account);
+
+      await repository.setRank(ACCOUNT_ID, RANK_BADGE, RANK_FETCHED_AT);
+
+      await expect(repository.getRank(ACCOUNT_ID)).resolves.toEqual({
+        badge: RANK_BADGE,
+        fetchedAt: RANK_FETCHED_AT,
+      });
+      await expect(storedRank(database)).resolves.toEqual({
+        rank_badge: RANK_BADGE,
+        rank_fetched_at: RANK_FETCHED_AT,
+      });
+      // The rank is not part of the profile that the link reads back.
+      await expect(repository.getLinkedAccount()).resolves.toEqual(account);
+    });
+
+    it('reads back an unranked player, whose badge is 0', async () => {
+      const { repository } = createRepository();
+      await repository.setLinkedAccount(linkedAccount());
+
+      await repository.setRank(ACCOUNT_ID, 0, RANK_FETCHED_AT);
+
+      // An unranked player is a known rank, not a missing one.
+      await expect(repository.getRank(ACCOUNT_ID)).resolves.toEqual({
+        badge: 0,
+        fetchedAt: RANK_FETCHED_AT,
+      });
+    });
+
+    it('replaces the rank in one statement', async () => {
+      const { repository, database } = createRepository();
+      await repository.setLinkedAccount(linkedAccount());
+      await repository.setRank(ACCOUNT_ID, RANK_BADGE, RANK_FETCHED_AT);
+      const spy = spyOnExecute(database);
+
+      await new LinkedAccountRepository(spy.database, new MemoryLogger()).setRank(
+        ACCOUNT_ID,
+        116,
+        RANK_FETCHED_AT + 86_400_000,
+      );
+
+      expect(spy.sql).toHaveLength(1);
+      await expect(repository.getRank(ACCOUNT_ID)).resolves.toEqual({
+        badge: 116,
+        fetchedAt: RANK_FETCHED_AT + 86_400_000,
+      });
+    });
+
+    it('keeps the rank when the same account is saved again', async () => {
+      const { repository } = createRepository();
+      await repository.setLinkedAccount(linkedAccount());
+      await repository.setRank(ACCOUNT_ID, RANK_BADGE, RANK_FETCHED_AT);
+
+      // The daily refresh of the profile saves the same account with a new name and a new date.
+      const refreshed = linkedAccount({
+        personaName: 'Renamed Player',
+        profileFetchedAt: 1_700_086_500_000,
+      });
+      await repository.setLinkedAccount(refreshed);
+
+      await expect(repository.getLinkedAccount()).resolves.toEqual(refreshed);
+      await expect(repository.getRank(ACCOUNT_ID)).resolves.toEqual({
+        badge: RANK_BADGE,
+        fetchedAt: RANK_FETCHED_AT,
+      });
+    });
+
+    it('clears the rank when another account is linked', async () => {
+      const { repository, database } = createRepository();
+      await repository.setLinkedAccount(linkedAccount());
+      await repository.setRank(ACCOUNT_ID, RANK_BADGE, RANK_FETCHED_AT);
+
+      await repository.setLinkedAccount(linkedAccount({ accountId: OTHER_ACCOUNT_ID }));
+
+      // The rank of the first account must not be taken for the rank of the second one.
+      await expect(repository.getRank(OTHER_ACCOUNT_ID)).resolves.toBeNull();
+      await expect(repository.getRank(ACCOUNT_ID)).resolves.toBeNull();
+      await expect(storedRank(database)).resolves.toEqual({
+        rank_badge: null,
+        rank_fetched_at: null,
+      });
+
+      // The second account can have its own rank, and the first one is still out.
+      await repository.setRank(OTHER_ACCOUNT_ID, 21, RANK_FETCHED_AT);
+
+      await expect(repository.getRank(OTHER_ACCOUNT_ID)).resolves.toEqual({
+        badge: 21,
+        fetchedAt: RANK_FETCHED_AT,
+      });
+      await expect(repository.getRank(ACCOUNT_ID)).resolves.toBeNull();
+    });
+
+    it('clears the rank of the link that is saved again after an unlink', async () => {
+      const { repository } = createRepository();
+      await repository.setLinkedAccount(linkedAccount());
+      await repository.setRank(ACCOUNT_ID, RANK_BADGE, RANK_FETCHED_AT);
+
+      // The row is deleted: linking the same account again is a first insert, with no rank.
+      await repository.clearLinkedAccount();
+      await repository.setLinkedAccount(linkedAccount());
+
+      await expect(repository.getRank(ACCOUNT_ID)).resolves.toBeNull();
+    });
+
+    it('answers null for an account that is not the linked one', async () => {
+      const { repository } = createRepository();
+      await repository.setLinkedAccount(linkedAccount());
+      await repository.setRank(ACCOUNT_ID, RANK_BADGE, RANK_FETCHED_AT);
+
+      await expect(repository.getRank(OTHER_ACCOUNT_ID)).resolves.toBeNull();
+    });
+
+    it('writes nothing for another account', async () => {
+      const { repository, database } = createRepository();
+
+      // No account linked: there is no row to update.
+      await expect(
+        repository.setRank(OTHER_ACCOUNT_ID, RANK_BADGE, RANK_FETCHED_AT),
+      ).resolves.toBeUndefined();
+      await expect(database.select('SELECT id FROM linked_account')).resolves.toEqual([]);
+
+      // Another account linked: its row is left as it is.
+      await repository.setLinkedAccount(linkedAccount());
+      await expect(
+        repository.setRank(OTHER_ACCOUNT_ID, RANK_BADGE, RANK_FETCHED_AT),
+      ).resolves.toBeUndefined();
+
+      await expect(storedRank(database)).resolves.toEqual({
+        rank_badge: null,
+        rank_fetched_at: null,
+      });
+      await expect(repository.getRank(ACCOUNT_ID)).resolves.toBeNull();
+      await expect(repository.getRank(OTHER_ACCOUNT_ID)).resolves.toBeNull();
+    });
+
+    it('does not notify', async () => {
+      const { repository } = createRepository();
+      await repository.setLinkedAccount(linkedAccount());
+      let calls = 0;
+      repository.subscribe(() => {
+        calls += 1;
+      });
+
+      // Neither a rank that is written nor a write for another account tells the listeners: the
+      // rank is not part of what they read again.
+      await repository.setRank(ACCOUNT_ID, RANK_BADGE, RANK_FETCHED_AT);
+      await repository.setRank(OTHER_ACCOUNT_ID, RANK_BADGE, RANK_FETCHED_AT);
+
+      expect(calls).toBe(0);
+    });
+
+    it('reads the rank even when the profile is damaged', async () => {
+      const { repository, database } = createRepository();
+      await insertRaw(database, [1, ACCOUNT_ID, 'Test Player', 'AAAA', 'z'.repeat(40), 5, null]);
+      await repository.setRank(ACCOUNT_ID, RANK_BADGE, RANK_FETCHED_AT);
+
+      // The rank reader needs the account id and the rank only.
+      await expect(repository.getRank(ACCOUNT_ID)).resolves.toEqual({
+        badge: RANK_BADGE,
+        fetchedAt: RANK_FETCHED_AT,
+      });
+    });
+
+    it.each([
+      { name: 'a badge without a fetch time', badge: RANK_BADGE, fetchedAt: null },
+      { name: 'a fetch time without a badge', badge: null, fetchedAt: RANK_FETCHED_AT },
+    ])('answers null for $name', async ({ badge, fetchedAt }) => {
+      const { repository, database } = createRepository();
+      await repository.setLinkedAccount(linkedAccount());
+      // The table accepts both columns apart; only a complete pair is a rank that was fetched.
+      await database.execute(
+        'UPDATE linked_account SET rank_badge = $1, rank_fetched_at = $2 WHERE id = $3',
+        [badge, fetchedAt, 1],
+      );
+
+      await expect(repository.getRank(ACCOUNT_ID)).resolves.toBeNull();
+    });
+
+    it.each([
+      {
+        name: 'a badge above the highest one',
+        row: rankRow({ rank_badge: 117 }),
+        field: 'rank_badge',
+        code: 'too_big',
+        value: '117',
+      },
+      {
+        name: 'a negative badge',
+        row: rankRow({ rank_badge: -1 }),
+        field: 'rank_badge',
+        code: 'too_small',
+        value: '-1',
+      },
+      {
+        name: 'a badge that is a text',
+        row: rankRow({ rank_badge: 'diamond' }),
+        field: 'rank_badge',
+        code: 'invalid_type',
+        value: 'diamond',
+      },
+      {
+        name: 'a badge that is not an integer',
+        row: rankRow({ rank_badge: 53.5 }),
+        field: 'rank_badge',
+        code: 'invalid_type',
+        value: '53.5',
+      },
+      {
+        name: 'a fetch time that is a text',
+        row: rankRow({ rank_fetched_at: 'yesterday' }),
+        field: 'rank_fetched_at',
+        code: 'invalid_type',
+        value: 'yesterday',
+      },
+      {
+        name: 'a fetch time that is not an integer',
+        row: rankRow({ rank_fetched_at: 1_700_000_200_000.5 }),
+        field: 'rank_fetched_at',
+        code: 'invalid_type',
+        value: '1700000200000.5',
+      },
+      {
+        name: 'an account id out of range',
+        row: rankRow({ account_id: 4_294_967_296 }),
+        field: 'account_id',
+        code: 'custom',
+        value: '4294967296',
+      },
+    ])(
+      'reports $name as a storage error that names no value',
+      async ({ row, field, code, value }) => {
+        const repository = new LinkedAccountRepository(
+          databaseReturning([row]),
+          new MemoryLogger(),
+        );
+
+        const failure = await failureOf(() => repository.getRank(ACCOUNT_ID));
+
+        expect(failure).toMatchObject({
+          kind: 'storage',
+          message: 'The stored rank is invalid',
+          // Only where the row is wrong and why, never the value.
+          context: { field, code },
+        });
+        expect(textOf(failure)).not.toContain(value);
+        expect(textOf(failure)).not.toContain(String(ACCOUNT_ID));
+      },
+    );
+
+    it.each([
+      {
+        name: 'a badge above the highest one',
+        badge: 117,
+        fetchedAt: RANK_FETCHED_AT,
+        field: 'rank_badge',
+        code: 'too_big',
+        value: '117',
+      },
+      {
+        name: 'a negative badge',
+        badge: -1,
+        fetchedAt: RANK_FETCHED_AT,
+        field: 'rank_badge',
+        code: 'too_small',
+        value: '-1',
+      },
+      {
+        name: 'a badge that is not an integer',
+        badge: 53.5,
+        fetchedAt: RANK_FETCHED_AT,
+        field: 'rank_badge',
+        code: 'invalid_type',
+        value: '53.5',
+      },
+      {
+        name: 'a badge that is not a number',
+        badge: Number.NaN,
+        fetchedAt: RANK_FETCHED_AT,
+        field: 'rank_badge',
+        code: 'invalid_type',
+        value: 'NaN',
+      },
+      {
+        name: 'a fetch time that is not an integer',
+        badge: RANK_BADGE,
+        fetchedAt: 1_700_000_200_000.5,
+        field: 'rank_fetched_at',
+        code: 'invalid_type',
+        value: '1700000200000.5',
+      },
+      {
+        name: 'a fetch time that is infinite',
+        badge: RANK_BADGE,
+        fetchedAt: Number.POSITIVE_INFINITY,
+        field: 'rank_fetched_at',
+        code: 'invalid_type',
+        value: 'Infinity',
+      },
+    ])(
+      'refuses to save $name, writes nothing and tells nobody',
+      async ({ badge, fetchedAt, field, code, value }) => {
+        const { repository, database } = createRepository();
+        await repository.setLinkedAccount(linkedAccount());
+        await repository.setRank(ACCOUNT_ID, 21, RANK_FETCHED_AT);
+        const spy = spyOnExecute(database);
+        const guarded = new LinkedAccountRepository(spy.database, new MemoryLogger());
+        let calls = 0;
+        guarded.subscribe(() => {
+          calls += 1;
+        });
+
+        const failure = await failureOf(() => guarded.setRank(ACCOUNT_ID, badge, fetchedAt));
+
+        expect(failure).toMatchObject({
+          kind: 'storage',
+          message: 'The rank is invalid',
+          // Only where the rank is wrong and why, never the value.
+          context: { field, code },
+        });
+        expect(textOf(failure)).not.toContain(value);
+        // Nothing reached the database, the rank is the one saved before, and nobody was told.
+        expect(spy.sql).toEqual([]);
+        await expect(repository.getRank(ACCOUNT_ID)).resolves.toEqual({
+          badge: 21,
+          fetchedAt: RANK_FETCHED_AT,
+        });
+        expect(calls).toBe(0);
+      },
+    );
+
+    it('stores the lowest and the highest badge', async () => {
+      const { repository } = createRepository();
+      await repository.setLinkedAccount(linkedAccount());
+
+      for (const badge of [0, 116]) {
+        await repository.setRank(ACCOUNT_ID, badge, RANK_FETCHED_AT);
+
+        await expect(repository.getRank(ACCOUNT_ID)).resolves.toEqual({
+          badge,
+          fetchedAt: RANK_FETCHED_AT,
+        });
+      }
+    });
+
+    it('has the table refuse a badge out of range, whoever writes', async () => {
+      const { repository, database } = createRepository();
+      await repository.setLinkedAccount(linkedAccount());
+
+      for (const badge of [-1, 117]) {
+        await expect(
+          database.execute('UPDATE linked_account SET rank_badge = $1 WHERE id = $2', [badge, 1]),
+        ).rejects.toThrow(/CHECK constraint failed/);
+      }
+
+      await expect(repository.getRank(ACCOUNT_ID)).resolves.toBeNull();
+    });
+
+    it('reports a database failure as a storage error and tells nobody', async () => {
+      const logger = new MemoryLogger();
+      const repository = new LinkedAccountRepository(BROKEN_DATABASE, logger);
+      let calls = 0;
+      repository.subscribe(() => {
+        calls += 1;
+      });
+
+      for (const attempt of [
+        () => repository.getRank(ACCOUNT_ID),
+        () => repository.setRank(ACCOUNT_ID, RANK_BADGE, RANK_FETCHED_AT),
+      ]) {
+        await expect(attempt()).rejects.toMatchObject({
+          kind: 'storage',
+          cause: new Error('disk I/O error'),
+        });
+      }
+
+      expect(calls).toBe(0);
+      expect(logger.entries).toEqual([]);
+    });
   });
 });

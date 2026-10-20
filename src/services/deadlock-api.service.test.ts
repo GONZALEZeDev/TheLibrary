@@ -18,12 +18,21 @@ import { isMetadataMissing } from '../adapters/dev/fixtures/match-metadata.fixtu
 import { FIXTURE_AVATAR_HASH, FIXTURE_PERSONA_NAME } from '../adapters/dev/fixtures/steam.fixture';
 import { MemoryLogger } from '../adapters/dev/memory-logger.adapter';
 import { DEFAULT_PAUSE_MS } from '../core/deadlock-api/api-response';
-import { MAX_RESPONSE_BYTES, matchMetadataRequest } from '../core/deadlock-api/endpoints';
+import {
+  MAX_RESPONSE_BYTES,
+  matchMetadataRequest,
+  type CohortQuery,
+} from '../core/deadlock-api/endpoints';
+import { PAIGE_HERO_ID } from '../core/domain/hero';
 import { AppError, errorLogContext, isAppError } from '../core/errors/app-error';
 import type { Database } from '../ports/database.port';
 import type { HttpRequest, HttpResponse } from '../ports/http-client.port';
 import { createTestDatabase, testAccountId, testMatchId } from '../test/test-data';
-import { DeadlockApiService, type MetadataFetch } from './deadlock-api.service';
+import {
+  DeadlockApiService,
+  type AnalyticsFetch,
+  type MetadataFetch,
+} from './deadlock-api.service';
 import { SyncStateRepository } from './sync-state.repository';
 
 const START = Date.UTC(2026, 9, 14, 12, 0, 0);
@@ -1157,6 +1166,421 @@ describe('DeadlockApiService.fetchSteamProfile', () => {
       expect(JSON.stringify([logger.entries, loggedByCaller])).not.toContain(marker);
       // The check means something only if the request itself was logged.
       expect(logger.entries.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('DeadlockApiService community requests', () => {
+  const BASE_URL = 'https://api.deadlock-api.com';
+  const USER_AGENT = 'TheLibrary/0.1.0 (+https://github.com/GONZALEZeDev/TheLibrary)';
+
+  /** Paige in Sentinel (tier 4), over the 25-30 minute window, since a UTC midnight. */
+  const query: CohortQuery = {
+    heroId: PAIGE_HERO_ID,
+    sinceUnixS: 1_789_344_000,
+    minDurationS: 1500,
+    maxDurationS: 1799,
+    badge: { min: 41, max: 46 },
+  };
+
+  /** The filters every community request of `query` carries. */
+  const FILTERS =
+    'min_unix_timestamp=1789344000&min_duration_s=1500&max_duration_s=1799&min_average_badge=41&max_average_badge=46';
+
+  /** One request of the service, with what the tests need to know of it. */
+  interface CommunityCall {
+    /** The method of the service, for the titles. */
+    readonly method: string;
+    /** Call the method. */
+    readonly run: (api: DeadlockApiService) => Promise<AnalyticsFetch<unknown>>;
+    /** The template of the endpoint: what the logs and the errors name. */
+    readonly endpoint: string;
+    /** A JSON body that is not the kind of answer the method expects. */
+    readonly invalidBody: unknown;
+  }
+
+  /** The three requests that share the analytics budget. */
+  const ANALYTICS_CALLS: readonly CommunityCall[] = [
+    {
+      method: 'fetchMetricBenchmark',
+      run: (api) => api.fetchMetricBenchmark(query),
+      endpoint: '/v1/analytics/player-stats/metrics',
+      invalidBody: [],
+    },
+    {
+      method: 'fetchPerformanceCurve',
+      run: (api) => api.fetchPerformanceCurve(query),
+      endpoint: '/v1/analytics/player-performance-curve',
+      invalidBody: {},
+    },
+    {
+      method: 'fetchHeroSample',
+      run: (api) => api.fetchHeroSample(query),
+      endpoint: '/v1/analytics/hero-stats',
+      invalidBody: {},
+    },
+  ];
+
+  /** The request of the rank, which has a budget of its own. */
+  const RANK_CALL: CommunityCall = {
+    method: 'fetchPlayerRank',
+    run: (api) => api.fetchPlayerRank(FIXTURE_ACCOUNT_ID),
+    endpoint: '/v1/players/{account_id}/rank',
+    invalidBody: { badge: 'gold' },
+  };
+
+  const CALLS: readonly CommunityCall[] = [...ANALYTICS_CALLS, RANK_CALL];
+
+  /**
+   * Narrow the result of a community request to the value it fetched.
+   *
+   * @param result - The result.
+   * @returns The value, known to be fetched.
+   */
+  function fetchedValue<T>(result: AnalyticsFetch<T>): T {
+    if (result.kind !== 'fetched') {
+      expect.unreachable(`expected a fetched value, got ${result.kind}`);
+    }
+    return result.value;
+  }
+
+  it("sends each request with the exact URL and the app's User-Agent", async () => {
+    const { api, http } = setUp();
+
+    await api.fetchMetricBenchmark(query);
+    await api.fetchPerformanceCurve(query);
+    await api.fetchHeroSample(query);
+    await api.fetchPlayerRank(FIXTURE_ACCOUNT_ID);
+
+    expect(http.requests).toEqual(
+      [
+        `${BASE_URL}/v1/analytics/player-stats/metrics?hero_ids=67&game_mode=normal&${FILTERS}`,
+        `${BASE_URL}/v1/analytics/player-performance-curve?hero_ids=67&game_mode=normal&resolution=0&${FILTERS}`,
+        // The hero statistics have no hero filter: the hero is not sent.
+        `${BASE_URL}/v1/analytics/hero-stats?game_mode=normal&${FILTERS}`,
+        `${BASE_URL}/v1/players/1000001/rank`,
+      ].map((url) => ({
+        method: 'GET',
+        url,
+        headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
+        timeoutMs: 15_000,
+        maxBodyBytes: 10 * 1024 * 1024,
+      })),
+    );
+  });
+
+  it('returns the benchmark, the curve, the sample and the badge of the fixture API', async () => {
+    const { api } = setUp();
+
+    const benchmark = fetchedValue(await api.fetchMetricBenchmark(query));
+    const curve = fetchedValue(await api.fetchPerformanceCurve(query));
+
+    expect([...benchmark.keys()]).toHaveLength(11);
+    // The curve stops at the longest match of the window: 1799 s, so its last point is 1500 s.
+    expect(curve.map((point) => point.timeS)).toEqual([180, 360, 540, 720, 900, 1200, 1500]);
+    expect(fetchedValue(await api.fetchHeroSample(query))).toBe(2422);
+    expect(fetchedValue(await api.fetchPlayerRank(FIXTURE_ACCOUNT_ID))).toBe(44);
+  });
+
+  it('reads the sample of the hero of the query', async () => {
+    const { api } = setUp();
+
+    // Another hero of the statistics, then a hero the answer has no row for.
+    expect(fetchedValue(await api.fetchHeroSample({ ...query, heroId: 1 }))).toBeGreaterThan(0);
+    expect(fetchedValue(await api.fetchHeroSample({ ...query, heroId: 999 }))).toBe(0);
+  });
+
+  it('refuses the 21st analytics request of a minute without sending it', async () => {
+    const { api, http, clock } = setUp();
+
+    // The three kinds of analytics request share one window: 20 of them in any mix fill it.
+    for (let index = 0; index < 20; index += 1) {
+      const call = ANALYTICS_CALLS[index % ANALYTICS_CALLS.length] ?? expect.unreachable();
+      await expect(call.run(api)).resolves.toEqual(FETCHED);
+    }
+    expect(http.requests).toHaveLength(20);
+    for (const call of ANALYTICS_CALLS) {
+      await expect(call.run(api)).resolves.toEqual({
+        kind: 'budget_exhausted',
+        nextAllowedAt: START + MINUTE,
+      });
+    }
+    expect(http.requests).toHaveLength(20);
+
+    // The refused requests were not counted: the window frees up as soon as the first one leaves.
+    clock.now = START + MINUTE;
+    await expect(api.fetchHeroSample(query)).resolves.toEqual(FETCHED);
+    expect(http.requests).toHaveLength(21);
+  });
+
+  it('allows 3 rank requests an hour', async () => {
+    const { api, http, clock } = setUp();
+
+    for (let index = 0; index < 3; index += 1) {
+      clock.now = START + index * MINUTE;
+      await expect(api.fetchPlayerRank(FIXTURE_ACCOUNT_ID)).resolves.toEqual(FETCHED);
+    }
+    clock.now = START + 3 * MINUTE;
+
+    await expect(api.fetchPlayerRank(FIXTURE_ACCOUNT_ID)).resolves.toEqual({
+      kind: 'budget_exhausted',
+      nextAllowedAt: START + 60 * MINUTE,
+    });
+    expect(http.requests).toHaveLength(3);
+    clock.now = START + 60 * MINUTE;
+    await expect(api.fetchPlayerRank(FIXTURE_ACCOUNT_ID)).resolves.toEqual(FETCHED);
+  });
+
+  it('keeps the rank budget and the analytics budget apart', async () => {
+    // The rank budget spent leaves the analytics requests alone.
+    const rankSpent = setUp();
+    for (let index = 0; index < 3; index += 1) {
+      await rankSpent.api.fetchPlayerRank(FIXTURE_ACCOUNT_ID);
+    }
+    await expect(rankSpent.api.fetchPlayerRank(FIXTURE_ACCOUNT_ID)).resolves.toMatchObject({
+      kind: 'budget_exhausted',
+    });
+    for (let index = 0; index < 20; index += 1) {
+      await expect(rankSpent.api.fetchHeroSample(query)).resolves.toEqual(FETCHED);
+    }
+
+    // And the analytics budget spent leaves the rank request alone.
+    const analyticsSpent = setUp();
+    for (let index = 0; index < 20; index += 1) {
+      await analyticsSpent.api.fetchHeroSample(query);
+    }
+    await expect(analyticsSpent.api.fetchHeroSample(query)).resolves.toMatchObject({
+      kind: 'budget_exhausted',
+    });
+    await expect(analyticsSpent.api.fetchPlayerRank(FIXTURE_ACCOUNT_ID)).resolves.toEqual(FETCHED);
+  });
+
+  it('counts a request that failed', async () => {
+    const { api, http } = setUp(() => {
+      throw new AppError('network', 'The request failed');
+    });
+
+    for (let index = 0; index < 3; index += 1) {
+      await expect(api.fetchPlayerRank(FIXTURE_ACCOUNT_ID)).rejects.toMatchObject({
+        kind: 'network',
+      });
+    }
+
+    // A request that fails still reached deadlock-api: it used its place in the budget.
+    await expect(api.fetchPlayerRank(FIXTURE_ACCOUNT_ID)).resolves.toMatchObject({
+      kind: 'budget_exhausted',
+    });
+    expect(http.requests).toHaveLength(3);
+  });
+
+  it('never lets overlapping calls exceed the budget', async () => {
+    const { api, http } = setUp();
+    for (let index = 0; index < 19; index += 1) {
+      await api.fetchMetricBenchmark(query);
+    }
+
+    const results = await Promise.all([
+      api.fetchPerformanceCurve(query),
+      api.fetchHeroSample(query),
+    ]);
+
+    expect(results.map((result) => result.kind).toSorted()).toEqual([
+      'budget_exhausted',
+      'fetched',
+    ]);
+    expect(http.requests).toHaveLength(20);
+
+    // The rank has its own window, and the same guarantee.
+    const rank = setUp();
+    await rank.api.fetchPlayerRank(FIXTURE_ACCOUNT_ID);
+    await rank.api.fetchPlayerRank(FIXTURE_ACCOUNT_ID);
+    const rankResults = await Promise.all([
+      rank.api.fetchPlayerRank(FIXTURE_ACCOUNT_ID),
+      rank.api.fetchPlayerRank(FIXTURE_ACCOUNT_ID),
+    ]);
+
+    expect(rankResults.map((result) => result.kind).toSorted()).toEqual([
+      'budget_exhausted',
+      'fetched',
+    ]);
+    expect(rank.http.requests).toHaveLength(3);
+  });
+
+  it('answers paused during a pause', async () => {
+    const { api, http, syncState, clock } = setUp();
+    await syncState.setPausedUntil(START + 5_000);
+
+    // Far more calls than the budgets allow: none is sent and none is counted.
+    for (let index = 0; index < 25; index += 1) {
+      for (const call of CALLS) {
+        await expect(call.run(api)).resolves.toEqual({ kind: 'paused', until: START + 5_000 });
+      }
+    }
+    expect(http.requests).toHaveLength(0);
+
+    // The pause is over, and the calls it stopped used none of the budgets.
+    clock.now = START + 5_000;
+    for (let index = 0; index < 20; index += 1) {
+      await expect(api.fetchPerformanceCurve(query)).resolves.toEqual(FETCHED);
+    }
+    for (let index = 0; index < 3; index += 1) {
+      await expect(api.fetchPlayerRank(FIXTURE_ACCOUNT_ID)).resolves.toEqual(FETCHED);
+    }
+    expect(http.requests).toHaveLength(23);
+  });
+
+  it.each(CALLS)('$method pauses on a 429 and answers paused', async (call) => {
+    const { api, http, syncState } = setUp(() =>
+      jsonResponse({ status: 429 }, 429, { 'retry-after': '120' }),
+    );
+
+    await expect(call.run(api)).resolves.toEqual({ kind: 'paused', until: START + 120_000 });
+    await expect(syncState.getPausedUntil()).resolves.toBe(START + 120_000);
+
+    // The pause is shared by every family of requests: the next calls send nothing.
+    await expect(api.fetchMatchHistory(FIXTURE_ACCOUNT_ID, { automatic: false })).resolves.toEqual({
+      kind: 'paused',
+      until: START + 120_000,
+    });
+    await expect(api.fetchSteamProfile(FIXTURE_ACCOUNT_ID, { refresh: false })).resolves.toEqual({
+      kind: 'paused',
+      until: START + 120_000,
+    });
+    expect(http.requests).toHaveLength(1);
+  });
+
+  it.each(CALLS)(
+    '$method pauses on a 503 without Retry-After for the default delay',
+    async (call) => {
+      const { api, syncState } = setUp(() => jsonResponse({ status: 503 }, 503));
+
+      await expect(call.run(api)).resolves.toEqual({
+        kind: 'paused',
+        until: START + DEFAULT_PAUSE_MS,
+      });
+      await expect(syncState.getPausedUntil()).resolves.toBe(START + DEFAULT_PAUSE_MS);
+    },
+  );
+
+  it.each(CALLS)('$method throws the failures of the API as errors', async (call) => {
+    const failures = [
+      [403, 'forbidden'],
+      [404, 'not_found'],
+      [500, 'service_unavailable'],
+      [418, 'unexpected'],
+    ] as const;
+
+    for (const [status, kind] of failures) {
+      const { api } = setUp(() => jsonResponse({}, status));
+
+      await expect(call.run(api)).rejects.toMatchObject({
+        kind,
+        context: { endpoint: call.endpoint, status },
+      });
+    }
+  });
+
+  it.each(CALLS)('$method throws a failure of the transport as an error', async (call) => {
+    const { api } = setUp(() => {
+      throw new AppError('timeout', 'The request timed out');
+    });
+
+    await expect(call.run(api)).rejects.toMatchObject({
+      kind: 'timeout',
+      context: { endpoint: call.endpoint },
+    });
+  });
+
+  it.each(CALLS)(
+    '$method throws an answer of the wrong shape as an invalid payload',
+    async (call) => {
+      const { api } = setUp(() => jsonResponse(call.invalidBody));
+
+      await expect(call.run(api)).rejects.toMatchObject({ kind: 'invalid_payload' });
+    },
+  );
+
+  it('removes the account id that a transport error quotes', async () => {
+    const { api, logger } = setUp(() => {
+      throw new AppError('network', 'The request failed', {
+        cause: `error sending request for url (${BASE_URL}/v1/players/1000001/rank)`,
+      });
+    });
+
+    const error = await api.fetchPlayerRank(FIXTURE_ACCOUNT_ID).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AppError);
+    expect(error).toMatchObject({
+      kind: 'network',
+      context: { endpoint: '/v1/players/{account_id}/rank' },
+      cause: `error sending request for url (${BASE_URL}/v1/players/{account_id}/rank)`,
+    });
+    expect(
+      JSON.stringify([isAppError(error) ? errorLogContext(error) : null, logger.entries]),
+    ).not.toContain(String(FIXTURE_ACCOUNT_ID));
+  });
+
+  it('logs the rank endpoint as a template', async () => {
+    const { api, logger } = setUp();
+
+    await api.fetchPlayerRank(FIXTURE_ACCOUNT_ID);
+
+    expect(logger.entries).toContainEqual(
+      expect.objectContaining({
+        level: 'debug',
+        message: 'Request answered',
+        context: expect.objectContaining({
+          endpoint: '/v1/players/{account_id}/rank',
+          status: 200,
+        }) as unknown,
+      }),
+    );
+    expect(JSON.stringify(logger.entries)).not.toContain(String(FIXTURE_ACCOUNT_ID));
+  });
+
+  it.each(ANALYTICS_CALLS)('$method logs its endpoint without any filter', async (call) => {
+    const { api, logger } = setUp();
+
+    await call.run(api);
+
+    expect(logger.entries).toContainEqual(
+      expect.objectContaining({
+        level: 'debug',
+        message: 'Request answered',
+        context: expect.objectContaining({ endpoint: call.endpoint, status: 200 }) as unknown,
+      }),
+    );
+    // The query of the community is not logged: only the template of the endpoint is.
+    expect(JSON.stringify(logger.entries)).not.toContain('min_unix_timestamp');
+  });
+
+  it('never logs a value of the answer', async () => {
+    const marker = 'VALUE-MARKER-3f9a';
+    const answers: readonly HttpResponse[] = [
+      jsonResponse([marker]),
+      jsonResponse({ marker }),
+      jsonResponse({ badge: marker }),
+      jsonResponse(marker),
+      { status: 200, headers: {}, body: `<html>${marker}</html>` },
+      jsonResponse({ error: marker }, 404),
+      jsonResponse({ error: marker }, 429, { 'retry-after': '5' }),
+      jsonResponse({ error: marker }, 503, { 'retry-after': '5' }),
+      jsonResponse({ error: marker }, 403),
+      jsonResponse({ error: marker }, 500),
+    ];
+
+    for (const call of CALLS) {
+      for (const answer of answers) {
+        const { api, logger } = setUp(() => answer);
+
+        const result = await call.run(api).catch((error: unknown) => error);
+
+        // What a caller logs for a failure is the log context of its error: no value there either.
+        const loggedByCaller = isAppError(result) ? errorLogContext(result) : null;
+        expect(JSON.stringify([logger.entries, loggedByCaller])).not.toContain(marker);
+        // The check means something only if the request itself was logged.
+        expect(logger.entries.length).toBeGreaterThan(0);
+      }
     }
   });
 });

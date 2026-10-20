@@ -26,6 +26,13 @@ import type {
   HttpRequest,
   HttpResponse,
 } from '../../ports/http-client.port';
+import {
+  createHeroSamplesFixture,
+  createMetricBenchmarkFixture,
+  createPerformanceCurveFixture,
+  createPlayerRankFixture,
+  createUnrankedPlayerRankFixture,
+} from './fixtures/analytics.fixture';
 import { FIXTURE_HERO_CATALOGUE } from './fixtures/heroes.fixture';
 import {
   createMatchHistoryFixture,
@@ -264,6 +271,66 @@ function answerMatchMetadata(
  */
 const STEAM_PROFILE_PATH = /^\/v1\/players\/steam\?account_ids=(\d+)(?:&refresh=true)?$/;
 
+/**
+ * The path of the community benchmark endpoint, once the base URL is cut off, then its query when
+ * there is one (`metricBenchmarkRequest`). The query is ignored: the answer is always the same.
+ */
+const METRIC_BENCHMARK_PATH = /^\/v1\/analytics\/player-stats\/metrics(?:\?.*)?$/;
+
+/**
+ * The path of the performance curve endpoint, once the base URL is cut off, then its query when
+ * there is one (`performanceCurveRequest`). Only its `max_duration_s` is read.
+ */
+const PERFORMANCE_CURVE_PATH = /^\/v1\/analytics\/player-performance-curve(?:\?(.*))?$/;
+
+/**
+ * The path of the hero statistics endpoint, once the base URL is cut off, then its query when there
+ * is one (`heroSampleRequest`). The query is ignored: the answer is always the same.
+ */
+const HERO_SAMPLE_PATH = /^\/v1\/analytics\/hero-stats(?:\?.*)?$/;
+
+/** The path of the player rank endpoint, once the base URL is cut off: the account id is in it. */
+const PLAYER_RANK_PATH = /^\/v1\/players\/(\d+)\/rank$/;
+
+/**
+ * Answer a request for community data (the benchmark, the curve, the hero statistics or a rank).
+ *
+ * The answers do not depend on the community asked for (the hero, the period, the badge range),
+ * except for the length of the curve, which follows `max_duration_s` as the real API's does, and
+ * for the rank, which is the one of the tracked account (any other player has no rank).
+ *
+ * @param path - The path of the URL, once the base URL is cut off, with its query.
+ * @param trackedAccountId - The tracked account.
+ * @returns The response, or `null` when the path is not one of the community endpoints.
+ */
+function answerCommunityRequest(path: string, trackedAccountId: AccountId): HttpResponse | null {
+  if (METRIC_BENCHMARK_PATH.test(path)) {
+    return jsonResponse(createMetricBenchmarkFixture());
+  }
+  const curveRoute = PERFORMANCE_CURVE_PATH.exec(path);
+  if (curveRoute !== null) {
+    const [, query = ''] = curveRoute;
+    const maxDurationS = new URLSearchParams(query).get('max_duration_s');
+    // Without a window, the curve runs as far as the longest match the API knows.
+    return jsonResponse(
+      createPerformanceCurveFixture(maxDurationS === null ? undefined : Number(maxDurationS)),
+    );
+  }
+  if (HERO_SAMPLE_PATH.test(path)) {
+    return jsonResponse(createHeroSamplesFixture());
+  }
+  const rankRoute = PLAYER_RANK_PATH.exec(path);
+  if (rankRoute !== null) {
+    const [, accountText = ''] = rankRoute;
+    return jsonResponse(
+      parseAccountId(Number(accountText)) === trackedAccountId
+        ? createPlayerRankFixture()
+        : createUnrankedPlayerRankFixture(),
+    );
+  }
+  return null;
+}
+
 /** The content type of Steam's `check_authentication` answers. */
 const STEAM_ANSWER_CONTENT_TYPE = 'text/plain;charset=utf-8';
 
@@ -304,7 +371,9 @@ function answerCheckAuthentication(form: string, confirmed: Set<string>): Fixtur
  *   any other account, the hero catalogue, the detail of the matches of that history
  *   (`GET /v1/matches/{match_id}/metadata`, see `answerMatchMetadata`), and the Steam profile
  *   (`GET /v1/players/steam`, with or without `refresh`) of the fixture account, an empty list for
- *   any other;
+ *   any other, and the community data of the match analysis (the benchmark, the performance curve
+ *   and the hero statistics of `GET /v1/analytics/…`, and the rank `GET /v1/players/{id}/rank`, see
+ *   `answerCommunityRequest`);
  * - Steam's OpenID endpoint: the confirmation of an assertion, once (`POST`, see
  *   `answerCheckAuthentication`). Each fixture API remembers what it confirmed;
  * - Steam's avatar CDN: the avatar of the fixture account, as a JPEG;
@@ -365,6 +434,11 @@ export function createFixtureApi(options: FixtureApiOptions): FixtureHandler {
         : null;
     if (profileAccountId !== null) {
       return jsonResponse(createSteamProfilesFixture(profileAccountId));
+    }
+    const communityAnswer =
+      request.method === 'GET' ? answerCommunityRequest(path, accountId) : null;
+    if (communityAnswer !== null) {
+      return communityAnswer;
     }
     return jsonResponse(
       { error: `No fixture for ${request.url.replace(DEADLOCK_API_BASE_URL, '')}` },

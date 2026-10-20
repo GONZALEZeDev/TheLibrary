@@ -30,6 +30,8 @@ describe('SqlJsDatabase', () => {
     expect(rows.map((row) => row.name)).toEqual([
       'api_cache',
       'linked_account',
+      'match_metrics',
+      'match_projections',
       'matches',
       'sync_state',
     ]);

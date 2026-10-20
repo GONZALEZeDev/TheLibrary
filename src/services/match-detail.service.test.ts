@@ -37,7 +37,7 @@ import { parseMatchMetadata } from '../core/deadlock-api/match-metadata.schema';
 import type { AccountId } from '../core/domain/account';
 import { PAIGE_HERO_ID } from '../core/domain/hero';
 import type { MatchId, MatchSummary } from '../core/domain/match';
-import { AppError, errorLogContext } from '../core/errors/app-error';
+import { AppError } from '../core/errors/app-error';
 import {
   createArchiveEnvelope,
   decodeArchiveEnvelope,
@@ -63,6 +63,7 @@ import type { LogContext } from '../ports/logger.port';
 import type { HttpRequest, HttpResponse } from '../ports/http-client.port';
 import { DirectCompressor } from '../test/direct-compressor';
 import { createTestDatabase, matchSummary, testAccountId, testMatchId } from '../test/test-data';
+import { ArchiveReaderService } from './archive-reader.service';
 import { DeadlockApiService } from './deadlock-api.service';
 import { MatchDetailRepository, type StoredDetail } from './match-detail.repository';
 import { MatchDetailService, type DetailRunReport } from './match-detail.service';
@@ -248,6 +249,8 @@ async function setUp(options: SetUpOptions = {}) {
   const repository = new MatchDetailRepository(database);
   const archive = options.archive ?? new MemoryArchiveStore();
   const compressor = new DirectCompressor();
+  // The real reader, on the same archive, compressor and logger: the page is tested through it.
+  const reader = new ArchiveReaderService({ archive, compressor, logger });
   const service = new MatchDetailService({
     accountSource: new StaticAccountSource(
       options.accountId === undefined ? ACCOUNT : options.accountId,
@@ -256,6 +259,7 @@ async function setUp(options: SetUpOptions = {}) {
     repository,
     archive,
     compressor,
+    reader,
     logger,
     now,
     random: options.random ?? (() => 0.5),
@@ -266,6 +270,7 @@ async function setUp(options: SetUpOptions = {}) {
     repository,
     archive,
     compressor,
+    reader,
     logger,
     http,
     syncState,
@@ -1750,6 +1755,10 @@ interface UnreadableArchive {
  * The ways an archive can be unreadable, that is, damaged: one for each step of the reading that
  * can find a problem in the data. A failure of the disk or of the compressor is not one of them:
  * it says nothing about the archive (see the tests of `getMatchDetail`).
+ *
+ * The first three are found by the archive reader, whose own tests (`archive-reader.service.test.ts`)
+ * check what it answers and logs for each; here they show that the page treats each as a missing
+ * archive, through the real reader. The last is found by the page itself.
  */
 const UNREADABLE_ARCHIVES: readonly UnreadableArchive[] = [
   {
@@ -2002,6 +2011,39 @@ describe('MatchDetailService.getMatchDetail', () => {
     },
   );
 
+  it('lets a bug in the reading of the facts reach the caller, and keeps the match archived', async () => {
+    const context = await setUp({ matches: summariesOf([SERVED]) });
+    await context.service.runQueue(ACCOUNT, RUN);
+    const archivedBefore = await storedDetail(context.repository, SERVED);
+    const resetToPending = vi.spyOn(context.repository, 'resetToPending');
+    // An envelope no archive could decode to: reading its facts fails with a `TypeError`, which is
+    // not a problem of the data (those are `invalid_payload` errors).
+    const brokenEnvelope = {
+      ...envelopeWithoutNetWorth(SERVED),
+      payload: null,
+    } as unknown as ArchiveEnvelope;
+    vi.spyOn(context.reader, 'readArchive').mockResolvedValueOnce({
+      kind: 'read',
+      envelope: brokenEnvelope,
+    });
+
+    const failure = await context.service.getMatchDetail(matchOf(SERVED)).then(
+      () => null,
+      (reason: unknown) => reason,
+    );
+
+    // The bug is the page's error, and not a verdict on the archive: nothing is logged about the
+    // archive, and the match is not put back to `pending`.
+    expect(failure).toMatchObject({ name: 'TypeError' });
+    expect(failure).not.toBeInstanceOf(AppError);
+    expect(linesAt(context.logger, 'warn')).toEqual([]);
+    expect(resetToPending).not.toHaveBeenCalled();
+    await expect(storedDetail(context.repository, SERVED)).resolves.toEqual(archivedBefore);
+    await expect(context.service.getMatchDetail(matchOf(SERVED))).resolves.toMatchObject({
+      kind: 'ready',
+    });
+  });
+
   it('does not reset a match past the 90 days when the archive cannot be read', async () => {
     const context = await setUp({ matches: summariesOf([SERVED]) });
     await context.service.runQueue(ACCOUNT, RUN);
@@ -2019,34 +2061,6 @@ describe('MatchDetailService.getMatchDetail', () => {
     await expect(context.service.getMatchDetail(matchOf(SERVED))).resolves.toMatchObject({
       kind: 'ready',
     });
-  });
-
-  it('keeps the account id out of the error and the log when the disk fails on a path', async () => {
-    const context = await setUp({ matches: summariesOf([SERVED]) });
-    await plantArchive(context, SERVED, Uint8Array.of(1));
-    const matchText = String(SERVED.match_id);
-    vi.spyOn(context.archive, 'read').mockRejectedValueOnce(
-      new Error(`Access is denied to archive/${String(ACCOUNT)}/${matchText}.json.zst`),
-    );
-
-    const failure = await context.service.getMatchDetail(matchOf(SERVED)).then(
-      () => null,
-      (reason: unknown) => reason,
-    );
-
-    // The query client logs the error with `errorLogContext`: what that holds has the account id
-    // replaced, wherever the error kept the cause.
-    expect(failure).toBeInstanceOf(AppError);
-    const logged = errorLogContext(failure as AppError);
-    expect(logged).toMatchObject({
-      kind: 'storage',
-      step: 'read',
-      matchId: matchOf(SERVED),
-      cause: `Access is denied to archive/{account_id}/${matchText}.json.zst`,
-    });
-    expect(JSON.stringify(logged)).not.toContain(String(ACCOUNT));
-    expect((failure as AppError).message).not.toContain(String(ACCOUNT));
-    expect(JSON.stringify(context.logger.entries)).not.toContain(String(ACCOUNT));
   });
 
   it('lets a failure to put the match back to pending reach the caller', async () => {

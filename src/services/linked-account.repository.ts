@@ -6,7 +6,12 @@
  * together. This repository is the narrow `AccountSource` of the synchronisation (the id of the
  * account to synchronise, or none), and gives the account service what it needs to link, refresh and
  * unlink the account: read the row, replace it, delete it, and subscribe to its changes. The account
- * service is the only writer.
+ * service is the only writer of the link.
+ *
+ * The rank of the account (its current badge, and when it was fetched) lives in two more columns of
+ * the same row: it is account data, so it goes with the link and never outlives a switch to another
+ * account. It is read and written apart from the link, and a write of the rank does not tell the
+ * subscribers of the link.
  *
  * A row that cannot be read back (damaged, or written by an incompatible version) is a storage
  * error and never "no account": the app must not take a damaged link for a first launch, which would
@@ -43,6 +48,17 @@ const SELECT_ACCOUNT_ID = 'SELECT account_id FROM linked_account WHERE id = $1';
 const SELECT_LINKED_ACCOUNT = `SELECT account_id, persona_name, avatar_base64, avatar_hash, linked_at, profile_fetched_at
    FROM linked_account WHERE id = $1`;
 
+/** Reads the rank of the linked account, with the account id that tells whose rank it is. */
+const SELECT_RANK =
+  'SELECT account_id, rank_badge, rank_fetched_at FROM linked_account WHERE id = $1';
+
+/** Writes the rank of the linked account, only if the row still holds the account it is for. */
+const UPDATE_RANK =
+  'UPDATE linked_account SET rank_badge = $1, rank_fetched_at = $2 WHERE id = $3 AND account_id = $4';
+
+/** The highest rank badge: sub-rank 6 of tier 11. Equal to the limit in the table. */
+const MAX_RANK_BADGE = 116;
+
 /** Schema of the account id column: what {@link parseAccountId} accepts, as a number. */
 const accountIdSchema = z
   .int()
@@ -75,6 +91,35 @@ const rowSchema = z
     path: ['avatar_hash'],
     message: 'An avatar and its hash go together',
   });
+
+/** Schema of a rank badge (`tier × 10 + sub-rank`, 0 for an unranked player). */
+const rankBadgeSchema = z.int().min(0).max(MAX_RANK_BADGE);
+
+/**
+ * Schema of the columns {@link LinkedAccountRepository.getRank} reads. The two rank columns are
+ * `NULL` until the rank is fetched, and the account id says whose rank they hold.
+ */
+const rankRowSchema = z.object({
+  account_id: accountIdSchema,
+  rank_badge: rankBadgeSchema.nullable(),
+  rank_fetched_at: z.int().nullable(),
+});
+
+/** Schema of the rank {@link LinkedAccountRepository.setRank} is about to write: both columns set. */
+const rankToWriteSchema = z.object({
+  rank_badge: rankBadgeSchema,
+  rank_fetched_at: z.int(),
+});
+
+/**
+ * The rank of the linked account, as the app last fetched it.
+ */
+export interface LinkedAccountRank {
+  /** The rank badge: `tier × 10 + sub-rank` (0 to 116), 0 when the player is unranked. */
+  readonly badge: number;
+  /** When the rank was fetched, in Unix milliseconds. */
+  readonly fetchedAt: number;
+}
 
 /**
  * Validate a row, read from the table or about to be written.
@@ -154,9 +199,45 @@ export class LinkedAccountRepository implements AccountSource {
   }
 
   /**
+   * The rank of an account, as it was last fetched.
+   *
+   * It reads the account id and the two rank columns only, not the profile, so that a damaged
+   * persona name or avatar never stops the analysis from reading the rank. The rank is account data:
+   * it is the rank of the linked account and of no other one.
+   *
+   * @param accountId - The account whose rank is wanted.
+   * @returns Its rank, or `null` when no account is linked, another account is linked, or the rank
+   *   was never fetched (either rank column is empty).
+   * @throws AppError of kind `storage` when the database fails or the row is invalid (a badge
+   *   outside 0 to 116, a time that is not an integer, an invalid account id). Its context names the
+   *   column and the kind of problem, never the value.
+   */
+  async getRank(accountId: AccountId): Promise<LinkedAccountRank | null> {
+    const row = await this.#readRow(SELECT_RANK);
+    if (row === undefined) {
+      return null;
+    }
+    const stored = parseRow(rankRowSchema, row, 'The stored rank is invalid');
+    if (
+      stored.account_id !== accountId ||
+      stored.rank_badge === null ||
+      stored.rank_fetched_at === null
+    ) {
+      return null;
+    }
+    return { badge: stored.rank_badge, fetchedAt: stored.rank_fetched_at };
+  }
+
+  /**
    * Link an account: insert the row, or replace the account already linked, in one statement.
    * The account is validated against the rules of the read first, so that a row this repository
    * would refuse to read back is never written. The listeners are told once the row is saved.
+   *
+   * The rank of the row stays when the account is the one already linked (the daily refresh of the
+   * profile saves the same account again) and is cleared when it is another one: a switch of
+   * account must never carry the rank of the old account over to the new one, which would compare
+   * the matches of the new account with the wrong community. A first link has no row to keep a rank
+   * from, so both rank columns start empty.
    *
    * @param account - The account to link.
    * @throws AppError of kind `storage` when the account is invalid (an uppercase hash, a persona
@@ -188,7 +269,11 @@ export class LinkedAccountRepository implements AccountSource {
              avatar_base64 = excluded.avatar_base64,
              avatar_hash = excluded.avatar_hash,
              linked_at = excluded.linked_at,
-             profile_fetched_at = excluded.profile_fetched_at`,
+             profile_fetched_at = excluded.profile_fetched_at,
+             rank_badge = CASE WHEN linked_account.account_id = excluded.account_id
+               THEN linked_account.rank_badge ELSE NULL END,
+             rank_fetched_at = CASE WHEN linked_account.account_id = excluded.account_id
+               THEN linked_account.rank_fetched_at ELSE NULL END`,
           [
             LINKED_ACCOUNT_ROW_ID,
             row.account_id,
@@ -202,6 +287,39 @@ export class LinkedAccountRepository implements AccountSource {
       'Could not save the linked account',
     );
     this.#notify();
+  }
+
+  /**
+   * Save the rank of the linked account, in one statement.
+   *
+   * It writes nothing when the account linked is not `accountId` (it was switched or unlinked while
+   * the rank was being fetched): the rank of the old account must not land on the new one. It does
+   * not tell the listeners, because the rank is no part of what they read again (the account and its
+   * profile).
+   *
+   * @param accountId - The account the rank is for.
+   * @param badge - The rank badge: `tier × 10 + sub-rank`, from 0 (unranked) to 116.
+   * @param fetchedAt - When the rank was fetched, in Unix milliseconds.
+   * @throws AppError of kind `storage` when the badge is not an integer from 0 to 116, the time is
+   *   not an integer, or the database fails or refuses the write; nothing is written then. The
+   *   context of an invalid value names the column and the kind of problem, never the value.
+   */
+  async setRank(accountId: AccountId, badge: number, fetchedAt: number): Promise<void> {
+    const rank = parseRow(
+      rankToWriteSchema,
+      { rank_badge: badge, rank_fetched_at: fetchedAt },
+      'The rank is invalid',
+    );
+    await this.#run(
+      () =>
+        this.#database.execute(UPDATE_RANK, [
+          rank.rank_badge,
+          rank.rank_fetched_at,
+          LINKED_ACCOUNT_ROW_ID,
+          accountId,
+        ]),
+      'Could not save the rank',
+    );
   }
 
   /**

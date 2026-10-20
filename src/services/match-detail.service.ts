@@ -36,15 +36,18 @@
  *
  * The reading side (`getSummary`, `getMatchDetail`, `resetForRetry`) works for the linked account,
  * which it resolves itself: the interface never handles an account id. The database says where a
- * match stands, and only an archived (`ready`) match has a file to read. A file that is absent, or
- * whose content is damaged (it does not decompress, decode, or yield the facts of the match), is not
- * an error for the page: the match goes back to `pending`, so that the next run downloads it again,
- * and the view says `missing`, or `lost` when the match is past the 90 days and so will not be
- * downloaded. That cannot loop, since the queue archives nothing whose facts it could not read back:
- * the same detail would be refused as `invalid`. The file of a damaged archive is left alone, for the
- * next archive written to replace it. A failure that says nothing about the archive (the disk cannot
- * be read, the compressor is broken) is an error for the page, and the match stays as it is: the
- * archive may be fine, and a match past the 90 days that went back to `pending` could never come back.
+ * match stands, and only an archived (`ready`) match has a file to read. The file is read by the
+ * archive reader (`./archive-reader.service`), which tells whether the archive could be used and
+ * logs why not; the service reads the facts of the match page from the envelope it gives back, and
+ * decides what the page shows. A file that is absent, or whose content is damaged (it does not
+ * decompress, decode, or yield the facts of the match), is not an error for the page: the match
+ * goes back to `pending`, so that the next run downloads it again, and the view says `missing`, or
+ * `lost` when the match is past the 90 days and so will not be downloaded. That cannot loop, since
+ * the queue archives nothing whose facts it could not read back: the same detail would be refused
+ * as `invalid`. The file of a damaged archive is left alone, for the next archive written to
+ * replace it. A failure that says nothing about the archive (the disk cannot be read, the
+ * compressor is broken) is an error for the page, and the match stays as it is: the archive may be
+ * fine, and a match past the 90 days that went back to `pending` could never come back.
  *
  * @packageDocumentation
  */
@@ -55,7 +58,6 @@ import type { MatchId } from '../core/domain/match';
 import { AppError, errorLogContext, isAppError, toAppError } from '../core/errors/app-error';
 import {
   createArchiveEnvelope,
-  decodeArchiveEnvelope,
   encodeArchiveEnvelope,
 } from '../core/match-detail/archive-envelope';
 import { summarizeArchive, type ArchiveFacts } from '../core/match-detail/archive-facts';
@@ -65,6 +67,7 @@ import type { AccountSource } from '../ports/account-source.port';
 import type { ArchiveStore } from '../ports/archive-store.port';
 import type { Compressor } from '../ports/compressor.port';
 import type { Logger } from '../ports/logger.port';
+import type { ArchiveReaderService } from './archive-reader.service';
 import type { DeadlockApiService, MetadataFetch } from './deadlock-api.service';
 import type {
   DetailSummary,
@@ -102,6 +105,8 @@ export interface MatchDetailServiceDependencies {
   readonly archive: ArchiveStore;
   /** Compresses the archives. */
   readonly compressor: Compressor;
+  /** Reads the archives back, for the match page. */
+  readonly reader: ArchiveReaderService;
   /** Structured logger. */
   readonly logger: Logger;
   /** Current time (Unix ms); `Date.now` by default. */
@@ -191,14 +196,6 @@ interface RunState {
 }
 
 /**
- * The step of the reading of an archive that failed, for the log: the record of the database, the
- * read of the file, its decompression, the decoding of the envelope, the reading of the facts.
- * (A failed read of the file is not a log line but the error of the page: it names the step in its
- * context.)
- */
-type ArchiveReadStep = 'record' | 'read' | 'decompress' | 'decode' | 'summarize';
-
-/**
  * Downloads, archives and keeps track of the detail of the matches of the linked account, and reads
  * it back for the interface.
  */
@@ -208,6 +205,7 @@ export class MatchDetailService {
   readonly #repository: MatchDetailRepository;
   readonly #archive: ArchiveStore;
   readonly #compressor: Compressor;
+  readonly #reader: ArchiveReaderService;
   readonly #logger: Logger;
   readonly #now: () => number;
   readonly #random: () => number;
@@ -228,6 +226,7 @@ export class MatchDetailService {
     this.#repository = dependencies.repository;
     this.#archive = dependencies.archive;
     this.#compressor = dependencies.compressor;
+    this.#reader = dependencies.reader;
     this.#logger = dependencies.logger;
     this.#now = dependencies.now ?? Date.now;
     this.#random = dependencies.random ?? Math.random;
@@ -663,7 +662,8 @@ export class MatchDetailService {
    * @returns The facts of the archive; or, once the match is back to `pending`, `missing` when the
    *   next run downloads it again and `lost` when the match is past the 90 days.
    * @throws AppError of kind `storage` when the file cannot be read, when the compressor is broken,
-   *   or when the match cannot be put back to `pending`.
+   *   or when the match cannot be put back to `pending`. Any error of the reading of the facts that
+   *   is not a problem of the archive (a bug) is thrown as it is.
    */
   async #showArchive(
     accountId: AccountId,
@@ -674,7 +674,7 @@ export class MatchDetailService {
     if (archivedBytes === null) {
       // `markReady` writes the status and the size together: a ready row without a size is damaged.
       // It is refused before the file is opened, and handled like a file that cannot be read.
-      this.#logUnreadable(
+      this.#reader.reportUnreadable(
         accountId,
         matchId,
         'record',
@@ -683,9 +683,20 @@ export class MatchDetailService {
         }),
       );
     } else {
-      const facts = await this.#readFacts(accountId, matchId);
-      if (facts !== null) {
-        return { kind: 'ready', facts, archivedBytes };
+      // The reader logs an archive that is absent or damaged. A file it cannot read, or a broken
+      // compressor, rejects here, and the match is left as it is.
+      const read = await this.#reader.readArchive(accountId, matchId);
+      if (read.kind === 'read') {
+        try {
+          return { kind: 'ready', facts: summarizeArchive(read.envelope), archivedBytes };
+        } catch (error) {
+          // Only a payload that lacks what the facts expect says something about the archive. Any
+          // other error is a bug, which is an error for the page: the match is left as it is.
+          if (!isAppError(error) || error.kind !== 'invalid_payload') {
+            throw error;
+          }
+          this.#reader.reportUnreadable(accountId, matchId, 'summarize', error);
+        }
       }
     }
     // Whatever was wrong, the file is not deleted. The next download writes the archive again
@@ -695,94 +706,6 @@ export class MatchDetailService {
     // The queue only downloads the matches of the last 90 days, and it is the same rule that tells
     // the two apart: `missing` promises a download that `nextDue` would never make for an older match.
     return isDetailEligible(stored.match, this.#now()) ? { kind: 'missing' } : { kind: 'lost' };
-  }
-
-  /**
-   * Read the facts of the archive of a match: read the file, decompress it, decode the envelope,
-   * and summarise the tracked player.
-   *
-   * @param accountId - The tracked account.
-   * @param matchId - The match.
-   * @returns The facts, or `null` when the archive cannot be shown because of what it holds: the file
-   *   is absent (logged at `info` level, since a folder emptied by hand is not a failure of the
-   *   app), or the data is damaged at a step after the read (logged as a warning).
-   * @throws AppError of kind `storage` when the file cannot be read, or when the compressor is
-   *   broken: neither says anything about the archive, so the caller must not touch the match.
-   */
-  async #readFacts(accountId: AccountId, matchId: MatchId): Promise<ArchiveFacts | null> {
-    const compressed = await this.#readFile(accountId, matchId);
-    if (compressed === null) {
-      this.#logger.log('info', LOG_SCOPE, 'Detail archive is missing', { matchId });
-      return null;
-    }
-    // Where the reading stands, for the log of a failure.
-    let step: ArchiveReadStep = 'decompress';
-    try {
-      const decompressed = await this.#compressor.decompress(compressed);
-      step = 'decode';
-      const envelope = decodeArchiveEnvelope(decompressed);
-      step = 'summarize';
-      return summarizeArchive(envelope);
-    } catch (error) {
-      // The worker compressor tells a problem of the data (`invalid_payload`: the codec ran and
-      // failed on these bytes, which are not a zstd frame) from a broken compressor (any other
-      // kind of `AppError`, `storage`: the worker crashed, or answered that it could not load its
-      // codec, say because the WebAssembly was refused). Only the first says something about the
-      // archive. What is not an `AppError` is the codec's own error, thrown by the compressor of
-      // the tests for a bad frame: a data problem.
-      if (step === 'decompress' && isAppError(error) && error.kind !== 'invalid_payload') {
-        throw error;
-      }
-      this.#logUnreadable(accountId, matchId, step, error);
-      return null;
-    }
-  }
-
-  /**
-   * Read the file of an archive.
-   *
-   * @param accountId - The tracked account.
-   * @param matchId - The match.
-   * @returns The compressed archive, or `null` when the match has no file.
-   * @throws AppError of kind `storage` when the file exists but cannot be read. The adapters do not
-   *   wrap their failures, so it is wrapped here, without the raw error as its cause: the error of
-   *   the disk may quote the path, which holds the account id, and the interface logs what it
-   *   catches. The description of the failure is in the context instead, with the account id
-   *   replaced, as the log of the queue does.
-   */
-  async #readFile(accountId: AccountId, matchId: MatchId): Promise<Uint8Array | null> {
-    try {
-      return await this.#archive.read(accountId, matchId);
-    } catch (error) {
-      throw new AppError('storage', 'The archive of a match could not be read', {
-        context: { ...describeErrorForLog(error, accountId, false), step: 'read', matchId },
-      });
-    }
-  }
-
-  /**
-   * Log an archive that cannot be read, as a warning. The line holds the step and the codes of the
-   * failure: the errors of the archive carry the problem as a field path and an issue code, never a
-   * value of the file, and a path in an error of the disk has the account id replaced.
-   *
-   * @param accountId - The tracked account, kept out of the log.
-   * @param matchId - The match.
-   * @param step - The step that failed.
-   * @param error - What was caught.
-   */
-  #logUnreadable(
-    accountId: AccountId,
-    matchId: MatchId,
-    step: ArchiveReadStep,
-    error: unknown,
-  ): void {
-    this.#logger.log('warn', LOG_SCOPE, 'Detail archive is unreadable', {
-      // The stack is kept for what is not an `AppError` (the compressor's library, a bug): the
-      // errors of the app say by themselves what failed.
-      ...describeErrorForLog(error, accountId, !isAppError(error)),
-      matchId,
-      step,
-    });
   }
 
   /**

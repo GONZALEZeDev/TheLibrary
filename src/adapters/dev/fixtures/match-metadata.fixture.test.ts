@@ -6,8 +6,11 @@
  */
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { buildMatchContext, statAt } from '../../../core/analysis/match-context';
+import type { MatchContext, SnapshotStat } from '../../../core/analysis/match-context';
 import { parseMatchMetadata } from '../../../core/deadlock-api/match-metadata.schema';
 import { PAIGE_HERO_ID } from '../../../core/domain/hero';
+import { createArchiveEnvelope } from '../../../core/match-detail/archive-envelope';
 import { findTrackedPlayer, pruneForPlayer } from '../../../core/match-detail/pruning';
 import { testAccountId, testMatchId } from '../../../test/test-data';
 import { FIXTURE_HERO_CATALOGUE } from './heroes.fixture';
@@ -16,9 +19,34 @@ import {
   FIXTURE_ACCOUNT_ID,
   type RawMatchHistoryRow,
 } from './match-history.fixture';
-import { createMatchMetadataFixture, isMetadataMissing } from './match-metadata.fixture';
+import {
+  createMatchMetadataFixture,
+  fixtureTrackedBadge,
+  isMetadataMissing,
+} from './match-metadata.fixture';
 
 const NOW = Date.UTC(2026, 9, 14, 12, 0, 0);
+
+/** The match mode code of a ranked match; the other modes (1 = unranked) have no rank data. */
+const RANKED_MATCH_MODE = 4;
+
+/** Every valid badge: `tier × 10 + subrank`, tier 1 to 11, subrank 1 to 6. */
+const VALID_BADGES = new Set(
+  Array.from({ length: 11 }, (_, tier) =>
+    Array.from({ length: 6 }, (_, subrank) => (tier + 1) * 10 + subrank + 1),
+  ).flat(),
+);
+
+/** The counters of a snapshot that the analysis reads, besides the souls. */
+const ANALYSIS_STATS = [
+  'player_damage',
+  'player_damage_taken',
+  'boss_damage',
+  'shots_hit',
+  'shots_missed',
+  'teammate_healing',
+  'teammate_barriering',
+] as const satisfies readonly SnapshotStat[];
 
 /**
  * The part of a detail these tests look at, typed so that a field the fixture forgets or misnames
@@ -45,6 +73,9 @@ const detailSchema = z.looseObject({
         net_worth: z.int(),
         last_hits: z.int(),
         denies: z.int(),
+        assigned_lane: z.int(),
+        abandon_match_time_s: z.int(),
+        player_rank_data: z.looseObject({ initial_display_rank: z.int() }).nullable(),
         stats: z.array(
           z.looseObject({
             time_stamp_s: z.int(),
@@ -52,6 +83,13 @@ const detailSchema = z.looseObject({
             kills: z.int(),
             deaths: z.int(),
             assists: z.int(),
+            player_damage: z.int(),
+            player_damage_taken: z.int(),
+            boss_damage: z.int(),
+            shots_hit: z.int(),
+            shots_missed: z.int(),
+            teammate_healing: z.int(),
+            teammate_barriering: z.int(),
           }),
         ),
         items: z.array(
@@ -140,6 +178,24 @@ function trackedOf(info: MatchInfo): Player {
   return (
     info.players.find((player) => player.account_id === FIXTURE_ACCOUNT_ID) ??
     expect.unreachable('the tracked player is in the match')
+  );
+}
+
+/**
+ * The match context the analysis builds from the archive of a fixture match: the detail goes
+ * through the JSON wire, the schema, the pruning and the archive envelope, as in the app.
+ *
+ * @param row - The history row of the match.
+ * @returns The context of the match.
+ */
+function contextOf(row: RawMatchHistoryRow): MatchContext {
+  const metadata = parseMatchMetadata(
+    JSON.parse(JSON.stringify(createMatchMetadataFixture(row, FIXTURE_ACCOUNT_ID))),
+    testMatchId(row.match_id),
+  );
+  const tracked = findTrackedPlayer(metadata, FIXTURE_ACCOUNT_ID);
+  return buildMatchContext(
+    createArchiveEnvelope(pruneForPlayer(metadata, tracked.playerSlot), FIXTURE_ACCOUNT_ID, NOW),
   );
 }
 
@@ -290,6 +346,84 @@ describe('createMatchMetadataFixture', () => {
       for (const field of ['net_worth', 'kills', 'deaths', 'assists'] as const) {
         const values = player.stats.map((snapshot) => snapshot[field]);
         expect(values).toEqual(values.toSorted((a, b) => a - b));
+      }
+    }
+  });
+
+  it('gives every player a lane, two per team per lane', () => {
+    // The lane number is the same lane on both teams: each team holds the same three pairs.
+    for (const row of HISTORY.slice(0, 40)) {
+      const { players } = detailOf(row);
+
+      for (const team of [0, 1]) {
+        const lanes = players
+          .filter((player) => player.team === team)
+          .map((player) => player.assigned_lane)
+          .toSorted((a, b) => a - b);
+
+        expect(lanes).toEqual([1, 1, 4, 4, 6, 6]);
+      }
+    }
+  });
+
+  it('changes the lane of the tracked player from one match to another', () => {
+    const lanes = new Set(
+      HISTORY.slice(0, 60).map((row) => trackedOf(detailOf(row)).assigned_lane),
+    );
+
+    expect([...lanes].toSorted((a, b) => a - b)).toEqual([1, 4, 6]);
+  });
+
+  it('gives a badge to every player of a ranked match only', () => {
+    const ranked = [
+      rowWith({ match_mode: RANKED_MATCH_MODE }),
+      ...HISTORY.filter((row) => row.match_mode === RANKED_MATCH_MODE).slice(0, 20),
+    ];
+    const unranked = [
+      rowWith({ match_mode: 1 }),
+      ...HISTORY.filter((row) => row.match_mode !== RANKED_MATCH_MODE).slice(0, 20),
+    ];
+
+    for (const row of ranked) {
+      for (const player of detailOf(row).players) {
+        expect(VALID_BADGES.has(player.player_rank_data?.initial_display_rank ?? 0)).toBe(true);
+      }
+    }
+    for (const row of unranked) {
+      for (const player of detailOf(row).players) {
+        expect(player.player_rank_data).toBeNull();
+      }
+    }
+  });
+
+  it('snapshots carry the analysis stats and never decrease', () => {
+    for (const row of PAIGE_ROWS.slice(0, 30)) {
+      for (const player of detailOf(row).players) {
+        const first = player.stats.at(0) ?? expect.unreachable('a match has snapshots');
+        const last = player.stats.at(-1) ?? expect.unreachable('a match has snapshots');
+
+        for (const field of ANALYSIS_STATS) {
+          const values = player.stats.map((snapshot) => snapshot[field]);
+
+          expect(values.every((value) => value >= 0)).toBe(true);
+          expect(values).toEqual(values.toSorted((a, b) => a - b));
+        }
+        // These counters always grow over a whole match; healing and barriers may stay at zero.
+        for (const field of ['boss_damage', 'shots_hit', 'shots_missed'] as const) {
+          expect(last[field]).toBeGreaterThan(first[field]);
+        }
+      }
+    }
+  });
+
+  it('ends the snapshots on plausible figures: about half of the shots hit', () => {
+    for (const row of PAIGE_ROWS.slice(0, 30)) {
+      for (const player of detailOf(row).players) {
+        const last = player.stats.at(-1) ?? expect.unreachable('a match has snapshots');
+        const accuracy = last.shots_hit / (last.shots_hit + last.shots_missed);
+
+        expect(accuracy).toBeGreaterThan(0.3);
+        expect(accuracy).toBeLessThan(0.7);
       }
     }
   });
@@ -461,6 +595,65 @@ describe('createMatchMetadataFixture', () => {
     ).length;
 
     expect(size).toBeLessThan(1_000_000);
+  });
+});
+
+describe('fixtureTrackedBadge', () => {
+  it('is the badge of the tracked player in a ranked match, so that a test can know it', () => {
+    const rankedRows = [
+      rowWith({ match_mode: RANKED_MATCH_MODE }),
+      ...PAIGE_ROWS.filter((row) => row.match_mode === RANKED_MATCH_MODE).slice(0, 20),
+    ];
+
+    for (const row of rankedRows) {
+      const badge = trackedOf(detailOf(row)).player_rank_data?.initial_display_rank;
+
+      expect(badge).toBe(fixtureTrackedBadge(testMatchId(row.match_id)));
+    }
+  });
+
+  it('is a valid badge that depends on the match id only and differs between matches', () => {
+    const badges = PAIGE_ROWS.map((row) => fixtureTrackedBadge(testMatchId(row.match_id)));
+
+    expect(badges.every((badge) => VALID_BADGES.has(badge))).toBe(true);
+    expect(new Set(badges).size).toBeGreaterThan(10);
+    expect(fixtureTrackedBadge(testMatchId(PAIGE_ROW.match_id))).toBe(badges[0]);
+  });
+});
+
+describe('the match context of a fixture match', () => {
+  it('has the two lane opponents, the badge of a ranked match and every stat the analysis reads', () => {
+    const rows = PAIGE_ROWS.slice(0, 30);
+    const badges = rows.map((row) => contextOf(row).trackedBadge);
+
+    for (const row of rows) {
+      const context = contextOf(row);
+
+      expect(context.matchMode).toBe(row.match_mode);
+      expect(context.tracked.lane).not.toBeNull();
+      expect(context.teammates).toHaveLength(5);
+      expect(context.enemies).toHaveLength(6);
+      expect(context.laneOpponents).toHaveLength(2);
+      expect(context.laneOpponents.map((player) => player.lane)).toEqual([
+        context.tracked.lane,
+        context.tracked.lane,
+      ]);
+      expect(context.hasLeaver).toBe(false);
+      expect(context.trackedBadge).toBe(
+        row.match_mode === RANKED_MATCH_MODE
+          ? fixtureTrackedBadge(testMatchId(row.match_id))
+          : null,
+      );
+      for (const player of [context.tracked, ...context.teammates, ...context.enemies]) {
+        for (const stat of ['net_worth', ...ANALYSIS_STATS] as const) {
+          // The last snapshot is at the end of the match: the counter is read there, never null.
+          expect(statAt(player, stat, context.durationS)).not.toBeNull();
+        }
+      }
+    }
+    // Both kinds of match are among the rows, or the test above would prove half of what it says.
+    expect(badges.some((badge) => badge === null)).toBe(true);
+    expect(badges.some((badge) => badge !== null)).toBe(true);
   });
 });
 

@@ -53,7 +53,8 @@ export interface PlayerRankServiceDependencies {
  *
  * @param fetchedAt - When the rank was fetched (Unix ms).
  * @param now - The current time (Unix ms).
- * @returns `true` when the rank is at most a day old (a day exactly is old) and not dated in the future.
+ * @returns `true` when the rank is less than a day old (a day exactly is old) and not dated in the
+ *   future.
  */
 function isFresh(fetchedAt: number, now: number): boolean {
   const age = now - fetchedAt;

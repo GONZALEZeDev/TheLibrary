@@ -33,6 +33,7 @@ import {
   type LinkedAccount,
 } from '../core/account/linked-account';
 import { parseAccountId, type AccountId } from '../core/domain/account';
+import { MAX_BADGE } from '../core/domain/rank';
 import { AppError, errorLogContext, toAppError } from '../core/errors/app-error';
 import type { AccountSource } from '../ports/account-source.port';
 import type { Database, SqlRow } from '../ports/database.port';
@@ -55,9 +56,6 @@ const SELECT_RANK =
 /** Writes the rank of the linked account, only if the row still holds the account it is for. */
 const UPDATE_RANK =
   'UPDATE linked_account SET rank_badge = $1, rank_fetched_at = $2 WHERE id = $3 AND account_id = $4';
-
-/** The highest rank badge: sub-rank 6 of tier 11. Equal to the limit in the table. */
-const MAX_RANK_BADGE = 116;
 
 /** Schema of the account id column: what {@link parseAccountId} accepts, as a number. */
 const accountIdSchema = z
@@ -92,8 +90,11 @@ const rowSchema = z
     message: 'An avatar and its hash go together',
   });
 
-/** Schema of a rank badge (`tier × 10 + sub-rank`, 0 for an unranked player). */
-const rankBadgeSchema = z.int().min(0).max(MAX_RANK_BADGE);
+/**
+ * Schema of a rank badge (`tier × 10 + sub-rank`, 0 for an unranked player). Its upper bound is
+ * {@link MAX_BADGE}, which the table's `CHECK` repeats in SQL.
+ */
+const rankBadgeSchema = z.int().min(0).max(MAX_BADGE);
 
 /**
  * Schema of the columns {@link LinkedAccountRepository.getRank} reads. The two rank columns are
@@ -115,7 +116,7 @@ const rankToWriteSchema = z.object({
  * The rank of the linked account, as the app last fetched it.
  */
 export interface LinkedAccountRank {
-  /** The rank badge: `tier × 10 + sub-rank` (0 to 116), 0 when the player is unranked. */
+  /** The rank badge: `tier × 10 + sub-rank` (0 to {@link MAX_BADGE}), 0 when the player is unranked. */
   readonly badge: number;
   /** When the rank was fetched, in Unix milliseconds. */
   readonly fetchedAt: number;
@@ -209,8 +210,8 @@ export class LinkedAccountRepository implements AccountSource {
    * @returns Its rank, or `null` when no account is linked, another account is linked, or the rank
    *   was never fetched (either rank column is empty).
    * @throws AppError of kind `storage` when the database fails or the row is invalid (a badge
-   *   outside 0 to 116, a time that is not an integer, an invalid account id). Its context names the
-   *   column and the kind of problem, never the value.
+   *   outside 0 to {@link MAX_BADGE}, a time that is not an integer, an invalid account id). Its
+   *   context names the column and the kind of problem, never the value.
    */
   async getRank(accountId: AccountId): Promise<LinkedAccountRank | null> {
     const row = await this.#readRow(SELECT_RANK);
@@ -298,11 +299,12 @@ export class LinkedAccountRepository implements AccountSource {
    * profile).
    *
    * @param accountId - The account the rank is for.
-   * @param badge - The rank badge: `tier × 10 + sub-rank`, from 0 (unranked) to 116.
+   * @param badge - The rank badge: `tier × 10 + sub-rank`, from 0 (unranked) to {@link MAX_BADGE}.
    * @param fetchedAt - When the rank was fetched, in Unix milliseconds.
-   * @throws AppError of kind `storage` when the badge is not an integer from 0 to 116, the time is
-   *   not an integer, or the database fails or refuses the write; nothing is written then. The
-   *   context of an invalid value names the column and the kind of problem, never the value.
+   * @throws AppError of kind `storage` when the badge is not an integer from 0 to
+   *   {@link MAX_BADGE}, the time is not an integer, or the database fails or refuses the write;
+   *   nothing is written then. The context of an invalid value names the column and the kind of
+   *   problem, never the value.
    */
   async setRank(accountId: AccountId, badge: number, fetchedAt: number): Promise<void> {
     const rank = parseRow(

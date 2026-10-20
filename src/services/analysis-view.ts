@@ -18,7 +18,12 @@
  *
  * @packageDocumentation
  */
-import { communitySpan, type Cohort, type DurationWindow } from '../core/analysis/cohort';
+import {
+  communitySpan,
+  durationWindowOf,
+  type Cohort,
+  type DurationWindow,
+} from '../core/analysis/cohort';
 import {
   confidenceOf,
   selectInsights,
@@ -28,7 +33,7 @@ import {
   type InsightMatch,
 } from '../core/analysis/insights/insights';
 import { PERSONAL_WINDOW } from '../core/analysis/insights/thresholds';
-import type { MatchContext } from '../core/analysis/match-context';
+import { minutesOf, type MatchContext } from '../core/analysis/match-context';
 import type {
   CommunitySource,
   MetricDefinition,
@@ -63,7 +68,8 @@ import type { MetricValues, PreviousMatch, StoredProjection } from './metrics.re
  *
  * - `available`: the match is compared with `used`. `fallback` is set when that is every rank
  *   because the rank of the match holds too few matches; `stale` when the data is a day old or more;
- *   `sampleMatches` is how many matches of the hero the cohort holds.
+ *   `sampleMatches` is how many matches of the hero the cohort holds; `fetchedAt` is when the data
+ *   was downloaded.
  * - `missing`: no community data is cached for the match (never downloaded, or the entry cannot be
  *   read). The page can ask for it with `AnalysisService.refreshCommunity`.
  * - `unavailable`: the community data was downloaded and holds too few matches, even over every
@@ -76,6 +82,8 @@ export type CommunityState =
       readonly fallback: boolean;
       readonly stale: boolean;
       readonly sampleMatches: number;
+      /** When the community data was downloaded (Unix ms): the page dates stale data with it. */
+      readonly fetchedAt: number;
     }
   | { readonly kind: 'missing' }
   | { readonly kind: 'unavailable' };
@@ -91,7 +99,9 @@ export type CommunityState =
  *   over the same stretch (1 to 99), with the label of the distance (`well_above`…`well_below`).
  * - `none`: the community has no reference for this metric, it is only compared with the habits.
  * - `missing`: the community has a reference for this metric but it cannot be used now: no
- *   community data (see {@link CommunityState}), or not for this metric, or the value is unknown.
+ *   community data (see {@link CommunityState}), or not for this metric, or the value is unknown, or
+ *   (a curve) the database and the archive give the match two lengths in different duration
+ *   windows, so that the stored rate and the curve would be read on different stretches.
  */
 export type CommunityCell =
   | { readonly kind: 'percentile'; readonly percentile: number }
@@ -175,7 +185,8 @@ export interface MatchAnalysis {
    * The length of the match, in seconds, as the database holds it. It is the length of the same
    * match as the archive's, which sets the phase columns: the community-window rates stored with
    * the metrics were computed from the duration window of the archive's length, so comparing the
-   * same stretch of the match on both sides relies on the two lengths agreeing.
+   * same stretch of the match on both sides relies on the two lengths agreeing. When they are in
+   * different windows, the curve cells are `missing`.
    */
   readonly durationS: number;
 }
@@ -184,7 +195,10 @@ export interface MatchAnalysis {
 export type MatchAnalysisView =
   /** There is nothing to analyse: no account, no archived detail, or an archive that is unreadable. */
   | { readonly kind: 'not_analysed' }
-  /** The match is archived but its projection is not there yet (or is of an older version). */
+  /**
+   * The match is archived but its projection is not there yet (or is of an older version), or the
+   * projections of the earlier matches its habits are made of are not all there yet.
+   */
   | { readonly kind: 'pending' }
   /** The archive lacks what the analysis needs: the match cannot be analysed. */
   | { readonly kind: 'failed' }
@@ -204,9 +218,6 @@ export interface AnalysisInputs {
   /** What the cache holds for the cohort of the match. */
   readonly cohortRead: CohortRead;
 }
-
-/** How many seconds make a minute. */
-const SECONDS_PER_MINUTE = 60;
 
 /** The families in the order the page shows them. */
 const FAMILY_ORDER: readonly MetricFamily[] = [
@@ -243,6 +254,11 @@ interface MetricBasis {
   readonly durationS: number;
   /** The phases the match reached, worked out once for all the metrics. */
   readonly spans: readonly PhaseSpan[];
+  /**
+   * The duration window of the length the archive gives the match: the one the stored
+   * `<key>.community_window` rates were computed for.
+   */
+  readonly ratesWindow: DurationWindow;
   /** The values of the metrics of the match. */
   readonly values: MetricValues;
   /** The matches played before it, most recent first, with their values. */
@@ -266,17 +282,6 @@ interface MetricEvaluation {
 }
 
 /**
- * The length of a match in minutes, as every per-minute figure of the analysis divides it. A match
- * of less than a second counts for one, so that no division is ever by zero.
- *
- * @param durationS - The length of the match, in seconds.
- * @returns The length in minutes, at least one second.
- */
-function minutesOf(durationS: number): number {
-  return Math.max(1, durationS) / SECONDS_PER_MINUTE;
-}
-
-/**
  * Find a phase among the ones a match reached.
  *
  * @param spans - The phases the match reached.
@@ -285,6 +290,18 @@ function minutesOf(durationS: number): number {
  */
 function spanOf(spans: readonly PhaseSpan[], phase: Phase): PhaseSpan | undefined {
   return spans.find((span) => span.phase === phase);
+}
+
+/**
+ * Tell whether two duration windows are the same one. Windows are compared by their bounds: the one
+ * of a cohort comes back from the cache, a copy of the constant it was made from.
+ *
+ * @param first - A window.
+ * @param second - Another window.
+ * @returns `true` when both bounds are equal.
+ */
+function sameWindow(first: DurationWindow, second: DurationWindow): boolean {
+  return first.minS === second.minS && first.maxS === second.maxS;
 }
 
 /**
@@ -316,6 +333,7 @@ function communityOf(cohortRead: CohortRead): {
       fallback: used.rank.kind !== data.wanted.rank.kind,
       stale,
       sampleMatches: data.sampleMatches,
+      fetchedAt: data.fetchedAt,
     },
     reference: { benchmark: data.benchmark, curve: data.curve, window: used.window },
   };
@@ -335,7 +353,8 @@ function communityOf(cohortRead: CohortRead): {
  * @param reference - The community data.
  * @returns The placement, or `missing` when any step has no answer: the phase the match did not
  *   reach, a stretch shorter than the minimum, a curve that does not cover it, an unknown rate of
- *   the player, or a community without spread.
+ *   the player, a community without spread, or a stored rate computed for another duration window
+ *   than the cohort's (the stretch it covers is not the one the curve is read on).
  */
 function curveCellOf(
   key: MetricKey,
@@ -343,6 +362,9 @@ function curveCellOf(
   basis: MetricBasis,
   reference: CommunityReference,
 ): CommunityCell {
+  if (!sameWindow(basis.ratesWindow, reference.window)) {
+    return { kind: 'missing' };
+  }
   const span = spanOf(basis.spans, community.phase);
   const shared = span === undefined ? null : communitySpan(span, reference.window);
   const average =
@@ -574,14 +596,15 @@ function phaseColumnsOf(
 /**
  * Build the analysis of a match from everything it is compared with.
  *
- * The match has two lengths here, and they must be one: the length in the database
+ * The match has two lengths here, and they should be one: the length in the database
  * (`projection.durationS`) sets the cohort window, the phases the comparisons are made on, the
  * minutes of every per-minute figure and the confidence; the length in the archive
  * (`context.durationS`) sets the phase columns. Both are the length of the same match. It matters
  * beyond the display: the `<key>.community_window` rates stored with the metrics were computed from
  * the duration window of the archive's length, and the community curve is read here on the phases of
  * the database's length, so the rule that the same stretch of the match is compared on both sides
- * holds only if the two agree.
+ * holds only if the two agree. When they are in different duration windows, the curve cells are
+ * `missing` rather than a comparison of two different stretches.
  *
  * @param inputs - See {@link AnalysisInputs}.
  * @returns The analysis.
@@ -593,6 +616,7 @@ export function buildAnalysis(inputs: AnalysisInputs): MatchAnalysis {
   const basis: MetricBasis = {
     durationS,
     spans: phaseSpans(durationS),
+    ratesWindow: durationWindowOf(context.durationS),
     values,
     previous,
     reference,

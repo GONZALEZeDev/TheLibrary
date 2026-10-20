@@ -15,10 +15,12 @@
  * Nothing here logs a value of a payload: the codes are error kinds, HTTP statuses and the `issue`
  * of a validation (a field path and an issue code).
  *
- * The queue is not the only one that logs a failure. The reading side of `MatchDetailService`
- * (an archive that is missing, damaged or unreadable, or the leftovers of an interrupted write that
- * cannot be removed) describes its errors with {@link describeErrorForLog} too, so that every line
- * about the archive folder is redacted the same way.
+ * The queue is not the only one that logs a failure. Three more describe their errors with
+ * {@link describeErrorForLog}, so that every line about the archive folder is redacted the same
+ * way: the reading side of `MatchDetailService` (an archive that is missing, damaged or unreadable,
+ * or the leftovers of an interrupted write that cannot be removed), `ArchiveReaderService` (the
+ * archive read for a page or for the analysis), and `ProjectionService` (a match that cannot be
+ * projected).
  *
  * @packageDocumentation
  */
@@ -192,11 +194,12 @@ export function stopOf(error: unknown): DetailRunStop {
  * Describe an error for the log, without the account id: the error of a file or of the database
  * may quote a path or a query, which holds it.
  *
- * It describes the errors that stop a run, and the ones of the reading side of the service: an
- * archive that cannot be read back (missing, damaged, or a file the disk refuses to open) and the
- * leftovers of an interrupted write that cannot be removed. The result is a log context, and it is
- * also the context of the error the page shows when the archive file cannot be read, so that the
- * log of the interface is redacted the same way.
+ * It describes the errors that stop a run of the queue, the ones of the reading side of
+ * `MatchDetailService`, and the ones of `ArchiveReaderService` and `ProjectionService`: an archive
+ * that cannot be read back (missing, damaged, or a file the disk refuses to open), the leftovers of
+ * an interrupted write that cannot be removed, and a match that cannot be projected. The result is
+ * a log context, and it is also the context of the error the page shows when the archive file
+ * cannot be read, so that the log of the interface is redacted the same way.
  *
  * @param error - What was caught.
  * @param accountId - The tracked account.

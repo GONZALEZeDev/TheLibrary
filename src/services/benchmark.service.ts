@@ -6,11 +6,13 @@
  * A match is compared with a {@link Cohort}. Its data is downloaded when a page of the analysis
  * opens ({@link BenchmarkService.refresh}), kept in the database (`api_cache`, as JSON), and read back
  * by the analysis ({@link BenchmarkService.read}) even when it is stale or when the app is offline.
- * The download costs three requests, within the budget of `DeadlockApiService`:
+ * The download costs three requests, or four when a small tier falls back to every rank, within the
+ * budget of `DeadlockApiService`:
  * - the size of the cohort, i.e. how many matches of the hero it holds. A tier that holds fewer than
  *   {@link MIN_COHORT_MATCHES} is too small to mean anything, so the match is compared with every
- *   rank of the same duration window instead (a fallback); when that is too small as well, there is
- *   nothing to compare with and the entry says so (`used: null`) without any further request;
+ *   rank of the same duration window instead (a fallback, which costs a second request for its
+ *   size); when that is too small as well, there is nothing to compare with and the entry says so
+ *   (`used: null`) without any further request;
  * - the benchmark and the performance curve of the cohort that is used.
  *
  * The data belongs to no player, but it is only stored while the account that asked for it is the

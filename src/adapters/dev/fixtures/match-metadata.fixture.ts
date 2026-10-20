@@ -31,6 +31,7 @@
  */
 import type { AccountId } from '../../../core/domain/account';
 import type { MatchId } from '../../../core/domain/match';
+import { RANKED_MATCH_MODE } from '../../../core/match-detail/detail-status';
 import { FIXTURE_HERO_CATALOGUE } from './heroes.fixture';
 import type { RawMatchHistoryRow } from './match-history.fixture';
 
@@ -127,9 +128,6 @@ const MISSING_MATCH_MODULO = 7;
  * team.
  */
 const LANES = [1, 1, 4, 4, 6, 6];
-
-/** The match mode code of a ranked match: only the players of a ranked match have rank data. */
-const RANKED_MATCH_MODE = 4;
 
 /** The lowest and the highest tier of a rank badge (Initiate to Eternus). */
 const MIN_TIER = 1;

@@ -8,6 +8,7 @@
  *
  * @packageDocumentation
  */
+import { isBadge } from '../domain/rank';
 import { MIN_PHASE_MINUTES } from './insights/thresholds';
 import type { PhaseSpan } from './phases';
 
@@ -54,7 +55,8 @@ export const DURATION_WINDOWS: readonly DurationWindow[] = [
 
 /**
  * The names of the rank tiers, in English like the game's, indexed by tier (tier 0 is a player who
- * has no rank yet).
+ * has no rank yet). The last tier is the one of `MAX_BADGE` (`../domain/rank`): a tier added here
+ * moves that bound too, and a test ties the two.
  */
 export const RANK_TIER_NAMES: readonly string[] = [
   'Obscurus',
@@ -104,7 +106,9 @@ export function durationWindowOf(durationS: number): DurationWindow {
  *
  * A ranked match is compared with the players of the rank the player had in it, so that a good
  * match at a low rank is not judged against the rank they have reached since. The first of the two
- * badges that is set (above 0) decides. With no badge at all, the cohort is every rank.
+ * that is a badge ({@link isBadge}) decides: `0` (no rank yet) and a number that is no badge (past
+ * the last one, negative, fractional) count as none, so no cohort is ever made of a tier that has no
+ * name. With no badge at all, the cohort is every rank.
  *
  * @param matchBadge - The badge the player had in the match, or `null` for an unranked match.
  * @param currentBadge - The badge the player has now, or `null` when it is unknown.
@@ -112,8 +116,8 @@ export function durationWindowOf(durationS: number): DurationWindow {
  *   0 (a badge from 1 to 9 does not exist in practice, so a tier 0 cohort would be an empty one).
  */
 export function cohortRankFor(matchBadge: number | null, currentBadge: number | null): CohortRank {
-  const badge = matchBadge !== null && matchBadge > 0 ? matchBadge : currentBadge;
-  if (badge === null || badge <= 0) {
+  const badge = isBadge(matchBadge) ? matchBadge : isBadge(currentBadge) ? currentBadge : null;
+  if (badge === null) {
     return { kind: 'all' };
   }
   const tier = Math.floor(badge / BADGES_PER_TIER);

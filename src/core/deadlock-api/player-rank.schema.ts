@@ -14,15 +14,14 @@
  * @packageDocumentation
  */
 import { z } from 'zod';
+import { MAX_BADGE } from '../domain/rank';
 import { AppError } from '../errors/app-error';
 import { describeFirstIssue } from '../errors/first-issue';
 
-/** The highest badge: sub-rank 6 of tier 11 (Eternus). */
-const MAX_BADGE = 116;
-
 /**
  * The answer (only the field the app uses). The object is loose: the tier, the sub-rank and the
- * last ranked match are none of the app's business and are not read.
+ * last ranked match are none of the app's business and are not read. The badge is `0` (no rank
+ * known) or a badge, from `MIN_BADGE` (1) to {@link MAX_BADGE}.
  */
 const playerRankSchema = z.looseObject({
   badge: z.int().min(0).max(MAX_BADGE),
@@ -32,10 +31,10 @@ const playerRankSchema = z.looseObject({
  * Read the rank badge of a player out of deadlock-api's answer.
  *
  * @param body - The parsed JSON body of the response.
- * @returns The badge, a whole number from 0 (no rank known) to 116.
+ * @returns The badge, a whole number from 0 (no rank known) to {@link MAX_BADGE}.
  * @throws AppError of kind `invalid_payload` when the body is not an object, or its `badge` is not a
- *   whole number from 0 to 116 (the context `issue` is `<path>: <code>` of the first problem, never
- *   a value of the payload).
+ *   whole number from 0 to {@link MAX_BADGE} (the context `issue` is `<path>: <code>` of the first
+ *   problem, never a value of the payload).
  */
 export function parsePlayerRank(body: unknown): number {
   const rank = playerRankSchema.safeParse(body);

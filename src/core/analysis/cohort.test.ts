@@ -86,6 +86,15 @@ describe('cohortRankFor', () => {
     expect(cohortRankFor(5, 61)).toEqual({ kind: 'all' });
     expect(cohortRankFor(null, 9)).toEqual({ kind: 'all' });
   });
+
+  it('reads a number that is not a badge as no badge, never as a tier without a name', () => {
+    // Past the last badge (tier 12 would have no name), negative or not a whole number: the match
+    // badge is skipped for the current one, and a current one that is no badge leaves every rank.
+    for (const notABadge of [117, 121, -43, 43.5, Number.NaN]) {
+      expect(cohortRankFor(notABadge, 61), String(notABadge)).toEqual({ kind: 'tier', tier: 6 });
+      expect(cohortRankFor(null, notABadge), String(notABadge)).toEqual({ kind: 'all' });
+    }
+  });
 });
 
 describe('badgeBounds', () => {

@@ -18,8 +18,9 @@
  * The requests are the ones of the app: they go through its HTTP client (`TauriHttpClient`, given
  * Node's `fetch` instead of the Tauri plugin's) with the headers of its service, and the responses
  * are interpreted by its rules (`interpretResponse`). The detail then goes through what the app does
- * with it: the schema, the tracked player, the pruning, the envelope, the zstd codec and the facts
- * the detail page reads.
+ * with it: the schema, the tracked player, the pruning, the envelope, the zstd codec, the facts
+ * the detail page reads, and the analysis (the context of the match, the snapshot counters and the
+ * death details it reads, and the metrics projected from it).
  *
  * Privacy: the detail holds the account ids of the twelve players, and this repository is public,
  * and so are its workflow logs. No message of this file contains a value of a payload, an account id
@@ -34,6 +35,8 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { TauriHttpClient } from '../../adapters/tauri/tauri-http-client.adapter';
+import { SNAPSHOT_STATS, buildMatchContext } from '../../core/analysis/match-context';
+import { MATCH_METRICS, projectMetrics } from '../../core/analysis/registry';
 import type { ApiOutcome } from '../../core/deadlock-api/api-response';
 import { interpretResponse } from '../../core/deadlock-api/api-response';
 import type { ApiRequest } from '../../core/deadlock-api/endpoints';
@@ -50,6 +53,7 @@ import { PAIGE_HERO_ID } from '../../core/domain/hero';
 import type { MatchId } from '../../core/domain/match';
 import { parseMatchId } from '../../core/domain/match';
 import { AppError } from '../../core/errors/app-error';
+import { describeFirstIssue } from '../../core/errors/first-issue';
 import {
   createArchiveEnvelope,
   decodeArchiveEnvelope,
@@ -65,6 +69,15 @@ declare const __APP_VERSION__: string;
 
 /** How many matches the list asks for, and so the most detail requests a run can make. */
 const LISTED_MATCHES = 5;
+
+/**
+ * How many of the thirteen match metrics a real match must give a value for. A few can legitimately
+ * be unknown (no lane opponent, a match under ten minutes, no shot fired), so the canary does not
+ * ask for all of them; but a payload that changed shape makes whole families of metrics unknown,
+ * and falls under this. A single renamed counter would not: the inputs of the metrics (the snapshot
+ * counters and the death details) are checked on their own for that.
+ */
+const MIN_KNOWN_MATCH_METRICS = 10;
 
 /**
  * The list of the most recent normal-mode Paige matches. It is the bulk endpoint of deadlock-api:
@@ -160,11 +173,8 @@ async function listRecentPaigeMatchIds(api: CountingApi): Promise<MatchId[]> {
   }
   const rows = matchListSchema.safeParse(outcome.json);
   if (!rows.success) {
-    const [issue] = rows.error.issues;
-    // An issue on the body itself (not an array) has an empty path.
-    const path =
-      issue === undefined || issue.path.length === 0 ? '(root)' : issue.path.map(String).join('.');
-    throw new Error(`the match list has an unexpected shape: ${path}: ${issue?.code ?? 'invalid'}`);
+    // The path and the code of the first issue, as the app reports them: never a value of the body.
+    throw new Error(`the match list has an unexpected shape: ${describeFirstIssue(rows.error)}`);
   }
   return rows.data.slice(0, LISTED_MATCHES).map(({ match_id: id }) => {
     const matchId = parseMatchId(id);
@@ -347,5 +357,49 @@ describe('deadlock-api match detail', () => {
     const facts = inStep('archive facts', () => summarizeArchive(decoded));
     expect(facts.snapshots, 'stats snapshots of the tracked player').toBeGreaterThan(0);
     expect(facts.durationS, 'match_info.duration_s').toBeGreaterThan(0);
+
+    // --- 7. The analysis: the context of the match, and the metrics projected from it ---
+    // The context is built from the archive the way the projection of the app does it, so a payload
+    // that lacks what the analysis needs fails here with its path and code (never a value).
+    const context = inStep('match context', () => buildMatchContext(decoded));
+    // How many metric computations threw: a count, since the error of a metric may quote the archive.
+    let throwingMetrics = 0;
+    const projection = projectMetrics(context, () => {
+      throwingMetrics += 1;
+    });
+    // Only the metrics of the whole match: the phase metrics and the community windows are left out,
+    // since a match without a late game legitimately has no value for them. A value is a finite
+    // number or `null`.
+    const nullMatchMetrics = MATCH_METRICS.filter(
+      ({ key }) => typeof projection.get(key) !== 'number',
+    ).map(({ key }) => key);
+    const knownMatchMetrics = MATCH_METRICS.length - nullMatchMetrics.length;
+    // The counters the analysis reads, as the context read them from the tracked player's last
+    // snapshot: a counter renamed or dropped by the API leaves every metric on it `null`, which is
+    // never logged, so this is where it shows.
+    const lastSnapshot = context.tracked.snapshots.at(-1);
+    const missingCounters = SNAPSHOT_STATS.filter(
+      (stat) => lastSnapshot?.stats[stat] === undefined,
+    );
+    // The kills by phase are only known when every player has one death detail per death (the
+    // context's rule): otherwise the three kill metrics of the phases are `null` on every match.
+    const deathDetailsComplete = context.kills !== null;
+    await annotate(
+      `analysis: ${String(knownMatchMetrics)} of ${String(MATCH_METRICS.length)} match metrics known, ${String(throwingMetrics)} computations threw`,
+    );
+    await annotate(
+      `inputs: ${String(SNAPSHOT_STATS.length - missingCounters.length)} of ${String(SNAPSHOT_STATS.length)} snapshot counters present, death details complete: ${String(deathDetailsComplete)}`,
+    );
+    // Counts and booleans; the failure messages name metric keys and counters, which are code
+    // identifiers, never a value of the payload.
+    expect(
+      knownMatchMetrics,
+      `match metrics (of ${String(MATCH_METRICS.length)}) that are not null; null: ${nullMatchMetrics.join(', ')}`,
+    ).toBeGreaterThanOrEqual(MIN_KNOWN_MATCH_METRICS);
+    expect(
+      missingCounters.length,
+      `snapshot counters missing from the tracked player's last snapshot: ${missingCounters.join(', ')}`,
+    ).toBe(0);
+    expect(deathDetailsComplete, 'every player has one death detail per death').toBe(true);
   });
 });

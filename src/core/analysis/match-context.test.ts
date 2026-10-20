@@ -46,7 +46,9 @@ type Overrides = Readonly<Record<string, unknown>>;
  * One player in the shape of the API (fields the analysis ignores included).
  *
  * Each player has figures of their own, so that a mix-up of players shows in the context. A player
- * has no snapshots and no deaths unless a test gives them.
+ * has no snapshots unless a test gives them. Their deaths come with one death detail each, as in a
+ * complete payload, none of them by a hero (killer slot `0`): the kills of the match are known, and
+ * there are none unless a test gives some.
  *
  * @param playerSlot - The slot of the player, from 1 to 12.
  * @param overrides - Fields to change (an `undefined` value removes the field).
@@ -54,13 +56,14 @@ type Overrides = Readonly<Record<string, unknown>>;
  */
 function rawPlayer(playerSlot: number, overrides: Overrides = {}) {
   const tracked = playerSlot === TRACKED_SLOT;
+  const deaths = playerSlot + 1;
   return {
     account_id: tracked ? 1_000_001 : 2_000_000 + playerSlot,
     player_slot: playerSlot,
     team: playerSlot <= 6 ? 0 : 1,
     hero_id: tracked ? PAIGE_HERO_ID : 100 + playerSlot,
     kills: playerSlot,
-    deaths: playerSlot + 1,
+    deaths,
     assists: playerSlot + 2,
     net_worth: 10_000 + playerSlot * 1_000,
     last_hits: 100 + playerSlot,
@@ -68,8 +71,22 @@ function rawPlayer(playerSlot: number, overrides: Overrides = {}) {
     assigned_lane: LANES[(playerSlot - 1) % 6],
     abandon_match_time_s: 0,
     player_rank_data: null,
+    death_details: Array.from({ length: deaths }, (_, index) => ({
+      game_time_s: 60 * (index + 1),
+      killer_player_slot: 0,
+    })),
     ...overrides,
   };
+}
+
+/**
+ * The deaths of a player as a complete payload holds them: their count, and one death detail each.
+ *
+ * @param details - The raw death details.
+ * @returns The fields of the raw player to override.
+ */
+function died(details: readonly Overrides[]): Overrides {
+  return { deaths: details.length, death_details: details };
 }
 
 /**
@@ -254,6 +271,57 @@ describe('buildMatchContext', () => {
     expect(match.trackedBadge).toBe(43);
   });
 
+  it('does not read the rank data of the other players: an odd one does not fail the match', () => {
+    const ranked = { match_mode: 4 };
+    const tracked = { [TRACKED_SLOT]: { player_rank_data: { initial_display_rank: 43 } } };
+
+    for (const rankData of [
+      { initial_display_rank: 43.5 },
+      { initial_display_rank: -1 },
+      { initial_display_rank: 'S3CR3T' },
+      'S3CR3T',
+    ]) {
+      const match = context({
+        matchInfo: ranked,
+        players: { ...tracked, 9: { player_rank_data: rankData } },
+      });
+      expect(match.trackedBadge, JSON.stringify(rankData)).toBe(43);
+    }
+  });
+
+  it.each([
+    [
+      'a badge that is not a number',
+      { initial_display_rank: 'S3CR3T' },
+      'players.9.player_rank_data.initial_display_rank: invalid_type',
+    ],
+    [
+      'a badge that is not a whole number',
+      { initial_display_rank: 43.5 },
+      'players.9.player_rank_data.initial_display_rank: invalid_type',
+    ],
+    [
+      'a negative badge',
+      { initial_display_rank: -1 },
+      'players.9.player_rank_data.initial_display_rank: too_small',
+    ],
+    ['rank data that is not an object', 'S3CR3T', 'players.9.player_rank_data: invalid_type'],
+  ])('refuses a tracked player with %s, naming the path only', (_name, rankData, issue) => {
+    // The tracked player (slot 3) is at index 9 of the list.
+    const error = catchAppError(() =>
+      context({
+        matchInfo: { match_mode: 4 },
+        players: { [TRACKED_SLOT]: { player_rank_data: rankData } },
+      }),
+    );
+
+    expect(error.kind).toBe('invalid_payload');
+    expect(error.context.issue).toBe(issue);
+    expect(JSON.stringify({ message: error.message, context: error.context })).not.toContain(
+      'S3CR3T',
+    );
+  });
+
   it('flags a leaver', () => {
     expect(context().hasLeaver).toBe(false);
     expect(context({ players: { 9: { abandon_match_time_s: 1_200 } } }).hasLeaver).toBe(true);
@@ -271,22 +339,18 @@ describe('buildMatchContext', () => {
   it('reads one kill per death with a hero killer, in time order', () => {
     const match = context({
       players: {
-        9: {
-          death_details: [
-            { game_time_s: 1_298, killer_player_slot: 6, ignored: true },
-            { game_time_s: 312, killer_player_slot: 6 },
-          ],
-        },
+        9: died([
+          { game_time_s: 1_298, killer_player_slot: 6, ignored: true },
+          { game_time_s: 312, killer_player_slot: 6 },
+        ]),
         // Killed by the environment (killer slot 0): not a kill of anyone.
-        10: {
-          death_details: [
-            { game_time_s: 900, killer_player_slot: 0 },
-            { game_time_s: 600, killer_player_slot: 6 },
-          ],
-        },
-        8: { death_details: [{ game_time_s: 450, killer_player_slot: TRACKED_SLOT }] },
-        // A player without death details, and one with an empty list, have no death.
-        11: { death_details: [] },
+        10: died([
+          { game_time_s: 900, killer_player_slot: 0 },
+          { game_time_s: 600, killer_player_slot: 6 },
+        ]),
+        8: died([{ game_time_s: 450, killer_player_slot: TRACKED_SLOT }]),
+        // A player who never died has an empty list.
+        11: died([]),
       },
     });
 
@@ -296,6 +360,41 @@ describe('buildMatchContext', () => {
       { timeS: 600, killerSlot: 6, victimSlot: 10 },
       { timeS: 1_298, killerSlot: 6, victimSlot: 9 },
     ]);
+  });
+
+  it('knows the kills only when every player has one death detail per death', () => {
+    const killOfTracked = { game_time_s: 450, killer_player_slot: TRACKED_SLOT };
+    const complete = { 8: died([killOfTracked]) };
+
+    // Complete: the kills are read.
+    expect(context({ players: complete }).kills).toEqual([
+      { timeS: 450, killerSlot: TRACKED_SLOT, victimSlot: 8 },
+    ]);
+    // A player's death details are missing: the kills made on them are unknown, so no kill of the
+    // match is trusted, not even the tracked player's. A player who never died may leave the list
+    // out (an empty list is often omitted): their kills are known, there is none to detail.
+    for (const deathDetails of [undefined, null]) {
+      const missing = { ...complete, 9: { death_details: deathDetails } };
+      expect(context({ players: missing }).kills, String(deathDetails)).toBeNull();
+      const neverDied = { ...complete, 9: { deaths: 0, death_details: deathDetails } };
+      expect(context({ players: neverDied }).kills, String(deathDetails)).toEqual([
+        { timeS: 450, killerSlot: TRACKED_SLOT, victimSlot: 8 },
+      ]);
+    }
+    // Fewer or more death details than deaths.
+    const short = { ...complete, 9: { ...died([killOfTracked]), deaths: 2 } };
+    expect(context({ players: short }).kills).toBeNull();
+    const long = { ...complete, 9: { ...died([killOfTracked, killOfTracked]), deaths: 1 } };
+    expect(context({ players: long }).kills).toBeNull();
+  });
+
+  it('reads the rest of a match whose kills are unknown', () => {
+    const match = context({ players: { 9: { death_details: undefined } } });
+
+    expect(match.kills).toBeNull();
+    expect(match.durationS).toBe(DURATION_S);
+    // The end-of-game counts do not depend on the death details.
+    expect(match.tracked).toMatchObject({ slot: TRACKED_SLOT, kills: 3, deaths: 4 });
   });
 
   it('sorts the snapshots of a player by time', () => {
@@ -336,16 +435,13 @@ describe('buildMatchContext', () => {
   it('reads a player without snapshots, deaths or rank data', () => {
     const match = context({
       players: {
-        [TRACKED_SLOT]: {
-          stats: undefined,
-          death_details: undefined,
-          player_rank_data: undefined,
-        },
+        [TRACKED_SLOT]: { stats: undefined, player_rank_data: undefined, ...died([]) },
       },
     });
 
     expect(match.tracked.snapshots).toEqual([]);
     expect(statAt(match.tracked, 'net_worth', 600)).toBeNull();
+    expect(match.tracked.deaths).toBe(0);
     expect(match.kills).toEqual([]);
   });
 
@@ -416,21 +512,6 @@ describe('buildMatchContext', () => {
       'a death with a killer that is not a slot',
       { death_details: [{ game_time_s: 300, killer_player_slot: 'S3CR3T' }] },
       'players.3.death_details.0.killer_player_slot: invalid_type',
-    ],
-    [
-      'a badge that is not a number',
-      { player_rank_data: { initial_display_rank: 'S3CR3T' } },
-      'players.3.player_rank_data.initial_display_rank: invalid_type',
-    ],
-    [
-      'a badge that is not a whole number',
-      { player_rank_data: { initial_display_rank: 43.5 } },
-      'players.3.player_rank_data.initial_display_rank: invalid_type',
-    ],
-    [
-      'a negative badge',
-      { player_rank_data: { initial_display_rank: -1 } },
-      'players.3.player_rank_data.initial_display_rank: too_small',
     ],
   ])('refuses a player with %s', (_name, overrides, issue) => {
     const error = catchAppError(() => context({ players: { 9: overrides } }));
@@ -537,19 +618,15 @@ describe('killsIn', () => {
   /** Slot 6 kills at 312, 600, 1298 and 1605 (the end of the match); slot 3 kills once. */
   const match = context({
     players: {
-      9: {
-        death_details: [
-          { game_time_s: 312, killer_player_slot: 6 },
-          { game_time_s: 1_298, killer_player_slot: 6 },
-        ],
-      },
-      10: {
-        death_details: [
-          { game_time_s: 600, killer_player_slot: 6 },
-          { game_time_s: 1_605, killer_player_slot: 6 },
-          { game_time_s: 700, killer_player_slot: TRACKED_SLOT },
-        ],
-      },
+      9: died([
+        { game_time_s: 312, killer_player_slot: 6 },
+        { game_time_s: 1_298, killer_player_slot: 6 },
+      ]),
+      10: died([
+        { game_time_s: 600, killer_player_slot: 6 },
+        { game_time_s: 1_605, killer_player_slot: 6 },
+        { game_time_s: 700, killer_player_slot: TRACKED_SLOT },
+      ]),
     },
   });
 
@@ -576,6 +653,13 @@ describe('killsIn', () => {
     expect(killsIn(match, TRACKED_SLOT, 0, 1_605)).toBe(1);
     expect(killsIn(match, 5, 0, 1_605)).toBe(0);
     expect(killsIn(match, 6, 0, 1_605)).toBe(4);
+  });
+
+  it('is null, never 0, when the kills of the match are unknown', () => {
+    const unknown = context({ players: { 9: { death_details: undefined } } });
+
+    expect(killsIn(unknown, TRACKED_SLOT, 0, 600)).toBeNull();
+    expect(killsIn(unknown, 6, 0, 1_605)).toBeNull();
   });
 });
 

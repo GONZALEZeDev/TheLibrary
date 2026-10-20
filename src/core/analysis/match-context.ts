@@ -17,9 +17,11 @@
 import { z } from 'zod';
 import { matchIdSchema } from '../domain/match';
 import type { MatchId } from '../domain/match';
+import { isBadge } from '../domain/rank';
 import { AppError } from '../errors/app-error';
 import type { ArchiveEnvelope } from '../match-detail/archive-envelope';
 import { archiveCount, readArchiveFields } from '../match-detail/archive-fields';
+import { RANKED_MATCH_MODE } from '../match-detail/detail-status';
 import { findTrackedPlayer } from '../match-detail/pruning';
 import { interpolate } from './statistics';
 
@@ -27,16 +29,23 @@ import { interpolate } from './statistics';
  * The cumulative counters of a statistic snapshot that the analysis reads: souls, the damage dealt
  * to heroes, taken from heroes and dealt to objectives, the shots that hit and missed, and the
  * healing and barriers given to teammates.
+ *
+ * The list is the one the snapshots are read with, and {@link SnapshotStat} is made from it: a
+ * counter cannot be named by a metric without being read.
  */
-export type SnapshotStat =
-  | 'net_worth'
-  | 'player_damage'
-  | 'player_damage_taken'
-  | 'boss_damage'
-  | 'shots_hit'
-  | 'shots_missed'
-  | 'teammate_healing'
-  | 'teammate_barriering';
+export const SNAPSHOT_STATS = [
+  'net_worth',
+  'player_damage',
+  'player_damage_taken',
+  'boss_damage',
+  'shots_hit',
+  'shots_missed',
+  'teammate_healing',
+  'teammate_barriering',
+] as const;
+
+/** One of the {@link SNAPSHOT_STATS}. */
+export type SnapshotStat = (typeof SNAPSHOT_STATS)[number];
 
 /** One player's statistics at one time of the match: the cumulative value of each counter. */
 export interface Snapshot {
@@ -105,47 +114,38 @@ export interface MatchContext {
    * when the tracked player has no lane.
    */
   readonly laneOpponents: readonly PlayerContext[];
-  /** Every kill of a hero by another hero in the match, ordered by time. */
-  readonly kills: readonly KillEvent[];
   /**
-   * The rank badge the tracked player had when the match started (tier × 10 + sub-rank, from 1 to
-   * 116), or `null` for an unranked match, for a player who has no rank yet (placement matches),
-   * and for a number that is no badge (above 116).
+   * Every kill of a hero by another hero in the match, ordered by time; `null` when the kills are
+   * not known.
+   *
+   * The kills are read from the death details of the victims. In a complete payload every player
+   * has one death detail per death (a player who never died may have no list at all); when the
+   * death details of a player who died are missing, or fewer or more than their deaths, a kill
+   * could be missing from them, so none is trusted: the kills of the match are unknown, never taken
+   * for no kill.
+   */
+  readonly kills: readonly KillEvent[] | null;
+  /**
+   * The rank badge the tracked player had when the match started (tier × 10 + sub-rank, see
+   * `../domain/rank`), or `null` for an unranked match, for a player who has no rank yet (placement
+   * matches), and for a number that is no badge (past the last one).
    */
   readonly trackedBadge: number | null;
   /** `true` when at least one player left the match before its end. */
   readonly hasLeaver: boolean;
 }
 
-/** The counters of a snapshot the analysis reads (see {@link SnapshotStat}). */
-const SNAPSHOT_STATS = [
-  'net_worth',
-  'player_damage',
-  'player_damage_taken',
-  'boss_damage',
-  'shots_hit',
-  'shots_missed',
-  'teammate_healing',
-  'teammate_barriering',
-] as const satisfies readonly SnapshotStat[];
-
-/** The match mode code of a ranked match: only then does a player's rank data mean a badge. */
-const RANKED_MATCH_MODE = 4;
-
 /**
- * The lowest and the highest rank badge there is: sub-rank 1 of tier 1, and sub-rank 6 of tier 11.
- * A number outside them is not a badge (it cannot be stored with the match, nor compared with a
- * cohort), so the match is read as having none.
+ * The rank of the tracked player. Only the badge they had when the match started is read (`0`
+ * while they are still in their placement matches). It is a whole number from 0 like any count of
+ * the payload; whether it is a badge that exists is decided where the badge is used.
+ *
+ * Only the tracked player's rank is read: the analysis uses no other player's, so an odd rank on
+ * another player never makes the match unreadable.
  */
-const MIN_BADGE = 1;
-const MAX_BADGE = 116;
-
-/**
- * The rank data of a player. Only the badge they had when the match started is read (`0` while
- * they are still in their placement matches). It is a whole number from 0 like any count of the
- * payload; whether it is a badge that exists is decided where the badge is used.
- */
-const rankDataSchema = z.looseObject({ initial_display_rank: archiveCount.nullish() });
+const trackedRankSchema = z.looseObject({
+  player_rank_data: z.looseObject({ initial_display_rank: archiveCount.nullish() }).nullish(),
+});
 
 /**
  * One statistic snapshot. Only its time is required: the counters are read apart, one by one,
@@ -163,8 +163,9 @@ const deathSchema = z.looseObject({
  * The fields of a player's entry that the context needs. The object is loose: every other field of
  * the player is ignored.
  *
- * The API sends `null` for what does not apply (an unranked match has no rank data), so a field that
- * may be missing accepts `null` as well as being absent.
+ * The API sends `null` for what does not apply, so a field that may be missing accepts `null` as
+ * well as being absent. The rank data is not among the fields: only the tracked player's is read
+ * ({@link trackedRankSchema}).
  */
 const playerSchema = z.looseObject({
   player_slot: archiveCount,
@@ -178,7 +179,6 @@ const playerSchema = z.looseObject({
   assigned_lane: z.int().nullish(),
   // The time the player left the match, in seconds; `0` (or none) when they stayed to the end.
   abandon_match_time_s: z.number().nullish(),
-  player_rank_data: rankDataSchema.nullish(),
   stats: z.array(snapshotSchema).nullish(),
   death_details: z.array(deathSchema).nullish(),
 });
@@ -197,14 +197,18 @@ interface ReadPlayer {
   /** The player as the metrics see them. */
   readonly player: PlayerContext;
   /**
-   * The number they had as rank when the match started, whatever the match mode (`0` or none: no
-   * rank). It is not checked to be a badge that exists, nor to be of a ranked match.
+   * The number the tracked player had as rank when the match started, whatever the match mode (`0`
+   * or none: no rank). It is not checked to be a badge that exists, nor to be of a ranked match.
+   * `null` for the other players: their rank is not read.
    */
-  readonly initialRank: number;
+  readonly initialRank: number | null;
   /** Whether they left the match before its end. */
   readonly left: boolean;
-  /** Their deaths caused by a hero, as kills of the player who killed them. */
-  readonly kills: readonly KillEvent[];
+  /**
+   * Their deaths caused by a hero, as kills of the player who killed them; `null` when their death
+   * details are missing or do not hold one entry per death (some of them may be missing).
+   */
+  readonly kills: readonly KillEvent[] | null;
 }
 
 /**
@@ -251,21 +255,32 @@ export function buildMatchContext(envelope: ArchiveEnvelope): MatchContext {
     // A player without a lane has no opponent: `null` is not a lane two players can share.
     laneOpponents:
       tracked.lane === null ? [] : enemies.filter((player) => player.lane === tracked.lane),
-    // The players are already ordered by slot, so kills at the same time keep a stable order.
-    kills: players
-      .flatMap((entry) => entry.kills)
-      .toSorted((first, second) => first.timeS - second.timeS),
+    kills: matchKills(players),
     // A badge only means something in a ranked match; `0` is a player who has not been placed yet,
     // and a number past the highest badge is no badge at all: the match is read as having none, not
     // refused, since the rest of the archive is fine.
     trackedBadge:
-      matchInfo.match_mode === RANKED_MATCH_MODE &&
-      trackedEntry.initialRank >= MIN_BADGE &&
-      trackedEntry.initialRank <= MAX_BADGE
+      matchInfo.match_mode === RANKED_MATCH_MODE && isBadge(trackedEntry.initialRank)
         ? trackedEntry.initialRank
         : null,
     hasLeaver: players.some((entry) => entry.left),
   };
+}
+
+/**
+ * Gather the kills of a match from the deaths of its players.
+ *
+ * @param players - Every player of the match, ordered by slot.
+ * @returns Every kill, ordered by time (the players being ordered by slot, kills at the same time
+ *   keep a stable order), or `null` as soon as one player's kills are unknown: a kill missing from
+ *   their death details would make some other player's kills look fewer than they were.
+ */
+function matchKills(players: readonly ReadPlayer[]): readonly KillEvent[] | null {
+  const killsByVictim = players.map((entry) => entry.kills);
+  if (!killsByVictim.every((kills): kills is readonly KillEvent[] => kills !== null)) {
+    return null;
+  }
+  return killsByVictim.flat().toSorted((first, second) => first.timeS - second.timeS);
 }
 
 /**
@@ -310,14 +325,18 @@ export function statAt(player: PlayerContext, stat: SnapshotStat, timeS: number)
  * @param startS - The start of the window, in seconds since the start of the match.
  * @param endS - The end of the window, in seconds since the start of the match.
  * @returns The number of kills of the player with `startS ≤ time < endS`, or `time ≤ endS` when
- *   the window ends with the match.
+ *   the window ends with the match; `null` when the kills of the match are unknown (see
+ *   {@link MatchContext.kills}), never `0`.
  */
 export function killsIn(
   context: MatchContext,
   killerSlot: number,
   startS: number,
   endS: number,
-): number {
+): number | null {
+  if (context.kills === null) {
+    return null;
+  }
   // The last window has no next one to take a kill made at the very end of the match, which a
   // plain `< endS` would drop: it is counted there and only there.
   const endsWithMatch = endS === context.durationS;
@@ -330,16 +349,26 @@ export function killsIn(
 }
 
 /**
- * The length of the match in minutes, for the metrics per minute.
+ * A length in minutes, for the figures per minute: the one place that owns the rule.
  *
- * A match is never shorter than one second here, so that a metric per minute never divides by zero
+ * A match is never shorter than one second here, so that a figure per minute never divides by zero
  * (the analysis flags such a match as low confidence anyway).
  *
- * @param context - The match.
+ * @param durationS - The length of a match, in seconds.
  * @returns `max(1, durationS) / 60`.
  */
+export function minutesOf(durationS: number): number {
+  return Math.max(1, durationS) / 60;
+}
+
+/**
+ * The length of the match in minutes, for the metrics per minute.
+ *
+ * @param context - The match.
+ * @returns The length of the match, see {@link minutesOf}.
+ */
 export function matchMinutes(context: MatchContext): number {
-  return Math.max(1, context.durationS) / 60;
+  return minutesOf(context.durationS);
 }
 
 /**
@@ -347,13 +376,17 @@ export function matchMinutes(context: MatchContext): number {
  *
  * @param entry - The player as the match detail schema typed it.
  * @param index - The position of the player in `match_info.players`, the path of a problem.
- * @param isTracked - Whether this is the player the archive was pruned for.
+ * @param isTracked - Whether this is the player the archive was pruned for: only their rank is read.
  * @returns The player.
  * @throws AppError of kind `invalid_payload` (`players.<index>.<path>: <code>`) when the player is
  *   not what the context expects.
  */
 function readPlayer(entry: unknown, index: number, isTracked: boolean): ReadPlayer {
-  const raw = readArchiveFields(playerSchema, entry, `players.${String(index)}`);
+  const path = `players.${String(index)}`;
+  const raw = readArchiveFields(playerSchema, entry, path);
+  // A player who never died has no death to detail: a payload may leave the empty list out, as
+  // JSON written from protobuf messages does with empty repeated fields.
+  const deathDetails = raw.death_details ?? (raw.deaths === 0 ? [] : undefined);
   return {
     isTracked,
     player: {
@@ -370,17 +403,38 @@ function readPlayer(entry: unknown, index: number, isTracked: boolean): ReadPlay
         .map((snapshot) => ({ timeS: snapshot.time_stamp_s, stats: readSnapshotStats(snapshot) }))
         .toSorted((first, second) => first.timeS - second.timeS),
     },
-    initialRank: raw.player_rank_data?.initial_display_rank ?? 0,
+    initialRank: isTracked ? readInitialRank(entry, path) : null,
     left: (raw.abandon_match_time_s ?? 0) > 0,
-    // A killer slot of `0` means the death has no hero killer (the environment, a trooper…).
-    kills: (raw.death_details ?? [])
-      .filter((death) => death.killer_player_slot > 0)
-      .map((death) => ({
-        timeS: death.game_time_s,
-        killerSlot: death.killer_player_slot,
-        victimSlot: raw.player_slot,
-      })),
+    // One death detail per death, as in every complete payload. Otherwise (no list, or one of
+    // another length) some may be missing, and the kills they hold are unknown rather than fewer.
+    kills:
+      deathDetails?.length === raw.deaths
+        ? deathDetails
+            // A killer slot of `0` means the death has no hero killer (the environment, a trooper…).
+            .filter((death) => death.killer_player_slot > 0)
+            .map((death) => ({
+              timeS: death.game_time_s,
+              killerSlot: death.killer_player_slot,
+              victimSlot: raw.player_slot,
+            }))
+        : null,
   };
+}
+
+/**
+ * Read the rank the tracked player had when the match started.
+ *
+ * @param entry - The tracked player as the match detail schema typed it.
+ * @param path - The path of the player in the payload (`players.<index>`), the start of the path of
+ *   a problem.
+ * @returns Their rank at the start of the match, `0` when they have none (no rank data, or none at
+ *   the start).
+ * @throws AppError of kind `invalid_payload` (`players.<index>.player_rank_data…: <code>`) when the
+ *   rank data is not an object or the rank is not a whole number from 0.
+ */
+function readInitialRank(entry: unknown, path: string): number {
+  const { player_rank_data: rankData } = readArchiveFields(trackedRankSchema, entry, path);
+  return rankData?.initial_display_rank ?? 0;
 }
 
 /**

@@ -211,6 +211,12 @@ export interface CurveRate {
  * formula has no solution and `σ_end` is taken instead. Dividing by the length of the span in
  * minutes gives the deviation of the rate.
  *
+ * That fallback is not continuous: as `σ_end` comes down to just above `σ_start`, `σ_gain` tends to
+ * 0, so the distance of any rate to the average grows without bound (a "well above" or "well below"
+ * out of nothing), and jumps back to a reading on `σ_end` at equality. It is kept because the case
+ * does not arise in practice: inside one duration window the cohort is the same at both ends and the
+ * counters are cumulative, so the deviation grows clearly over a span of three minutes or more.
+ *
  * @param curve - The points of the curve, sorted by time.
  * @param stat - The counter to read.
  * @param startS - The start of the span, in seconds since the start of the match.

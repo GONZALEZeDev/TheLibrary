@@ -7,6 +7,14 @@
  * one number in one place. Nothing here is computed: each value is a decision, and the line above it
  * says why it has the value it has.
  *
+ * Most of them act when a match is shown, on the values already stored, and take effect at once.
+ * One does not: {@link MIN_PHASE_MINUTES} decides which phase metrics and which community stretches
+ * are projected and stored with each match. So do, elsewhere, the duration windows and the 720 s
+ * guaranteed end of the shortest one (`../cohort`) and the phase starts (`../phases`). Changing any
+ * of these leaves the stored values computed under the old rule while the view reads them with the
+ * new one: it needs a bump of `PROJECTION_VERSION` (`../registry`), so that every match is projected
+ * again.
+ *
  * @packageDocumentation
  */
 
@@ -79,6 +87,9 @@ export const MIN_PERSONAL_MATCHES = 5;
 /**
  * The shortest phase, in minutes, that is compared with a reference. A shorter one (the late phase
  * of a match that ends at 26:00, say) is shown with its totals but is too noisy to score.
+ *
+ * It changes the projected values: a change of it needs a bump of `PROJECTION_VERSION` (see the
+ * header of this file).
  */
 export const MIN_PHASE_MINUTES = 3;
 

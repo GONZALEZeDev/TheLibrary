@@ -31,8 +31,20 @@ export const DETAIL_WINDOW_MS = 90 * 24 * 60 * 60_000;
 /** The only game mode that is archived: 1, the normal game (4 is Street Brawl). */
 export const ARCHIVED_GAME_MODE = 1;
 
-/** The match modes that are archived: 1 (unranked) and 4 (ranked); 2 is a private lobby. */
-export const ARCHIVED_MATCH_MODES = [1, 4] as const;
+/** The match mode code of an unranked match of the game data. */
+export const UNRANKED_MATCH_MODE = 1;
+
+/**
+ * The match mode code of a ranked match of the game data: the only mode whose players' rank data is
+ * the badge they played the match at.
+ */
+export const RANKED_MATCH_MODE = 4;
+
+/**
+ * The match modes that are archived: {@link UNRANKED_MATCH_MODE} and {@link RANKED_MATCH_MODE}; 2
+ * is a private lobby.
+ */
+export const ARCHIVED_MATCH_MODES = [UNRANKED_MATCH_MODE, RANKED_MATCH_MODE] as const;
 
 /**
  * Whether the detail of a match is worth archiving.

@@ -7,12 +7,17 @@
 import { statAt } from '../match-context';
 import type { MatchContext } from '../match-context';
 import type { MetricDefinition } from '../metric';
+import { PHASE_START_S } from '../phases';
 
 /**
  * The time the souls are read at, in seconds since the start of the match: the end of the early
- * phase, 10:00.
+ * phase (where the mid phase starts), 10:00.
+ *
+ * It is that end by construction, not by a second number: the phase table reads the early souls
+ * from this metric, and its rate is compared with the community's over the early phase, so the two
+ * must cover the same span.
  */
-export const SOULS_AT_S = 600;
+export const SOULS_AT_S = PHASE_START_S.mid;
 
 /** The minutes from the start of the match to {@link SOULS_AT_S}: the span of the early rate. */
 const SOULS_AT_MINUTES = SOULS_AT_S / 60;

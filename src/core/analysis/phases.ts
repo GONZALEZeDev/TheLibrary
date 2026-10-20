@@ -108,7 +108,8 @@ export function phaseSpans(durationS: number): readonly PhaseSpan[] {
  * What a player did in a window of the match.
  *
  * The souls, the damage to heroes and the damage to objectives are cumulative counters: the total is
- * their growth over the window, read on the player's snapshots. The kills are counted in the window.
+ * their growth over the window, read on the player's snapshots. The kills are counted in the window
+ * ({@link killsIn}).
  *
  * @param context - The match.
  * @param player - The player.
@@ -116,8 +117,9 @@ export function phaseSpans(durationS: number): readonly PhaseSpan[] {
  * @param startS - The start of the window, in seconds since the start of the match.
  * @param endS - The end of the window, in seconds since the start of the match.
  * @returns The total, or `null` when a counter is unknown at the start or at the end of the window
- *   (no snapshot holds it, or the window ends after the last snapshot that does). The kills are
- *   always known.
+ *   (no snapshot holds it, or the window ends after the last snapshot that does), and for the kills
+ *   when the kills of the match are unknown (incomplete death details): never `0` for a figure that
+ *   is not known.
  */
 export function phaseTotal(
   context: MatchContext,

@@ -52,6 +52,14 @@ const EARLY_SOULS_KEY = 'souls_at_10min' satisfies MetricKey;
 /**
  * The statistic of the community's curve that each figure of a phase is compared with: the average
  * of the same cumulative counter (the kills are counted as they are).
+ *
+ * Two approximations come with it:
+ * - the curve's kills are the snapshot counters of the players, while the player's kills in a phase
+ *   are counted from the death details; the two differ by about one kill, so a phase's kills are
+ *   compared with the curve to within that kill;
+ * - the place on the curve reads the player's rate on a normal law (Φ) of the curve's average and
+ *   spread, which is only approximate for counters whose spread is skewed (the kills, the damage to
+ *   objectives, often 0).
  */
 const CURVE_STAT: Readonly<Record<PhaseStat, CurveStat>> = {
   souls: 'net_worth',

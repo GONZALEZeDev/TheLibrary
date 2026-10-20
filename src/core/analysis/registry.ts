@@ -33,8 +33,9 @@ import { teammateHealingMetric } from './metrics/teammate-healing.metric';
  * they are computed.
  *
  * Every projection is stored with the version that wrote it. Bumping the version makes every archive
- * be projected again at the next synchronisation. The archives are already on the disk, so this
- * needs no network.
+ * be projected again at the next synchronisation, which projects the archived matches that lack a
+ * projection of the current version at the end of its run (and a page opened before it projects the
+ * match it shows, as a fallback). The archives are already on the disk, so this needs no network.
  *
  * Bump it when a metric is added, removed or changed (its formula, its unit, the way its community
  * window is read): the values stored for the same archive would no longer be the ones the registry

@@ -11,6 +11,7 @@
  */
 import { PAIGE_HERO_ID } from '../../../core/domain/hero';
 import type { AccountId } from '../../../core/domain/account';
+import { RANKED_MATCH_MODE, UNRANKED_MATCH_MODE } from '../../../core/match-detail/detail-status';
 
 /**
  * The synthetic account of the fixtures. It was never looked up: any resemblance with a real
@@ -113,7 +114,7 @@ export function createMatchHistoryFixture(
       hero_level: between(20, 36),
       start_time: startTime,
       game_mode: 1,
-      match_mode: ranked ? 4 : 1,
+      match_mode: ranked ? RANKED_MATCH_MODE : UNRANKED_MATCH_MODE,
       player_team: playerTeam,
       player_kills: between(0, 15),
       player_deaths: between(0, 12),

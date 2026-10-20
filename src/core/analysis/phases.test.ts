@@ -72,14 +72,15 @@ function threeSnapshots(
 /**
  * Build the context of a hand-built match.
  *
- * @param options - The tracked player, their teammates and the kills; the enemies are six players
- *   with huge numbers, so that a team total that counted them would be wrong.
+ * @param options - The tracked player, their teammates and the kills (none when left out, `null`
+ *   for kills that are unknown); the enemies are six players with huge numbers, so that a team
+ *   total that counted them would be wrong.
  * @returns The match context.
  */
 function matchContext(options: {
   readonly tracked: PlayerContext;
   readonly teammates: readonly PlayerContext[];
-  readonly kills?: readonly KillEvent[];
+  readonly kills?: readonly KillEvent[] | null;
   readonly durationS?: number;
 }): MatchContext {
   const enemySnapshots = threeSnapshots(
@@ -92,7 +93,8 @@ function matchContext(options: {
     tracked: options.tracked,
     teammates: options.teammates,
     enemies: ENEMY_SLOTS.map((slot) => player(slot, enemySnapshots)),
-    kills: options.kills ?? [],
+    // `??` would turn unknown kills (`null`) into no kill at all.
+    kills: options.kills === undefined ? [] : options.kills,
   });
 }
 
@@ -216,6 +218,15 @@ describe('phaseTotal', () => {
     expect(phaseTotal(earlyContext, bare, 'souls', 0, 600)).toBeNull();
     expect(phaseTotal(earlyContext, bare, 'kills', 0, 600)).toBe(0);
   });
+
+  it('is null for the kills when the kills of the match are unknown, never 0', () => {
+    const unknownKills = matchContext({ tracked, teammates: [], kills: null });
+
+    expect(phaseTotal(unknownKills, tracked, 'kills', 0, 600)).toBeNull();
+    expect(phaseTotal(unknownKills, tracked, 'kills', 1_500, DURATION_S)).toBeNull();
+    // The counters do not depend on the kills.
+    expect(phaseTotal(unknownKills, tracked, 'souls', 0, 600)).toBe(7_000);
+  });
 });
 
 describe('phaseBreakdown', () => {
@@ -319,6 +330,15 @@ describe('phaseBreakdown', () => {
     const cells = present(phaseBreakdown(bare)[0]).cells;
     expect(cells.souls).toEqual({ total: null, teamShare: null });
     expect(cells.kills).toEqual({ total: 1, teamShare: 1 });
+  });
+
+  it('has unknown kill cells, and the other cells, when the kills of the match are unknown', () => {
+    const unknownKills = phaseBreakdown(matchContext({ tracked, teammates, kills: null }));
+
+    for (const row of unknownKills) {
+      expect(row.cells.kills, row.span.phase).toEqual({ total: null, teamShare: null });
+    }
+    expect(present(unknownKills[0]).cells.souls).toEqual(cellsOf('early').souls);
   });
 
   it('only has the phases a short match reached, ending at the match end', () => {

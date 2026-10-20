@@ -16,8 +16,11 @@ import type { SettingsStore } from '../ports/settings-store.port';
 import type { SignInGateway } from '../ports/sign-in-gateway.port';
 import { AccountDataService } from './account-data.service';
 import { AccountService } from './account.service';
+import { AnalysisService } from './analysis.service';
 import { ApiCacheRepository } from './api-cache.repository';
 import type { AppServices } from './app-services';
+import { ArchiveReaderService } from './archive-reader.service';
+import { BenchmarkService } from './benchmark.service';
 import { DatabaseMaintenanceRepository } from './database-maintenance.repository';
 import { DeadlockApiService } from './deadlock-api.service';
 import { HeroCatalogService } from './hero-catalog.service';
@@ -26,6 +29,9 @@ import { MatchDetailRepository } from './match-detail.repository';
 import { MatchDetailService } from './match-detail.service';
 import { MatchesRepository } from './matches.repository';
 import { MatchesService } from './matches.service';
+import { MetricsRepository } from './metrics.repository';
+import { PlayerRankService } from './player-rank.service';
+import { ProjectionService } from './projection.service';
 import { SettingsService } from './settings.service';
 import { SteamProfileService } from './steam-profile.service';
 import { SteamSignInService } from './steam-sign-in.service';
@@ -86,21 +92,66 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     // Left out, not passed as `undefined`: the service then uses its own timer.
     ...(options.sleep === undefined ? {} : { sleep: options.sleep }),
   });
+  // One reader for the whole app: every service that works from the archives reads them through it,
+  // so one set of rules says what an unreadable archive is and how it is logged.
+  const reader = new ArchiveReaderService({ archive: archiveStore, compressor, logger });
+  // The detail state of the matches is read and written by the detail queue and by the projection
+  // (an archive that cannot be read puts its match back in the queue): the one repository for both.
+  const detailRepository = new MatchDetailRepository(database);
   const details = new MatchDetailService({
     accountSource: linkedAccounts,
     api,
-    repository: new MatchDetailRepository(database),
+    repository: detailRepository,
     archive: archiveStore,
     compressor,
+    reader,
     logger,
     now,
   });
-  // The synchronisation runs the detail queue after the history: it gets the one `details`.
+  // The values of the metrics of every match are written by the projection and read by the
+  // analysis: the one repository for both.
+  const metrics = new MetricsRepository(database);
+  // Turns the archived matches into the values of their metrics, from the very `reader` and
+  // `detailRepository` of the detail queue.
+  const projection = new ProjectionService({
+    reader,
+    metrics,
+    details: detailRepository,
+    logger,
+    now,
+  });
+  // Keeps the rank of the linked account, through the one `api` (and so its rank budget and pause).
+  const rank = new PlayerRankService({ api, accounts: linkedAccounts, logger, now });
+  // The slow-changing API responses (the hero names and the community data) share one cache table.
+  const apiCache = new ApiCacheRepository(database);
+  // Keeps the community data the analysis compares the matches with, through the one `api` too.
+  const benchmarks = new BenchmarkService({
+    api,
+    cache: apiCache,
+    accountSource: linkedAccounts,
+    logger,
+    now,
+  });
+  // Compares a match with the community and with the habits of the player, from the projection the
+  // synchronisation keeps up to date and from the very `reader` and `detailRepository` above.
+  const analysis = new AnalysisService({
+    accountSource: linkedAccounts,
+    metrics,
+    details: detailRepository,
+    reader,
+    benchmarks,
+    accounts: linkedAccounts,
+    logger,
+  });
+  // The synchronisation runs the detail queue after the history: it gets the one `details`, and
+  // keeps the projection and the rank up to date inside its runs, which the suspension waits for.
   const sync = new SyncService({
     accountSource: linkedAccounts,
     api,
     details,
     matches,
+    projection,
+    rank,
     syncState,
     logger,
     now,
@@ -109,6 +160,7 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
   // nothing of an account stays in a repository, the archive or the memory of the detail queue.
   const accountData = new AccountDataService({
     matches,
+    metrics,
     syncState,
     archive: archiveStore,
     maintenance: new DatabaseMaintenanceRepository(database),
@@ -141,15 +193,10 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     logger,
     settings: new SettingsService(settingsStore, logger),
     matches: new MatchesService(linkedAccounts, matches, now),
-    heroes: new HeroCatalogService(
-      linkedAccounts,
-      api,
-      new ApiCacheRepository(database),
-      logger,
-      now,
-    ),
+    heroes: new HeroCatalogService(linkedAccounts, api, apiCache, logger, now),
     details,
     sync,
     account,
+    analysis,
   };
 }

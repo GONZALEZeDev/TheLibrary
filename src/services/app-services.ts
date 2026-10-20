@@ -9,6 +9,7 @@
  */
 import type { Logger } from '../ports/logger.port';
 import type { AccountService } from './account.service';
+import type { AnalysisService } from './analysis.service';
 import type { HeroCatalogService } from './hero-catalog.service';
 import type { MatchDetailService } from './match-detail.service';
 import type { MatchesService } from './matches.service';
@@ -31,4 +32,6 @@ export interface AppServices {
   readonly sync: SyncService;
   /** The linked Steam account: link, switch, unlink, and the upkeep of the link. */
   readonly account: AccountService;
+  /** Analysis of the Paige matches: the comparison with the community and with the player's habits. */
+  readonly analysis: AnalysisService;
 }

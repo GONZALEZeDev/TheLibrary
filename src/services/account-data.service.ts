@@ -2,9 +2,11 @@
  * Deletion of the local data of an account, and the cleanup at startup of everything that does not
  * belong to the linked account.
  *
- * An account's data is its matches (the state of their detail queue lives in the same rows), its
- * synchronisation state, its archive folder, and what the detail queue remembers of it in memory.
- * Unlinking or switching accounts deletes it ({@link AccountDataService.eraseAccount}); the sweep
+ * An account's data is its matches (the state of their detail queue lives in the same rows), the
+ * projections and metrics of their analysis, its synchronisation state, its archive folder, and what
+ * the detail queue remembers of it in memory. The rank of the player is not listed apart: it lives in
+ * the row of the link, which the account service deletes or overwrites itself. Unlinking or
+ * switching accounts deletes it ({@link AccountDataService.eraseAccount}); the sweep
  * ({@link AccountDataService.sweep}) runs at every start and deletes whatever is left of other
  * accounts, which is how a deletion that failed or was interrupted is finished: the account service
  * makes the link change first, and the sweep retries until the data is gone.
@@ -43,6 +45,7 @@ import type { Logger } from '../ports/logger.port';
 import type { DatabaseMaintenanceRepository } from './database-maintenance.repository';
 import type { MatchDetailService } from './match-detail.service';
 import type { MatchesRepository } from './matches.repository';
+import type { MetricsRepository } from './metrics.repository';
 import type { SyncStateRepository } from './sync-state.repository';
 
 /** Scope of every log line of this service. */
@@ -52,14 +55,14 @@ const LOG_SCOPE = 'account.data';
 const FAILURE_MESSAGE = 'Could not delete account data';
 
 /**
- * The step that failed, as logged: the `matches` or the synchronisation state (`sync_state`) of an
- * account, the files of the `archive`, the compaction (`vacuum`, its flag included), or the `check`
- * after a deletion.
+ * The step that failed, as logged: the `matches`, the projections and metric values of their
+ * analysis (`metrics`) or the synchronisation state (`sync_state`) of an account, the files of the
+ * `archive`, the compaction (`vacuum`, its flag included), or the `check` after a deletion.
  */
-type Step = 'matches' | 'sync_state' | 'archive' | 'vacuum' | 'check';
+type Step = 'matches' | 'metrics' | 'sync_state' | 'archive' | 'vacuum' | 'check';
 
 /** The part of an account's data the `check` looked at. */
-type CheckedPart = 'matches' | 'sync_state' | 'archive';
+type CheckedPart = 'matches' | 'metrics' | 'sync_state' | 'archive';
 
 /**
  * Where a failure came from, which decides how much of it may be logged: a database error is
@@ -74,6 +77,8 @@ type Attempt<T> = { readonly ok: true; readonly value: T } | { readonly ok: fals
 export interface AccountDataServiceDependencies {
   /** The matches of every account. */
   readonly matches: MatchesRepository;
+  /** The projections and the metric values of the analysis of every account. */
+  readonly metrics: MetricsRepository;
   /** The synchronisation state, and the flag of the owed compaction. */
   readonly syncState: SyncStateRepository;
   /** The archive folder. */
@@ -115,6 +120,7 @@ export interface SweepReport {
 /** Deletes the local data of accounts. */
 export class AccountDataService {
   readonly #matches: MatchesRepository;
+  readonly #metrics: MetricsRepository;
   readonly #syncState: SyncStateRepository;
   readonly #archive: ArchiveStore;
   readonly #maintenance: DatabaseMaintenanceRepository;
@@ -126,6 +132,7 @@ export class AccountDataService {
    */
   constructor(dependencies: AccountDataServiceDependencies) {
     this.#matches = dependencies.matches;
+    this.#metrics = dependencies.metrics;
     this.#syncState = dependencies.syncState;
     this.#archive = dependencies.archive;
     this.#maintenance = dependencies.maintenance;
@@ -157,9 +164,9 @@ export class AccountDataService {
   }
 
   /**
-   * Delete every local data of an account: its matches, its synchronisation state, its archive
-   * folder and what the detail queue remembers of it. Then compact the database and check that
-   * nothing of the account is left.
+   * Delete every local data of an account: its matches, the projections and metrics of their
+   * analysis, its synchronisation state, its archive folder and what the detail queue remembers of
+   * it. Then compact the database and check that nothing of the account is left.
    *
    * The synchronisation must be suspended around the call: a run in progress would write for the
    * account again. Deleting an account that has no data succeeds (an unlink that is retried).
@@ -185,11 +192,11 @@ export class AccountDataService {
   }
 
   /**
-   * Delete everything that does not belong to the linked account: the matches and the
-   * synchronisation state of every other account, and every entry of the archive folder but the
-   * folder of the linked account (the folders of other accounts, the quarantine folder of the first
-   * layout, leftover temporary files, anything unknown). Then compact the database if a compaction
-   * is owed, which is also how a deletion interrupted before its compaction is finished.
+   * Delete everything that does not belong to the linked account: the matches, the analysis rows
+   * and the synchronisation state of every other account, and every entry of the archive folder but
+   * the folder of the linked account (the folders of other accounts, the quarantine folder of the
+   * first layout, leftover temporary files, anything unknown). Then compact the database if a
+   * compaction is owed, which is also how a deletion interrupted before its compaction is finished.
    *
    * A listing that fails is logged with its step, and that part is skipped. An archive entry whose
    * name the store would refuse (it is not a single plain name) is skipped and logged without its
@@ -224,12 +231,12 @@ export class AccountDataService {
   }
 
   /**
-   * Delete the rows and the synchronisation state of an account, and forget it in the detail queue.
-   * Both deletions are tried even when the first fails: whichever stays is found again by the next
-   * sweep.
+   * Delete the matches, the analysis rows and the synchronisation state of an account, and forget it
+   * in the detail queue. The three deletions are tried even when one fails: whichever stays is found
+   * again by the next sweep.
    *
    * @param accountId - The account.
-   * @returns `true` when both deletions succeeded.
+   * @returns `true` when the three deletions succeeded.
    */
   async #deleteRows(accountId: AccountId): Promise<boolean> {
     // In memory and trivial, so it has no step of its own to fail.
@@ -237,15 +244,20 @@ export class AccountDataService {
     const matchesDeleted = await this.#attempt('matches', 'database', () =>
       this.#matches.deleteAccount(accountId),
     );
+    // No foreign key ties these tables to the matches: the order of the deletions is free.
+    const metricsDeleted = await this.#attempt('metrics', 'database', () =>
+      this.#metrics.deleteAccount(accountId),
+    );
     const stateDeleted = await this.#attempt('sync_state', 'database', () =>
       this.#syncState.deleteAccountState(accountId),
     );
-    return matchesDeleted.ok && stateDeleted.ok;
+    return matchesDeleted.ok && metricsDeleted.ok && stateDeleted.ok;
   }
 
   /**
-   * The accounts that have data and are not the linked one: those with matches and those with a
-   * synchronisation state, each listed on its own so that one listing failing leaves the other.
+   * The accounts that have data and are not the linked one: those with matches, those with analysis
+   * rows and those with a synchronisation state, each listed on its own so that one listing failing
+   * leaves the others.
    *
    * @param linked - The linked account, or `null`.
    * @returns Each account once, lowest id first.
@@ -254,11 +266,15 @@ export class AccountDataService {
     const withMatches = await this.#attempt('matches', 'database', () =>
       this.#matches.listAccountIds(),
     );
+    const withMetrics = await this.#attempt('metrics', 'database', () =>
+      this.#metrics.listAccountIds(),
+    );
     const withState = await this.#attempt('sync_state', 'database', () =>
       this.#syncState.listAccountIds(),
     );
     const others = new Set([
       ...(withMatches.ok ? withMatches.value : []),
+      ...(withMetrics.ok ? withMetrics.value : []),
       ...(withState.ok ? withState.value : []),
     ]);
     if (linked !== null) {
@@ -336,8 +352,8 @@ export class AccountDataService {
   }
 
   /**
-   * Check that nothing of an account is left: no match, no synchronisation state, no archive folder.
-   * Each part is looked at, and logged, on its own.
+   * Check that nothing of an account is left: no match, no analysis row, no synchronisation state,
+   * no archive folder. Each part is looked at, and logged, on its own.
    *
    * @param accountId - The account.
    * @returns `true` when nothing is left and every part could be read.
@@ -349,6 +365,11 @@ export class AccountDataService {
       'database',
       async () => (await this.#matches.count(accountId)) === 0,
     );
+    const metricsGone = await this.#verify(
+      'metrics',
+      'database',
+      async () => (await this.#metrics.countAccount(accountId)) === 0,
+    );
     const stateGone = await this.#verify(
       'sync_state',
       'database',
@@ -359,7 +380,7 @@ export class AccountDataService {
       'archive',
       async () => !(await this.#archive.listEntries()).includes(folder),
     );
-    return matchesGone && stateGone && folderGone;
+    return matchesGone && metricsGone && stateGone && folderGone;
   }
 
   /**

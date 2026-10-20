@@ -19,6 +19,22 @@
  * its outcome, before the queue starts: the queue can take many seconds, and the interface must not
  * wait for it to show the matches and the state of the history.
  *
+ * The run also keeps the analysis up to date, in this order:
+ * - the projection catch-up comes first, as soon as the account is known, before the history and the
+ *   protected-account check: it works from the archives on disk, so it needs no network and no
+ *   request budget, and the matches archived by an earlier run (or before an update of the
+ *   projection) are analysed even when the account is protected or the network is down;
+ * - the rank refresh follows the history step, whatever came of it, unless the history did not reach
+ *   deadlock-api (`network`, `timeout`) or there was no history step (a `detail` run, a protected
+ *   account's automatic run): the rank has its own budget and its own checks, and a day-old rank is
+ *   all the analysis needs;
+ * - a second catch-up follows the queue when it archived matches, so that they are analysed in the
+ *   run that downloaded them.
+ *
+ * All of it runs inside the run, which is what lets the suspension around a change of account wait for
+ * it. Neither the catch-up nor the rank refresh ever stops the run: they report their failures
+ * instead of throwing, and a bug in one of them is logged and left at that.
+ *
  * The synchronisation can be suspended around a change of account (see {@link SyncService.suspend}).
  * A running detail queue captured the id of the account it was started for: left alone while the
  * account is erased, it would go on writing for that account, and could create the archive folder
@@ -47,6 +63,8 @@ import type { Logger } from '../ports/logger.port';
 import type { DeadlockApiService } from './deadlock-api.service';
 import type { DetailRunReport, MatchDetailService } from './match-detail.service';
 import type { MatchesRepository } from './matches.repository';
+import type { PlayerRankService } from './player-rank.service';
+import type { ProjectionService } from './projection.service';
 import type { SyncStateRepository } from './sync-state.repository';
 
 /**
@@ -55,7 +73,7 @@ import type { SyncStateRepository } from './sync-state.repository';
  * - `manual` is the user's own request, history and details;
  * - `detail` is the user's own request too (the "Retry" of a match detail), but for the details
  *   only: the history step is left out, so it sends no history request and changes nothing of what
- *   the history banner shows;
+ *   the history banner shows (the projection of the archived matches runs in it all the same);
  * - `link` is the first synchronisation after an account was linked: the user's own request too,
  *   with the history and the details, so it is not held to the automatic part of the history budget
  *   and it is not stopped by a protected account.
@@ -94,6 +112,8 @@ interface RunResult {
   readonly outcome: RunOutcome;
   /** How the detail queue went, or `null` when it did not run (or failed to report). */
   readonly detail: DetailRunReport | null;
+  /** How many matches the run projected, the two catch-ups together. */
+  readonly projected: number;
 }
 
 /**
@@ -114,6 +134,10 @@ export interface SyncServiceDependencies {
   /** The detail queue the synchronisation runs after the history, and the retry of one match. */
   readonly details: MatchDetailService;
   readonly matches: MatchesRepository;
+  /** The projection of the archived matches into metrics, caught up inside every run. */
+  readonly projection: ProjectionService;
+  /** The rank of the linked account, refreshed after the history step of a run. */
+  readonly rank: PlayerRankService;
   readonly syncState: SyncStateRepository;
   readonly logger: Logger;
   /** Current time (Unix ms); `Date.now` by default. */
@@ -126,6 +150,8 @@ export class SyncService {
   readonly #api: DeadlockApiService;
   readonly #details: MatchDetailService;
   readonly #matches: MatchesRepository;
+  readonly #projection: ProjectionService;
+  readonly #rank: PlayerRankService;
   readonly #syncState: SyncStateRepository;
   readonly #logger: Logger;
   readonly #now: () => number;
@@ -151,6 +177,8 @@ export class SyncService {
     this.#api = dependencies.api;
     this.#details = dependencies.details;
     this.#matches = dependencies.matches;
+    this.#projection = dependencies.projection;
+    this.#rank = dependencies.rank;
     this.#syncState = dependencies.syncState;
     this.#logger = dependencies.logger;
     this.#now = dependencies.now ?? Date.now;
@@ -393,13 +421,13 @@ export class SyncService {
     const startedAt = this.#now();
     this.#logger.log('debug', 'sync', 'Synchronisation started', { syncRunId, trigger });
     // What is known of the run if it fails before it can say more.
-    let result: RunResult = { outcome: 'failed', detail: null };
+    let result: RunResult = { outcome: 'failed', detail: null, projected: 0 };
     try {
       result = await this.#synchronise(trigger, syncRunId);
     } catch (error) {
       this.#logFailure(error, syncRunId);
     } finally {
-      const { outcome, detail } = result;
+      const { outcome, detail, projected } = result;
       // Without an account, or with a protected one, no request was sent: kept out of the log
       // files (the desktop app writes `info` and above), which would otherwise get a line at every
       // automatic synchronisation.
@@ -419,18 +447,30 @@ export class SyncService {
           ...(detail === null
             ? {}
             : { archived: detail.archived, detailStoppedBy: detail.stoppedBy }),
+          // How many matches the run projected; left out when none, like `archived` of a queue that
+          // did not run. A count only.
+          ...(projected > 0 ? { projected } : {}),
         },
       );
     }
   }
 
   /**
-   * Synchronise the linked account and save the outcome of the history step: the history, then the
-   * detail queue.
+   * Synchronise the linked account and save the outcome of the history step: the projection
+   * catch-up, the history, the rank, then the detail queue and a second catch-up.
+   *
+   * The catch-up comes first and is not held to anything the rest of the run is: it works from the
+   * archives on disk, so it runs for a protected account's automatic run, for a `detail` run and
+   * whatever the network does.
    *
    * A `detail` run skips the history step altogether: it requests no history and saves nothing of
    * the history state (`lastSync`, the protected flag), so the history banner is left as it was.
    * The queue then runs for any trigger but one whose history failed to reach deadlock-api.
+   *
+   * The rank is refreshed right after the history step, once the listeners know about the history,
+   * for any history that reached deadlock-api, whether or not it was requested or accepted: the
+   * rank has its own pause and budget checks. A `detail` run and a run that ends at the network
+   * leave it alone.
    *
    * @param trigger - What started it.
    * @param syncRunId - Id of this synchronisation in the logs.
@@ -441,13 +481,17 @@ export class SyncService {
   async #synchronise(trigger: SyncTrigger, syncRunId: string): Promise<RunResult> {
     const accountId = await this.#accountSource.currentAccountId();
     if (accountId === null) {
-      return { outcome: 'no_account', detail: null };
+      return { outcome: 'no_account', detail: null, projected: 0 };
     }
+    // Before the history and the protected check: the archives need no request, and a match archived
+    // by an earlier run, or whose projection is out of date, is analysed even when this run goes no
+    // further.
+    let projected = await this.#catchUp(accountId, syncRunId);
     const state = await this.#syncState.getAccountState(accountId);
     // A protected account answers 403 to every request: only the user may try again. The timer and
     // the start of the app stay quiet; the user's own requests, the details' included, go through.
     if (state.protectedAccount && isAutomatic(trigger)) {
-      return { outcome: 'protected_account', detail: null };
+      return { outcome: 'protected_account', detail: null, projected };
     }
     let outcome: RunOutcome = 'detail_only';
     let unreachable = false;
@@ -464,16 +508,66 @@ export class SyncService {
     }
     // The queue is not tried when the network is down: its first request would fail the same way.
     if (unreachable) {
-      return { outcome, detail: null };
+      return { outcome, detail: null, projected };
     }
     if (trigger !== 'detail') {
       // The history step has saved its matches and its outcome: tell the listeners now, so that the
       // interface shows them at once instead of after the queue, which can take many seconds. A
       // `detail` run has no history step, so it has nothing new to show before its end.
       this.#notify();
+      // After the notification, so that the interface does not wait for the rank request.
+      await this.#refreshRank(accountId, syncRunId);
     }
     const detail = await this.#runQueue(accountId, syncRunId);
-    return { outcome, detail };
+    // The queue archived matches: analyse them now, in the run that downloaded them, rather than at
+    // the start of the next one.
+    if (detail !== null && detail.archived > 0) {
+      projected += await this.#catchUp(accountId, syncRunId);
+    }
+    return { outcome, detail, projected };
+  }
+
+  /**
+   * Project the archived matches that are not projected yet, and tell the listeners when it did
+   * anything: the interface reads the analysis again. The projection reports its failures instead
+   * of throwing, so an error here is a bug: it is logged, and it does not stop the synchronisation.
+   *
+   * @param accountId - The account.
+   * @param syncRunId - Id of this synchronisation in the logs.
+   * @returns How many matches were projected; 0 when the projection failed to say.
+   */
+  async #catchUp(accountId: AccountId, syncRunId: string): Promise<number> {
+    try {
+      const report = await this.#projection.catchUp(accountId, syncRunId);
+      if (report.projected + report.failed + report.reset + report.skipped > 0) {
+        this.#notify();
+      }
+      return report.projected;
+    } catch (error) {
+      this.#logger.log('error', 'sync', 'The projection failed', {
+        ...errorLogContext(toAppError(error)),
+        syncRunId,
+      });
+      return 0;
+    }
+  }
+
+  /**
+   * Refresh the rank of the account if it is due. The rank service reports its failures instead of
+   * throwing, so an error here is a bug: it is logged, and it does not stop the synchronisation.
+   *
+   * @param accountId - The account.
+   * @param syncRunId - Id of this synchronisation in the logs.
+   */
+  async #refreshRank(accountId: AccountId, syncRunId: string): Promise<void> {
+    try {
+      await this.#rank.refreshIfDue(accountId, syncRunId);
+    } catch (error) {
+      this.#logger.log('error', 'sync', 'The refresh of the rank failed', {
+        ...errorLogContext(toAppError(error)),
+        syncRunId,
+      });
+    }
   }
 
   /**

@@ -14,17 +14,22 @@ import {
 } from '../adapters/dev/fixture-http-client.adapter';
 import { FIXTURE_ACCOUNT_ID } from '../adapters/dev/fixtures/match-history.fixture';
 import type { MemoryLogger } from '../adapters/dev/memory-logger.adapter';
+import { PROJECTION_VERSION } from '../core/analysis/registry';
 import {
   AUTOMATIC_HISTORY_RATE_LIMIT,
   HISTORY_RATE_LIMIT,
   METADATA_RATE_LIMIT,
 } from '../core/deadlock-api/budgets';
-import { AppError } from '../core/errors/app-error';
+import { AppError, type AppErrorKind } from '../core/errors/app-error';
 import type { Database } from '../ports/database.port';
 import type { HttpRequest } from '../ports/http-client.port';
 import { createTestServices, type TestServicesOptions } from '../test/create-test-services';
 import { createTestDatabase, testMatchId } from '../test/test-data';
+import { LinkedAccountRepository } from './linked-account.repository';
 import { MatchDetailService } from './match-detail.service';
+import { MetricsRepository } from './metrics.repository';
+import { PlayerRankService, RANK_MAX_AGE_MS } from './player-rank.service';
+import { ProjectionService, type ProjectionReport } from './projection.service';
 import { SYNC_INTERVAL_MS, type SyncService } from './sync.service';
 
 const START = Date.UTC(2026, 9, 14, 12, 0, 0);
@@ -61,6 +66,49 @@ function isHistoryRequest(request: HttpRequest): boolean {
  */
 function isMetadataRequest(request: HttpRequest): boolean {
   return METADATA_URL.test(request.url);
+}
+
+/**
+ * Tell whether a request asks for the rank of a player.
+ *
+ * @param request - The request.
+ * @returns `true` for a player rank request.
+ */
+function isRankRequest(request: HttpRequest): boolean {
+  return request.url.endsWith('/rank');
+}
+
+/** What a catch-up that found nothing to do reports. */
+const NOTHING_PROJECTED: ProjectionReport = {
+  projected: 0,
+  failed: 0,
+  reset: 0,
+  skipped: 0,
+  stoppedBy: null,
+};
+
+/** What a catch-up that stored the metrics of five matches reports. */
+const FIVE_PROJECTED: ProjectionReport = { ...NOTHING_PROJECTED, projected: 5 };
+
+/**
+ * Replace the catch-up of the projection, for every service built afterwards, by a fake that
+ * reports `report` at once and records its calls. Restored after each test.
+ *
+ * @param report - What the fake reports.
+ * @returns The spy, to read its calls or to change its report.
+ */
+function fakeCatchUp(report: ProjectionReport = NOTHING_PROJECTED) {
+  return vi.spyOn(ProjectionService.prototype, 'catchUp').mockResolvedValue(report);
+}
+
+/**
+ * Replace the refresh of the rank by a fake that does nothing and records its calls: no rank
+ * request is sent. Restored after each test.
+ *
+ * @returns The spy.
+ */
+function fakeRankRefresh() {
+  return vi.spyOn(PlayerRankService.prototype, 'refreshIfDue').mockResolvedValue(undefined);
 }
 
 /**
@@ -298,6 +346,24 @@ function heldHistoryApi() {
 }
 
 /**
+ * Wait for the end of the next synchronisation, as the service itself tells it: no timer is read,
+ * so it works under fake timers and moves no fake clock. Call it before the run starts.
+ *
+ * @param sync - The service to watch.
+ * @returns A promise resolved once a synchronisation has ended.
+ */
+function whenNextRunEnds(sync: SyncService): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const unsubscribe = sync.subscribe(() => {
+      if (!sync.isRunning()) {
+        unsubscribe();
+        resolve();
+      }
+    });
+  });
+}
+
+/**
  * Let the pending work of the other promises run (a macrotask later), so that whatever could
  * settle by itself has settled. Real timers only.
  *
@@ -437,7 +503,8 @@ describe('SyncService', () => {
   });
 
   it('tells its listeners when a synchronisation starts and ends, and when its history is saved', async () => {
-    const { sync } = setUp({ handler: smallHistoryApi() });
+    // No way to the details: nothing is archived, so nothing is projected, and no other notification.
+    const { sync } = setUp({ handler: historyOnlyApi() });
     const states: boolean[] = [];
     const unsubscribe = sync.subscribe(() => states.push(sync.isRunning()));
 
@@ -694,9 +761,13 @@ describe('SyncService', () => {
     await countMatches();
     vi.useFakeTimers({ now: START });
 
+    const startupEnded = whenNextRunEnds(sync);
     sync.start();
-    // The startup synchronisation ended at START, before the first tick.
-    await vi.advanceTimersByTimeAsync(0);
+    // The startup synchronisation ended at START, before the first tick. It is waited for through
+    // the service, not through the fake timers: its archives are compressed and read back by a
+    // codec that needs real time to start, which a fake timer does not wait for, and a wait that
+    // moved the fake clock would move the dates of the requests too.
+    await startupEnded;
     expect(sync.isRunning()).toBe(false);
     for (let hour = 0; hour < hours; hour += 1) {
       // The manual synchronisation falls half a minute after the half hour: whole-minute ticks
@@ -735,11 +806,14 @@ describe('SyncService and the detail queue', () => {
     expect(
       [...archiveStore.files.keys()].filter((path) => path.endsWith('.json.zst')),
     ).toHaveLength(summary?.archived ?? -1);
-    // The history comes first, then nothing but details.
-    expect(http.requests.slice(0, 1)).toEqual(historyRequests());
-    expect(http.requests.slice(1)).toEqual(metadataRequests());
+    // The history comes first, then the rank (once), then nothing but details.
+    const rankRequests = http.requests.filter(isRankRequest);
+    expect(rankRequests).toHaveLength(1);
+    expect(http.requests.slice(0, 2)).toEqual([...historyRequests(), ...rankRequests]);
+    expect(http.requests.slice(2)).toEqual(metadataRequests());
     await expect(sync.getStatus()).resolves.toMatchObject({ lastSync: { outcome: 'synced' } });
     // One line says how the whole synchronisation went, and carries the same id as the queue's.
+    // Every archived match was projected after the queue.
     const [ended, ...others] = endedLines(logger);
     expect(others).toEqual([]);
     expect(ended?.context).toEqual({
@@ -749,6 +823,7 @@ describe('SyncService and the detail queue', () => {
       durationMs: expect.any(Number) as unknown,
       archived: summary?.archived,
       detailStoppedBy: null,
+      projected: summary?.archived,
     });
     const queueEnded = logger.entries.find((entry) => entry.message === 'Detail queue ended');
     expect(queueEnded?.context.syncRunId).toBe(ended?.context.syncRunId);
@@ -778,7 +853,8 @@ describe('SyncService and the detail queue', () => {
     expect((await Promise.all(totals)).at(-1)).toBe(SMALL_HISTORY);
     gate.open();
     await run;
-    expect(states).toEqual([true, true, false]);
+    // Then the matches the queue archived are projected, and the run ends.
+    expect(states).toEqual([true, true, true, false]);
   });
 
   it('runs the queue when the history budget is exhausted', async () => {
@@ -902,8 +978,9 @@ describe('SyncService and the detail queue', () => {
     const requestsOfTheRun = http.requests.slice(requestsBefore);
     expect(requestsOfTheRun.every(isMetadataRequest)).toBe(true);
     expect(requestsOfTheRun.length).toBeGreaterThanOrEqual(summary?.archived ?? Infinity);
-    // No history step, so nothing to show before the end of the run.
-    expect(states).toEqual([true, false]);
+    // No history step, so nothing to show before the end of the run, but the matches the queue
+    // archived are projected, and that is told.
+    expect(states).toEqual([true, true, false]);
     // The line names the run for what it is: no history outcome to report.
     expect(endedLines(logger).at(-1)?.context).toEqual({
       syncRunId: expect.any(String) as unknown,
@@ -912,6 +989,7 @@ describe('SyncService and the detail queue', () => {
       durationMs: expect.any(Number) as unknown,
       archived: summary?.archived,
       detailStoppedBy: null,
+      projected: summary?.archived,
     });
   });
 
@@ -1096,6 +1174,366 @@ describe('SyncService and the detail queue', () => {
   });
 });
 
+describe('SyncService and the analysis', () => {
+  it('projects before the history: the history is not asked for while the catch-up runs', async () => {
+    const entered = createGate();
+    const release = createGate();
+    const catchUp = vi
+      .spyOn(ProjectionService.prototype, 'catchUp')
+      .mockImplementation(async () => {
+        entered.open();
+        await release.opened;
+        return NOTHING_PROJECTED;
+      });
+    fakeRankRefresh();
+    const { sync, logger, historyRequests } = setUp({ handler: historyOnlyApi() });
+
+    const run = sync.syncNow('manual');
+    await entered.opened;
+    await settle();
+
+    // The catch-up is held, and the run waits for it: no request has left yet.
+    expect(sync.isRunning()).toBe(true);
+    expect(historyRequests()).toHaveLength(0);
+    release.open();
+    await run;
+    expect(historyRequests()).toHaveLength(1);
+    // The catch-up is tied to the run in the logs: it got the account and the id of the run.
+    const started = logger.entries.find((entry) => entry.message === 'Synchronisation started');
+    expect(catchUp.mock.calls).toEqual([[FIXTURE_ACCOUNT_ID, started?.context.syncRunId]]);
+  });
+
+  it('refreshes the rank after the history and before the queue, and projects again after the queue', async () => {
+    const order: string[] = [];
+    // Several requests of the queue in a row make one step.
+    const record = (step: string): void => {
+      if (order.at(-1) !== step) {
+        order.push(step);
+      }
+    };
+    vi.spyOn(ProjectionService.prototype, 'catchUp').mockImplementation(() => {
+      record('catch-up');
+      return Promise.resolve(NOTHING_PROJECTED);
+    });
+    vi.spyOn(PlayerRankService.prototype, 'refreshIfDue').mockImplementation(() => {
+      record('rank');
+      return Promise.resolve();
+    });
+    const fixtures = smallHistoryApi();
+    const { sync } = setUp({
+      handler: (request) => {
+        if (isHistoryRequest(request)) {
+          record('history');
+        } else if (isMetadataRequest(request)) {
+          record('details');
+        }
+        return fixtures(request);
+      },
+    });
+
+    await sync.syncNow('manual');
+
+    expect(order).toEqual(['catch-up', 'history', 'rank', 'details', 'catch-up']);
+  });
+
+  it('projects once when the queue archived nothing', async () => {
+    const catchUp = fakeCatchUp();
+    fakeRankRefresh();
+    const { sync } = setUp({ handler: historyOnlyApi() });
+
+    await sync.syncNow('manual');
+
+    expect(catchUp).toHaveBeenCalledTimes(1);
+  });
+
+  it('projects in a run of a protected account, which sends no request and refreshes no rank', async () => {
+    const catchUp = fakeCatchUp();
+    const rank = fakeRankRefresh();
+    const { sync, historyRequests, logger } = setUp({ handler: () => jsonResponse({}, 403) });
+    await sync.syncNow('startup');
+    await expect(sync.getStatus()).resolves.toMatchObject({ protectedAccount: true });
+    catchUp.mockClear();
+    rank.mockClear();
+    const states: boolean[] = [];
+    sync.subscribe(() => states.push(sync.isRunning()));
+
+    // The catch-up finds nothing: the listeners are told of the start and the end only.
+    await sync.syncNow('schedule');
+    expect(states).toEqual([true, false]);
+    states.length = 0;
+    // It projects five matches: the listeners are told, so that the interface reads them again.
+    catchUp.mockResolvedValue(FIVE_PROJECTED);
+    await sync.syncNow('startup');
+
+    expect(states).toEqual([true, true, false]);
+    const started = logger.entries.findLast((entry) => entry.message === 'Synchronisation started');
+    expect(catchUp.mock.calls).toEqual([
+      [FIXTURE_ACCOUNT_ID, expect.any(String) as unknown],
+      [FIXTURE_ACCOUNT_ID, started?.context.syncRunId],
+    ]);
+    // The run itself did what it always does for a protected account: nothing.
+    expect(historyRequests()).toHaveLength(1);
+    expect(rank).not.toHaveBeenCalled();
+    const ended = endedLines(logger).at(-1);
+    expect(ended?.level).toBe('debug');
+    expect(ended?.context).toEqual({
+      syncRunId: started?.context.syncRunId,
+      trigger: 'startup',
+      outcome: 'protected_account',
+      durationMs: expect.any(Number) as unknown,
+      projected: 5,
+    });
+  });
+
+  it('projects in a detail run: before the queue, and again after it archived matches', async () => {
+    const catchUp = fakeCatchUp();
+    const rank = fakeRankRefresh();
+    const fixtures = smallHistoryApi();
+    const { sync, services, answer, logger, historyRequests } = setUp({
+      handler: detailsUnreachable(fixtures),
+    });
+    await sync.syncNow('manual');
+    answer.handler = fixtures;
+    catchUp.mockClear();
+    rank.mockClear();
+
+    await sync.syncNow('detail');
+
+    expect((await services.details.getSummary())?.archived).toBeGreaterThan(0);
+    const started = logger.entries.findLast((entry) => entry.message === 'Synchronisation started');
+    expect(catchUp.mock.calls).toEqual([
+      [FIXTURE_ACCOUNT_ID, started?.context.syncRunId],
+      [FIXTURE_ACCOUNT_ID, started?.context.syncRunId],
+    ]);
+    // A detail run has no history step, so no reason to look at the rank.
+    expect(rank).not.toHaveBeenCalled();
+    expect(historyRequests()).toHaveLength(1);
+  });
+
+  it('projects offline: the matches already archived are analysed whatever the network does', async () => {
+    const database = createTestDatabase();
+    const { sync, answer, http, logger } = setUp({ database, handler: smallHistoryApi() });
+    await sync.syncNow('manual');
+    // Forget the projections but keep the archives: the matches are archived and not projected.
+    const metrics = new MetricsRepository(database);
+    await metrics.deleteAccount(FIXTURE_ACCOUNT_ID);
+    const toProject = await metrics.listToProject(FIXTURE_ACCOUNT_ID, PROJECTION_VERSION);
+    expect(toProject.length).toBeGreaterThan(0);
+    answer.handler = () => {
+      throw new AppError('network', 'The network is down');
+    };
+    const requestsBefore = http.requests.length;
+    const catchUp = vi.spyOn(ProjectionService.prototype, 'catchUp');
+    const rank = vi.spyOn(PlayerRankService.prototype, 'refreshIfDue');
+
+    await sync.syncNow('manual');
+
+    // The history is the only request tried, and the run ended there...
+    expect(http.requests).toHaveLength(requestsBefore + 1);
+    await expect(sync.getStatus()).resolves.toMatchObject({
+      lastSync: { outcome: 'failed', errorKind: 'network' },
+    });
+    // ...but the catch-up ran before it, with the files only.
+    expect(catchUp).toHaveBeenCalledTimes(1);
+    expect(rank).not.toHaveBeenCalled();
+    await expect(metrics.listToProject(FIXTURE_ACCOUNT_ID, PROJECTION_VERSION)).resolves.toEqual(
+      [],
+    );
+    expect(endedLines(logger).at(-1)?.context).toEqual({
+      syncRunId: expect.any(String) as unknown,
+      trigger: 'manual',
+      outcome: 'failed',
+      durationMs: expect.any(Number) as unknown,
+      projected: toProject.length,
+    });
+  });
+
+  it('projects the matches the queue archived, and tells its listeners', async () => {
+    const database = createTestDatabase();
+    const { sync, services, logger } = setUp({ database, handler: smallHistoryApi() });
+    const catchUp = vi.spyOn(ProjectionService.prototype, 'catchUp');
+    const states: boolean[] = [];
+    sync.subscribe(() => states.push(sync.isRunning()));
+
+    await sync.syncNow('manual');
+
+    const archived = (await services.details.getSummary())?.archived ?? 0;
+    expect(archived).toBeGreaterThan(0);
+    // Nothing to project at the start; the second catch-up projects what the queue archived.
+    expect(catchUp).toHaveBeenCalledTimes(2);
+    const metrics = new MetricsRepository(database);
+    await expect(metrics.listToProject(FIXTURE_ACCOUNT_ID, PROJECTION_VERSION)).resolves.toEqual(
+      [],
+    );
+    await expect(metrics.countAccount(FIXTURE_ACCOUNT_ID)).resolves.toBeGreaterThan(0);
+    expect(endedLines(logger).at(-1)?.context).toMatchObject({ archived, projected: archived });
+    // The start, the history saved, the matches projected, the end.
+    expect(states).toEqual([true, true, true, false]);
+  });
+
+  it.each([
+    ['projected', { ...NOTHING_PROJECTED, projected: 1 }],
+    ['failed', { ...NOTHING_PROJECTED, failed: 1 }],
+    ['reset', { ...NOTHING_PROJECTED, reset: 1 }],
+    ['skipped', { ...NOTHING_PROJECTED, skipped: 1 }],
+  ] as const)(
+    'tells its listeners when a catch-up did something, even if it only %s a match',
+    async (_name, report) => {
+      fakeCatchUp(report);
+      const { sync } = setUp({ handler: detailsUnreachable(smallHistoryApi()) });
+      const states: boolean[] = [];
+      sync.subscribe(() => states.push(sync.isRunning()));
+
+      // A detail run has no history step: the notification can only come from the catch-up.
+      await sync.syncNow('detail');
+
+      expect(states).toEqual([true, true, false]);
+    },
+  );
+
+  it('does not count what a catch-up only failed or skipped as projected in the ended line', async () => {
+    fakeCatchUp({ ...NOTHING_PROJECTED, failed: 2, skipped: 1 });
+    const { sync, logger } = setUp({ handler: historyOnlyApi() });
+
+    await sync.syncNow('manual');
+
+    expect(endedLines(logger).at(-1)?.context).not.toHaveProperty('projected');
+  });
+
+  it('adds up the matches of both catch-ups in the ended line', async () => {
+    fakeCatchUp({ ...NOTHING_PROJECTED, projected: 2 });
+    const { sync, services, logger } = setUp({ handler: smallHistoryApi() });
+
+    await sync.syncNow('manual');
+
+    const archived = (await services.details.getSummary())?.archived ?? 0;
+    expect(archived).toBeGreaterThan(0);
+    // Two matches before the history and two after the queue.
+    expect(endedLines(logger).at(-1)?.context).toMatchObject({ archived, projected: 4 });
+  });
+
+  it('refreshes the rank after a history that was saved', async () => {
+    fakeCatchUp();
+    const rank = fakeRankRefresh();
+    const { sync, logger } = setUp({ handler: historyOnlyApi() });
+
+    await sync.syncNow('manual');
+
+    const started = logger.entries.find((entry) => entry.message === 'Synchronisation started');
+    expect(rank.mock.calls).toEqual([[FIXTURE_ACCOUNT_ID, started?.context.syncRunId]]);
+  });
+
+  it.each([
+    ['failed with an error of the service', () => jsonResponse({}, 500)],
+    ['asked to pause', () => jsonResponse({}, 429, { 'retry-after': '600' })],
+  ] as const)(
+    'refreshes the rank after a history that reached deadlock-api and %s',
+    async (_name, answer) => {
+      fakeCatchUp();
+      const rank = fakeRankRefresh();
+      const { sync } = setUp({ handler: answer });
+
+      await sync.syncNow('manual');
+
+      expect(rank).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('refreshes the rank after a history that was not requested', async () => {
+    fakeCatchUp();
+    const rank = fakeRankRefresh();
+    const { sync, clock } = setUp({
+      handler: () => jsonResponse({}, 429, { 'retry-after': '600' }),
+    });
+    await sync.syncNow('manual');
+    clock.now += 60_000;
+
+    // The pause is still on: the history is not requested, but the rank has its own checks.
+    await sync.syncNow('manual');
+
+    await expect(sync.getStatus()).resolves.toMatchObject({ lastSync: { outcome: 'paused' } });
+    expect(rank).toHaveBeenCalledTimes(2);
+  });
+
+  it.each<AppErrorKind>(['network', 'timeout'])(
+    'does not refresh the rank when the history does not reach deadlock-api (%s)',
+    async (kind) => {
+      fakeCatchUp();
+      const rank = fakeRankRefresh();
+      const { sync } = setUp({
+        handler: () => {
+          throw new AppError(kind, 'The request failed');
+        },
+      });
+
+      await sync.syncNow('manual');
+
+      expect(rank).not.toHaveBeenCalled();
+    },
+  );
+
+  it('asks for the rank once a day: the synchronisations in between find it fresh', async () => {
+    const database = createTestDatabase();
+    const { sync, http, clock, logger } = setUp({ database, handler: historyOnlyApi() });
+    const accounts = new LinkedAccountRepository(database, logger);
+
+    await sync.syncNow('manual');
+    clock.now += SYNC_INTERVAL_MS;
+    await sync.syncNow('schedule');
+
+    expect(http.requests.filter(isRankRequest)).toHaveLength(1);
+    await expect(accounts.getRank(FIXTURE_ACCOUNT_ID)).resolves.toEqual({
+      badge: 44,
+      fetchedAt: START,
+    });
+    clock.now = START + RANK_MAX_AGE_MS;
+    await sync.syncNow('manual');
+
+    expect(http.requests.filter(isRankRequest)).toHaveLength(2);
+  });
+
+  it('never rejects when the projection itself throws, and still synchronises the history', async () => {
+    vi.spyOn(ProjectionService.prototype, 'catchUp').mockRejectedValue(new Error('a bug'));
+    fakeRankRefresh();
+    const { sync, logger, countMatches } = setUp({ handler: historyOnlyApi() });
+
+    await expect(sync.syncNow('manual')).resolves.toBeUndefined();
+
+    // The analysis is not the history's business: the history is saved and the line says so.
+    await expect(sync.getStatus()).resolves.toMatchObject({ lastSync: { outcome: 'synced' } });
+    await expect(countMatches()).resolves.toBe(240);
+    expect(logger.entries).toContainEqual(
+      expect.objectContaining({
+        level: 'error',
+        scope: 'sync',
+        message: 'The projection failed',
+        context: expect.objectContaining({ syncRunId: expect.any(String) as unknown }) as unknown,
+      }),
+    );
+    expect(logger.entries.filter((entry) => entry.message === 'Synchronisation failed')).toEqual(
+      [],
+    );
+  });
+
+  it('never rejects when the refresh of the rank itself throws, and still runs the queue', async () => {
+    fakeCatchUp();
+    vi.spyOn(PlayerRankService.prototype, 'refreshIfDue').mockRejectedValue(new Error('a bug'));
+    const { sync, services, logger } = setUp({ handler: smallHistoryApi() });
+
+    await expect(sync.syncNow('manual')).resolves.toBeUndefined();
+
+    await expect(sync.getStatus()).resolves.toMatchObject({ lastSync: { outcome: 'synced' } });
+    expect((await services.details.getSummary())?.archived).toBeGreaterThan(0);
+    expect(logger.entries).toContainEqual(
+      expect.objectContaining({
+        level: 'error',
+        scope: 'sync',
+        message: 'The refresh of the rank failed',
+      }),
+    );
+  });
+});
+
 describe('SyncService.suspend and resume', () => {
   /**
    * The lines logged when a synchronisation (or a retry) was refused, oldest first.
@@ -1243,6 +1681,56 @@ describe('SyncService.suspend and resume', () => {
       { level: 'debug', scope: 'sync', message: REFUSED_MESSAGE, context: { trigger: 'schedule' } },
     ]);
     expect(logger.entries.some((entry) => entry.message === 'Synchronisation started')).toBe(false);
+  });
+
+  it('does not project nor refresh the rank while suspended', async () => {
+    const catchUp = fakeCatchUp(FIVE_PROJECTED);
+    const rank = fakeRankRefresh();
+    const { sync, http } = setUp({ handler: smallHistoryApi() });
+    await sync.suspend();
+
+    await sync.syncNow('manual');
+    await sync.syncNow('detail');
+    await sync.retryDetail(testMatchId(100_000_001));
+
+    expect(catchUp).not.toHaveBeenCalled();
+    expect(rank).not.toHaveBeenCalled();
+    expect(http.requests).toHaveLength(0);
+  });
+
+  it('waits for the catch-up when suspended: it projects inside its run, not after it', async () => {
+    const entered = createGate();
+    const release = createGate();
+    const catchUp = vi
+      .spyOn(ProjectionService.prototype, 'catchUp')
+      .mockImplementation(async () => {
+        entered.open();
+        await release.opened;
+        return FIVE_PROJECTED;
+      });
+    fakeRankRefresh();
+    const { sync, historyRequests } = setUp({ handler: historyOnlyApi() });
+    const order: string[] = [];
+    const run = sync.syncNow('manual').then(() => {
+      order.push('run ended');
+    });
+    await entered.opened;
+
+    const suspension = sync.suspend().then(() => {
+      order.push('suspended');
+    });
+
+    // The catch-up is held, so the run goes on and the suspension waits for it.
+    await expect(stateOf(suspension)).resolves.toBe('pending');
+    release.open();
+    await Promise.all([run, suspension]);
+    expect(order).toEqual(['run ended', 'suspended']);
+    // The run was not cut short, and nothing projects once the suspension has resolved.
+    expect(historyRequests()).toHaveLength(1);
+    const callsAtResolve = catchUp.mock.calls.length;
+    await sync.syncNow('manual');
+    await settle();
+    expect(catchUp).toHaveBeenCalledTimes(callsAtResolve);
   });
 
   it('accepts synchronisations again once resumed', async () => {

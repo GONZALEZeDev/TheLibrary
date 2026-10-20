@@ -30,8 +30,15 @@ import { describeFirstIssue } from '../errors/first-issue';
  */
 export type MetricBenchmark = ReadonlyMap<BenchmarkKey, PercentileTable>;
 
-/** The metrics the app reads out of the answer: the names of the 11 benchmarks it compares. */
-const BENCHMARK_KEYS = [
+/**
+ * The metrics the app reads out of the answer: the names of the 11 benchmarks it compares.
+ *
+ * The list is complete by construction: `satisfies` refuses a name that is not a
+ * {@link BenchmarkKey}, and {@link BenchmarkKeysAreListed} refuses a {@link BenchmarkKey} that is
+ * not in the list, so a benchmark added to the type must be added here too (or the parser, and
+ * whatever reads its answers back from a cache, would silently forget it).
+ */
+export const BENCHMARK_KEYS = [
   'kda',
   'player_damage_per_min',
   'accuracy',
@@ -44,6 +51,16 @@ const BENCHMARK_KEYS = [
   'teammate_barriering',
   'boss_damage_per_min',
 ] as const satisfies readonly BenchmarkKey[];
+
+/**
+ * Compile-time check that {@link BENCHMARK_KEYS} lists every {@link BenchmarkKey}: `Missing` is the
+ * keys that are not listed, and only `never` (none) satisfies the constraint.
+ *
+ * @template Missing - The benchmark keys absent from the list.
+ */
+export type BenchmarkKeysAreListed<
+  Missing extends never = Exclude<BenchmarkKey, (typeof BENCHMARK_KEYS)[number]>,
+> = Missing;
 
 /**
  * The body of the answer, or the statistics of one metric: an object with any field. Every value is

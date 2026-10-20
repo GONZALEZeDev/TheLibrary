@@ -224,6 +224,23 @@ describe('buildMatchContext', () => {
     ).toBeNull();
   });
 
+  it('reads a number that is no badge as no badge, and keeps the match', () => {
+    const ranked = { match_mode: 4 };
+    const rank = (badge: number) => ({
+      [TRACKED_SLOT]: { player_rank_data: { initial_display_rank: badge } },
+    });
+
+    // The first and the last badge there are.
+    expect(context({ matchInfo: ranked, players: rank(1) }).trackedBadge).toBe(1);
+    expect(context({ matchInfo: ranked, players: rank(116) }).trackedBadge).toBe(116);
+    // Past the last one it is no badge; the rest of the archive is fine, so the match is read.
+    for (const badge of [117, 200, 1_000_000]) {
+      const match = context({ matchInfo: ranked, players: rank(badge) });
+      expect(match.trackedBadge, String(badge)).toBeNull();
+      expect(match.matchMode).toBe(4);
+    }
+  });
+
   it('reads the badge of the tracked player, not of another one', () => {
     const match = context({
       matchInfo: { match_mode: 4 },
@@ -404,6 +421,16 @@ describe('buildMatchContext', () => {
       'a badge that is not a number',
       { player_rank_data: { initial_display_rank: 'S3CR3T' } },
       'players.3.player_rank_data.initial_display_rank: invalid_type',
+    ],
+    [
+      'a badge that is not a whole number',
+      { player_rank_data: { initial_display_rank: 43.5 } },
+      'players.3.player_rank_data.initial_display_rank: invalid_type',
+    ],
+    [
+      'a negative badge',
+      { player_rank_data: { initial_display_rank: -1 } },
+      'players.3.player_rank_data.initial_display_rank: too_small',
     ],
   ])('refuses a player with %s', (_name, overrides, issue) => {
     const error = catchAppError(() => context({ players: { 9: overrides } }));

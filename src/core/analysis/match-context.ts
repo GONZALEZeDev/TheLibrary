@@ -108,8 +108,9 @@ export interface MatchContext {
   /** Every kill of a hero by another hero in the match, ordered by time. */
   readonly kills: readonly KillEvent[];
   /**
-   * The rank badge the tracked player had when the match started (tier × 10 + sub-rank), or
-   * `null` for an unranked match and for a player who has no rank yet (placement matches).
+   * The rank badge the tracked player had when the match started (tier × 10 + sub-rank, from 1 to
+   * 116), or `null` for an unranked match, for a player who has no rank yet (placement matches),
+   * and for a number that is no badge (above 116).
    */
   readonly trackedBadge: number | null;
   /** `true` when at least one player left the match before its end. */
@@ -132,10 +133,19 @@ const SNAPSHOT_STATS = [
 const RANKED_MATCH_MODE = 4;
 
 /**
- * The rank data of a player. Only the badge they had when the match started is read (`0` while
- * they are still in their placement matches).
+ * The lowest and the highest rank badge there is: sub-rank 1 of tier 1, and sub-rank 6 of tier 11.
+ * A number outside them is not a badge (it cannot be stored with the match, nor compared with a
+ * cohort), so the match is read as having none.
  */
-const rankDataSchema = z.looseObject({ initial_display_rank: z.number().nullish() });
+const MIN_BADGE = 1;
+const MAX_BADGE = 116;
+
+/**
+ * The rank data of a player. Only the badge they had when the match started is read (`0` while
+ * they are still in their placement matches). It is a whole number from 0 like any count of the
+ * payload; whether it is a badge that exists is decided where the badge is used.
+ */
+const rankDataSchema = z.looseObject({ initial_display_rank: archiveCount.nullish() });
 
 /**
  * One statistic snapshot. Only its time is required: the counters are read apart, one by one,
@@ -186,7 +196,10 @@ interface ReadPlayer {
   readonly isTracked: boolean;
   /** The player as the metrics see them. */
   readonly player: PlayerContext;
-  /** The badge they had when the match started, whatever the match mode (`0` or none: no badge). */
+  /**
+   * The number they had as rank when the match started, whatever the match mode (`0` or none: no
+   * rank). It is not checked to be a badge that exists, nor to be of a ranked match.
+   */
   readonly initialRank: number;
   /** Whether they left the match before its end. */
   readonly left: boolean;
@@ -242,9 +255,13 @@ export function buildMatchContext(envelope: ArchiveEnvelope): MatchContext {
     kills: players
       .flatMap((entry) => entry.kills)
       .toSorted((first, second) => first.timeS - second.timeS),
-    // A badge only means something in a ranked match; `0` is a player who has not been placed yet.
+    // A badge only means something in a ranked match; `0` is a player who has not been placed yet,
+    // and a number past the highest badge is no badge at all: the match is read as having none, not
+    // refused, since the rest of the archive is fine.
     trackedBadge:
-      matchInfo.match_mode === RANKED_MATCH_MODE && trackedEntry.initialRank > 0
+      matchInfo.match_mode === RANKED_MATCH_MODE &&
+      trackedEntry.initialRank >= MIN_BADGE &&
+      trackedEntry.initialRank <= MAX_BADGE
         ? trackedEntry.initialRank
         : null,
     hasLeaver: players.some((entry) => entry.left),

@@ -12,15 +12,18 @@ import { createFixtureApi } from '../adapters/dev/fixture-http-client.adapter';
 import { FIXTURE_ACCOUNT_ID } from '../adapters/dev/fixtures/match-history.fixture';
 import { MemoryArchiveStore } from '../adapters/dev/memory-archive-store.adapter';
 import { MemoryLogger } from '../adapters/dev/memory-logger.adapter';
+import { PROJECTION_VERSION } from '../core/analysis/registry';
+import type { AccountId } from '../core/domain/account';
 import { accountFolderName } from '../core/match-detail/archive-layout';
 import { INITIAL_ACCOUNT_SYNC_STATE } from '../core/sync/sync-status';
 import type { ArchiveStore } from '../ports/archive-store.port';
 import type { Database, SqlRow, SqlValue } from '../ports/database.port';
 import { createTestServices } from '../test/create-test-services';
-import { createTestDatabase, matchSummary, testAccountId } from '../test/test-data';
+import { createTestDatabase, matchSummary, testAccountId, testMatchId } from '../test/test-data';
 import { AccountDataService } from './account-data.service';
 import { DatabaseMaintenanceRepository } from './database-maintenance.repository';
 import { MatchesRepository } from './matches.repository';
+import { MetricsRepository } from './metrics.repository';
 import { SyncStateRepository } from './sync-state.repository';
 
 /** The clock of the services (Unix ms): fixed, so that the fixtures are the same on every run. */
@@ -28,15 +31,21 @@ const START = Date.UTC(2026, 9, 14, 12, 0, 0);
 
 /**
  * Size of the synthetic history of each account. Every test synchronises two accounts for real, and
- * each archive is compressed for real, so the history is kept short: just long enough for each
- * account to have a Paige match archived, hence an archive folder (the tests check that they do).
+ * each archive is compressed for real, so the history is kept short: just long enough for the linked
+ * account to have a Paige match archived, and for both accounts to have an archive folder (the tests
+ * check that they do; {@link OTHER} says what the second one holds).
  */
 const SMALL_HISTORY = 8;
 
 /** The account of the fixtures, the one that is linked in most tests. */
 const LINKED = FIXTURE_ACCOUNT_ID;
 
-/** Another account with a full history and archives; the old account of a switch. */
+/**
+ * Another account with a full match history; the old account of a switch. Its archive folder holds
+ * quarantined bodies only: its id (2000001) is also the first invented player of the details
+ * fixture, so its details are refused as ambiguous and quarantined, never archived. Nothing is
+ * projected for it, and its id must not change: other assertions rely on it.
+ */
 const OTHER = testAccountId(2000001);
 
 /** An account that only has a synchronisation state (its rows are gone). */
@@ -44,6 +53,15 @@ const STATE_ONLY = testAccountId(2000002);
 
 /** An account that only has matches (its synchronisation state is gone). */
 const MATCHES_ONLY = testAccountId(2000003);
+
+/** An account that only has projections and metrics (no match, no synchronisation state). */
+const METRICS_ONLY = testAccountId(2000004);
+
+/**
+ * The match the tests analyse by hand. The tables of the analysis have no foreign key to the matches,
+ * so an account can hold analysis rows for a match that is not stored.
+ */
+const ANALYSED_MATCH = testMatchId(100000001);
 
 /** What every failed step of the service logs. */
 const FAILURE_MESSAGE = 'Could not delete account data';
@@ -170,6 +188,30 @@ class UnlistableArchiveStore extends MemoryArchiveStore {
 }
 
 /**
+ * Store the projection and two metrics of a match for an account, as the projection service would.
+ *
+ * @param metrics - The repository of the analysis rows.
+ * @param accountId - The account the rows belong to.
+ */
+async function analyse(metrics: MetricsRepository, accountId: AccountId): Promise<void> {
+  await metrics.saveProjection(
+    accountId,
+    ANALYSED_MATCH,
+    {
+      version: PROJECTION_VERSION,
+      playerBadge: 65,
+      hasLeaver: false,
+      failed: false,
+      projectedAt: START,
+    },
+    new Map([
+      ['kda', 2.5],
+      ['souls_per_min', null],
+    ]),
+  );
+}
+
+/**
  * Read one column of a query.
  *
  * @param database - The database.
@@ -182,8 +224,9 @@ async function column(database: Database, sql: string, name: string): Promise<un
 }
 
 /**
- * Everything the service may delete or keep, read back: the accounts that have matches, the keys of
- * the synchronisation state, the keys of the API cache and the entries of the archive folder.
+ * Everything the service may delete or keep, read back: the accounts that have matches, the accounts
+ * that have projections or metrics, the keys of the synchronisation state, the keys of the API cache
+ * and the entries of the archive folder.
  *
  * @param database - The database.
  * @param archive - The archive store.
@@ -194,6 +237,14 @@ async function stored(database: Database, archive: ArchiveStore) {
     matchAccounts: await column(
       database,
       'SELECT DISTINCT account_id FROM matches ORDER BY account_id',
+      'account_id',
+    ),
+    analysisAccounts: await column(
+      database,
+      `SELECT account_id FROM match_projections
+       UNION
+       SELECT account_id FROM match_metrics
+       ORDER BY account_id`,
       'account_id',
     ),
     stateKeys: await column(database, 'SELECT key FROM sync_state ORDER BY key', 'key'),
@@ -243,10 +294,12 @@ function setUp(archiveStore: MemoryArchiveStore = new MemoryArchiveStore()) {
     handler: createFixtureApi({ now: START, accountId: OTHER, matchCount: SMALL_HISTORY }),
   });
   const matches = new MatchesRepository(database);
+  const metrics = new MetricsRepository(database);
   const syncState = new SyncStateRepository(database, logger);
   const details = linkedServices.services.details;
   const service = new AccountDataService({
     matches,
+    metrics,
     syncState,
     archive: archiveStore,
     maintenance: new DatabaseMaintenanceRepository(database),
@@ -255,15 +308,21 @@ function setUp(archiveStore: MemoryArchiveStore = new MemoryArchiveStore()) {
   });
 
   /**
-   * Synchronise the accounts for real, then add what no synchronisation writes: a cached API
-   * response and a pause requested by deadlock-api.
+   * Synchronise the accounts for real, then add what no synchronisation writes here: the analysis
+   * rows of each account, a cached API response and a pause requested by deadlock-api.
+   *
+   * The analysis rows are written by hand because the synchronisation projects nothing for `OTHER`:
+   * its id (2000001) is also the first invented player of the details fixture, so its details are
+   * refused as ambiguous and quarantined, and no archive is left to project.
    *
    * @param accounts - `both` (the default), or `linked` alone.
    */
   async function populate(accounts: 'both' | 'linked' = 'both'): Promise<void> {
     await linkedServices.services.sync.syncNow('manual');
+    await analyse(metrics, LINKED);
     if (accounts === 'both') {
       await otherServices.services.sync.syncNow('manual');
+      await analyse(metrics, OTHER);
     }
     await database.execute(
       "INSERT INTO api_cache (cache_key, payload_json, fetched_at, expires_at) VALUES ('heroes', '[]', 0, 1)",
@@ -277,6 +336,7 @@ function setUp(archiveStore: MemoryArchiveStore = new MemoryArchiveStore()) {
     archiveStore,
     logger,
     matches,
+    metrics,
     syncState,
     details,
     populate,
@@ -285,12 +345,13 @@ function setUp(archiveStore: MemoryArchiveStore = new MemoryArchiveStore()) {
 }
 
 describe('AccountDataService.eraseAccount', () => {
-  it('deletes the matches, the synchronisation state and the archive folder of an account', async () => {
+  it('deletes the matches, the analysis rows, the synchronisation state and the archive folder of an account', async () => {
     const { service, populate, snapshot, database, syncState } = setUp();
     await populate();
     // Both accounts have everything before the deletion.
     await expect(snapshot()).resolves.toEqual({
       matchAccounts: [LINKED, OTHER],
+      analysisAccounts: [LINKED, OTHER],
       stateKeys: [
         'account.1000001.sync',
         'account.2000001.sync',
@@ -306,6 +367,7 @@ describe('AccountDataService.eraseAccount', () => {
     // The other account, the global keys and the API cache are untouched.
     await expect(snapshot()).resolves.toEqual({
       matchAccounts: [OTHER],
+      analysisAccounts: [OTHER],
       stateKeys: [
         'account.2000001.sync',
         'api.history_requests',
@@ -319,6 +381,22 @@ describe('AccountDataService.eraseAccount', () => {
     await expect(
       database.select("SELECT value_json FROM sync_state WHERE key = 'api.paused_until'"),
     ).resolves.toEqual([{ value_json: String(START + 60_000) }]);
+  });
+
+  it('erases the projections and metrics of the account', async () => {
+    const { service, populate, metrics } = setUp();
+    await populate();
+    // The other account's rows are the ones that must come out of the erasure untouched.
+    const otherRows = await metrics.countAccount(OTHER);
+    expect(otherRows).toBeGreaterThan(0);
+    await expect(metrics.countAccount(LINKED)).resolves.toBeGreaterThan(0);
+
+    await expect(service.eraseAccount(LINKED)).resolves.toEqual({ complete: true });
+
+    // Both tables are emptied for the account (the count adds the rows of the two).
+    await expect(metrics.countAccount(LINKED)).resolves.toBe(0);
+    await expect(metrics.listAccountIds()).resolves.toEqual([OTHER]);
+    await expect(metrics.countAccount(OTHER)).resolves.toBe(otherRows);
   });
 
   it('forgets what the detail queue remembers of the account', async () => {
@@ -359,8 +437,18 @@ describe('AccountDataService.eraseAccount', () => {
       statements.findIndex((sql) => sql.trim().startsWith(prefix));
     expect(position('INSERT INTO sync_state')).toBe(0);
     expect(position('DELETE FROM matches')).toBeGreaterThan(position('INSERT INTO sync_state'));
+    expect(position('DELETE FROM match_projections')).toBeGreaterThan(
+      position('INSERT INTO sync_state'),
+    );
     expect(position('DELETE FROM sync_state')).toBeGreaterThan(position('DELETE FROM matches'));
+    // The metric rows follow the projection rows, which follow the flag: a delete that is never
+    // issued (position -1) fails here instead of passing the comparison with the compaction below.
+    expect(position('DELETE FROM match_metrics')).toBeGreaterThan(
+      position('DELETE FROM match_projections'),
+    );
+    // Whatever the order of the deletions, the compaction comes after the last of them.
     expect(position('VACUUM')).toBeGreaterThan(position('DELETE FROM sync_state'));
+    expect(position('VACUUM')).toBeGreaterThan(position('DELETE FROM match_metrics'));
   });
 
   it('reports an incomplete deletion when a file cannot be removed, and keeps going', async () => {
@@ -392,6 +480,12 @@ describe('AccountDataService.eraseAccount', () => {
       keyLeft: false,
     },
     {
+      step: 'metrics',
+      statement: /^DELETE FROM match_projections/,
+      matchAccounts: [OTHER],
+      keyLeft: false,
+    },
+    {
       step: 'sync_state',
       statement: /^DELETE FROM sync_state/,
       matchAccounts: [OTHER],
@@ -418,6 +512,37 @@ describe('AccountDataService.eraseAccount', () => {
       ]);
     },
   );
+
+  it('an erasure whose metric deletion fails is incomplete', async () => {
+    const { service, populate, snapshot, database, logger, metrics } = setUp();
+    await populate();
+    // The projection rows go first; the failure is on the metric rows, so those are what is left.
+    database.failNext(/^DELETE FROM match_metrics/);
+
+    await expect(service.eraseAccount(LINKED)).resolves.toEqual({ complete: false });
+
+    // The metric rows are still there, and the check says so; every other step ran.
+    await expect(metrics.countAccount(LINKED)).resolves.toBeGreaterThan(0);
+    await expect(snapshot()).resolves.toMatchObject({
+      matchAccounts: [OTHER],
+      analysisAccounts: [LINKED, OTHER],
+      archiveEntries: [accountFolderName(OTHER)],
+    });
+    expect(database.vacuumCount()).toBe(1);
+    expect(failures(logger)).toEqual([
+      expect.objectContaining({ step: 'metrics', kind: 'storage' }),
+      { step: 'check', part: 'metrics' },
+    ]);
+
+    // The account has no match and no state any more: only its leftover rows lead the sweep to it.
+    await expect(service.sweep(OTHER)).resolves.toEqual({
+      accounts: 1,
+      entries: 0,
+      vacuumed: true,
+    });
+    await expect(metrics.countAccount(LINKED)).resolves.toBe(0);
+    await expect(snapshot()).resolves.toMatchObject({ analysisAccounts: [OTHER] });
+  });
 
   it('keeps the deletion when the compaction fails, and compacts at the next sweep', async () => {
     const { service, populate, snapshot, database, logger, syncState } = setUp();
@@ -546,6 +671,18 @@ describe('AccountDataService.eraseAccount', () => {
     ]);
   });
 
+  it('reports an incomplete deletion when the check cannot count the analysis rows', async () => {
+    const { service, populate, database, logger } = setUp();
+    await populate();
+    database.failNext(/SELECT COUNT\(\*\) FROM match_projections/);
+
+    await expect(service.eraseAccount(LINKED)).resolves.toEqual({ complete: false });
+
+    expect(failures(logger)).toEqual([
+      expect.objectContaining({ step: 'check', part: 'metrics', kind: 'storage' }),
+    ]);
+  });
+
   it('reports an incomplete deletion when the check cannot list the archive folder', async () => {
     const archiveStore = new UnlistableArchiveStore();
     const { service, populate, logger } = setUp(archiveStore);
@@ -615,12 +752,22 @@ describe('AccountDataService.prepareErasure', () => {
 
 describe('AccountDataService.sweep', () => {
   it('compacts at the next start after an interrupted deletion', async () => {
-    const { service, populate, snapshot, database, logger, matches, syncState, archiveStore } =
-      setUp();
+    const {
+      service,
+      populate,
+      snapshot,
+      database,
+      logger,
+      matches,
+      metrics,
+      syncState,
+      archiveStore,
+    } = setUp();
     await populate();
     // The app was killed after the deletion of the old account and before the compaction: nothing
     // is left to delete, and the flag is set.
     await matches.deleteAccount(OTHER);
+    await metrics.deleteAccount(OTHER);
     await syncState.deleteAccountState(OTHER);
     await archiveStore.removeEntry(accountFolderName(OTHER));
     await syncState.setVacuumPending(true);
@@ -686,6 +833,7 @@ describe('AccountDataService.sweep', () => {
     // The linked account stays, with the global keys and the API cache.
     await expect(snapshot()).resolves.toEqual({
       matchAccounts: [LINKED],
+      analysisAccounts: [LINKED],
       stateKeys: [
         'account.1000001.sync',
         'api.history_requests',
@@ -703,6 +851,58 @@ describe('AccountDataService.sweep', () => {
       message: 'Startup cleanup',
       context: { accounts: 3, entries: 4, vacuumed: true },
     });
+  });
+
+  it('the sweep finds an account that only has metric rows', async () => {
+    const { service, populate, snapshot, database, metrics, syncState } = setUp();
+    await populate('linked');
+    // No match and no synchronisation state: the analysis tables are the only trace of the account.
+    await analyse(metrics, METRICS_ONLY);
+    await expect(snapshot()).resolves.toMatchObject({
+      matchAccounts: [LINKED],
+      analysisAccounts: [LINKED, METRICS_ONLY],
+    });
+
+    await expect(service.sweep(LINKED)).resolves.toEqual({
+      accounts: 1,
+      entries: 0,
+      vacuumed: true,
+    });
+
+    // Its rows are gone, the linked account's are kept, and the database was compacted for it.
+    await expect(metrics.countAccount(METRICS_ONLY)).resolves.toBe(0);
+    await expect(snapshot()).resolves.toMatchObject({
+      matchAccounts: [LINKED],
+      analysisAccounts: [LINKED],
+    });
+    expect(database.vacuumCount()).toBe(1);
+    await expect(syncState.isVacuumPending()).resolves.toBe(false);
+  });
+
+  it('logs a failed listing of the analysis rows with its step, and finds the account at the next start', async () => {
+    const { service, populate, snapshot, database, logger, metrics } = setUp();
+    await populate('linked');
+    await analyse(metrics, METRICS_ONLY);
+    database.failNext(/SELECT account_id FROM match_projections/);
+
+    // The listing of the analysis rows is the only way to this account: this start misses it.
+    await expect(service.sweep(LINKED)).resolves.toEqual({
+      accounts: 0,
+      entries: 0,
+      vacuumed: false,
+    });
+
+    expect(failures(logger)).toEqual([
+      expect.objectContaining({ step: 'metrics', kind: 'storage' }),
+    ]);
+    await expect(snapshot()).resolves.toMatchObject({ analysisAccounts: [LINKED, METRICS_ONLY] });
+
+    await expect(service.sweep(LINKED)).resolves.toEqual({
+      accounts: 1,
+      entries: 0,
+      vacuumed: true,
+    });
+    await expect(snapshot()).resolves.toMatchObject({ analysisAccounts: [LINKED] });
   });
 
   it('forgets in the detail queue the accounts it deletes, and only them', async () => {
@@ -723,6 +923,7 @@ describe('AccountDataService.sweep', () => {
 
     await expect(snapshot()).resolves.toEqual({
       matchAccounts: [],
+      analysisAccounts: [],
       stateKeys: GLOBAL_KEYS,
       cacheKeys: ['heroes'],
       archiveEntries: [],

@@ -77,8 +77,12 @@ export interface PersonalComparisonInput {
    */
   readonly display: 'relative' | 'absolute';
   /**
-   * The factor that converts the compared unit back to the shown one: this match's length in
-   * minutes for a metric compared per minute (a rate becomes a total), 1 otherwise.
+   * The factor that converts the compared unit back to the shown one:
+   * - this match's length in minutes for a metric compared per minute (a rate becomes a total);
+   * - the length in minutes of the phase in this match for a phase metric, which is stored as a
+   *   rate over its phase and shown as the total of the phase, like the totals of the phase table
+   *   (a median of 0.4 kills a minute is shown as 3.5 kills over a phase of 8.7 minutes);
+   * - 1 otherwise.
    */
   readonly scale: number;
 }

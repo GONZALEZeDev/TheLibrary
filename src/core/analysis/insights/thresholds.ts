@@ -85,6 +85,30 @@ export const PERSONAL_WINDOW = 20;
 export const MIN_PERSONAL_MATCHES = 5;
 
 /**
+ * How many earlier matches are read to find the habits of the player: five times
+ * {@link PERSONAL_WINDOW}. The habits of a metric are its {@link PERSONAL_WINDOW} most recent known
+ * values, and a metric is often unknown (the late game of a short match, the lane of a player the
+ * archive gives none), so reading only the last 20 matches would leave such a metric with too few
+ * values to compare with. The same goes for a damage source: an item bought one match in four, or an
+ * ability the player seldom uses, only appears in some of the matches.
+ */
+export const PREVIOUS_LOOKUP = 5 * PERSONAL_WINDOW;
+
+/**
+ * The smallest difference between a damage source's share and its usual share, as a share (0.05 is
+ * 5 points), that counts as using the source more or less than usual. Five points of damage share is
+ * a difference the player can act on without it being noise.
+ *
+ * It applies whatever the habit is:
+ * - when the habit varies, the share must be {@link STRONG_Z} robust deviations away from the usual
+ *   one **and** at least this far from it: a source that always deals 3 % has a tiny spread, and
+ *   3.5 % would be many deviations away from a difference of half a point;
+ * - when the habit does not vary at all (a median absolute deviation of 0), the robust z-score is
+ *   undefined and this gap alone decides.
+ */
+export const DAMAGE_SHARE_MIN_GAP = 0.05;
+
+/**
  * The shortest phase, in minutes, that is compared with a reference. A shorter one (the late phase
  * of a match that ends at 26:00, say) is shown with its totals but is too noisy to score.
  *

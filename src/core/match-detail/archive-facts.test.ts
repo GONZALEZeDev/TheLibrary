@@ -35,20 +35,39 @@ function rawStats() {
 }
 
 /**
- * The items of the tracked player: 5 entries, of which 2 are ability upgrades.
+ * The items of the tracked player: 7 entries in the shape of the API, of which 3 are shop items.
  *
- * An item bought has no `upgrade_id` or `0`; one sold keeps its place in the list.
+ * `upgrade_id` tells what an entry is: `1` is a shop item (one sold keeps its place in the list, and
+ * was bought all the same), `0` the unlock of one of the hero's abilities, and any other number an
+ * upgrade of one.
  *
  * @returns The raw `items` array.
  */
 function rawItems() {
   return [
-    { item_id: 4_204_808_176, game_time_s: 60 },
-    { item_id: 11, game_time_s: 120, upgrade_id: 0, sold_time_s: 900 },
-    { item_id: 12, game_time_s: 180, upgrade_id: 2 },
+    { item_id: 4_204_808_176, game_time_s: 60, upgrade_id: 1 },
+    { item_id: 11, game_time_s: 120, upgrade_id: 1, sold_time_s: 900 },
+    { item_id: 12, game_time_s: 180, upgrade_id: 7 },
     { item_id: 13, game_time_s: 240, upgrade_id: 1 },
     { item_id: 14, game_time_s: 300, upgrade_id: 0 },
+    { item_id: 15, game_time_s: 360, upgrade_id: 0 },
+    { item_id: 16, game_time_s: 420, upgrade_id: 3_123_456_789 },
   ];
+}
+
+/**
+ * Entries of a player's `items` that all share one `upgrade_id`.
+ *
+ * @param count - How many entries.
+ * @param upgradeId - Their `upgrade_id`.
+ * @returns The raw entries.
+ */
+function rawEntries(count: number, upgradeId: number) {
+  return Array.from({ length: count }, (_, index) => ({
+    item_id: 100 + index,
+    game_time_s: 60 * (index + 1),
+    upgrade_id: upgradeId,
+  }));
 }
 
 /**
@@ -141,7 +160,7 @@ describe('summarizeArchive', () => {
       assists: 17,
       netWorth: 41_250,
       snapshots: 13,
-      // 5 entries of which 2 are ability upgrades (a non-zero `upgrade_id`).
+      // 7 entries of which 3 are shop items (`upgrade_id` 1); the rest unlock or upgrade abilities.
       itemsBought: 3,
       fetchedAt: FETCHED_AT,
     });
@@ -178,12 +197,31 @@ describe('summarizeArchive', () => {
     expect(facts.itemsBought).toBe(0);
   });
 
-  it('counts no item bought when every item is an ability upgrade', () => {
+  it('counts shop items, not ability unlocks', () => {
+    // The shape of a real match: 4 ability unlocks, 17 shop items and 9 ability upgrades.
+    const items = [...rawEntries(4, 0), ...rawEntries(17, 1), ...rawEntries(9, 7)];
+
+    const facts = summarizeArchive(archive({ player: { items } }));
+
+    expect(facts.itemsBought).toBe(17);
+  });
+
+  it('counts no item bought when every entry is an ability unlock or upgrade', () => {
     const facts = summarizeArchive(
-      archive({ player: { items: [{ upgrade_id: 1 }, { upgrade_id: 4_000_000_000 }] } }),
+      archive({ player: { items: [{ upgrade_id: 0 }, { upgrade_id: 4_000_000_000 }] } }),
     );
 
     expect(facts.itemsBought).toBe(0);
+  });
+
+  it('reads an entry without an upgrade id, which is no item bought', () => {
+    // The archive stays readable (this check is the door of the archive); the entry says nothing
+    // that makes it a shop item.
+    const facts = summarizeArchive(
+      archive({ player: { items: [{ item_id: 1, game_time_s: 60 }, ...rawEntries(2, 1)] } }),
+    );
+
+    expect(facts.itemsBought).toBe(2);
   });
 
   it('does not modify the envelope', () => {

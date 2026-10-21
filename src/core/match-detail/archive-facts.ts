@@ -15,6 +15,7 @@ import { z } from 'zod';
 import type { ArchiveEnvelope } from './archive-envelope';
 import { archiveCount, readArchiveFields } from './archive-fields';
 import { findTrackedPlayer } from './pruning';
+import { SHOP_ITEM_UPGRADE_ID } from './tracked-items';
 
 /** What the match detail page shows about the tracked player in an archived match. */
 export interface ArchiveFacts {
@@ -32,7 +33,10 @@ export interface ArchiveFacts {
   readonly netWorth: number;
   /** The number of statistic snapshots the archive holds for them (one at the match end). */
   readonly snapshots: number;
-  /** The number of items they bought (the ability upgrades of their list are not counted). */
+  /**
+   * The number of shop items they bought (the unlocks and the upgrades of their hero's abilities,
+   * which the same list holds, are not counted).
+   */
   readonly itemsBought: number;
   /** When the archived detail was fetched from the API, in Unix milliseconds. */
   readonly fetchedAt: number;
@@ -42,8 +46,9 @@ export interface ArchiveFacts {
  * The fields of the tracked player's entry that the facts need. The object is loose: every other
  * field of the player is ignored.
  *
- * `stats` (the cumulative statistic snapshots) and `items` (the item purchases and the ability
- * upgrades) may be absent from a player's entry: an absent array counts as empty.
+ * `stats` (the cumulative statistic snapshots) and `items` (the shop purchases and the ability
+ * unlocks and upgrades) may be absent from a player's entry: an absent array counts as empty. The
+ * `upgrade_id` of an entry may be absent too, which is the tolerance of this door check.
  */
 const trackedPlayerSchema = z.looseObject({
   kills: archiveCount,
@@ -92,9 +97,12 @@ export function summarizeArchive(envelope: ArchiveEnvelope): ArchiveFacts {
     assists: player.assists,
     netWorth: player.net_worth,
     snapshots: player.stats?.length ?? 0,
-    // The items of a player mix purchases and ability unlocks/upgrades: a non-zero `upgrade_id`
-    // marks the latter, which are not items they bought.
-    itemsBought: (player.items ?? []).filter((item) => (item.upgrade_id ?? 0) === 0).length,
+    // The items of a player mix shop purchases with the unlocks (`upgrade_id` 0) and the upgrades
+    // (any other number) of their hero's abilities: only a shop item (`upgrade_id` 1) was bought. An
+    // entry without an `upgrade_id` is tolerated (this is the door check of an archive) but says
+    // nothing that makes it a shop item, so it is not counted.
+    itemsBought: (player.items ?? []).filter((item) => item.upgrade_id === SHOP_ITEM_UPGRADE_ID)
+      .length,
     fetchedAt: envelope.fetchedAt,
   };
 }

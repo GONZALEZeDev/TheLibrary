@@ -69,7 +69,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # `tauri::generate_context!()` embeds `dist/`, so the frontend must be built first.
       - run: pnpm build
-      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
           components: clippy, rustfmt
@@ -104,7 +104,7 @@ jobs:
             echo "The rsa crate is now compiled: review RUSTSEC-2023-0071 and src-tauri/.cargo/audit.toml"
             exit 1
           fi
-      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-audit
       - run: cargo audit

@@ -8,7 +8,7 @@
  *
  * @packageDocumentation
  */
-import { isBadge } from '../domain/rank';
+import { BADGES_PER_TIER, RANK_TIER_NAMES, SUBRANKS_PER_TIER, isBadge } from '../domain/rank';
 import { MIN_PHASE_MINUTES } from './insights/thresholds';
 import type { PhaseSpan } from './phases';
 
@@ -54,30 +54,10 @@ export const DURATION_WINDOWS: readonly DurationWindow[] = [
 ];
 
 /**
- * The names of the rank tiers, in English like the game's, indexed by tier (tier 0 is a player who
- * has no rank yet). The last tier is the one of `MAX_BADGE` (`../domain/rank`): a tier added here
- * moves that bound too, and a test ties the two.
+ * The names of the rank tiers now live with the rest of the badge rules in `../domain/rank`; they
+ * are re-exported here so that the modules that already read them from the cohorts do not change.
  */
-export const RANK_TIER_NAMES: readonly string[] = [
-  'Obscurus',
-  'Initiate',
-  'Seeker',
-  'Acolyte',
-  'Sentinel',
-  'Mystic',
-  'Ritualist',
-  'Emissary',
-  'Oracle',
-  'Phantom',
-  'Ascendant',
-  'Eternus',
-];
-
-/** How many badges a tier spans: a badge is `tier × 10` plus a sub-rank from 1 to 6. */
-const BADGES_PER_TIER = 10;
-
-/** The highest sub-rank of a tier. */
-const LAST_SUB_RANK = 6;
+export { RANK_TIER_NAMES };
 
 /**
  * The time up to which a match of the shortest window is taken to have been played, in seconds
@@ -131,7 +111,7 @@ export function cohortRankFor(matchBadge: number | null, currentBadge: number | 
  * @returns The lowest and the highest badge of the tier (`tier × 10 + 1` and `tier × 10 + 6`).
  */
 export function badgeBounds(tier: number): { min: number; max: number } {
-  return { min: tier * BADGES_PER_TIER + 1, max: tier * BADGES_PER_TIER + LAST_SUB_RANK };
+  return { min: tier * BADGES_PER_TIER + 1, max: tier * BADGES_PER_TIER + SUBRANKS_PER_TIER };
 }
 
 /**

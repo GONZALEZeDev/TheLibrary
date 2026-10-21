@@ -10,11 +10,13 @@ import { PAIGE_HERO_ID } from '../domain/hero';
 import {
   heroSampleRequest,
   heroesRequest,
+  itemsRequest,
   matchHistoryRequest,
   matchMetadataRequest,
   metricBenchmarkRequest,
   performanceCurveRequest,
   playerRankRequest,
+  ranksRequest,
   redactAccountIds,
   steamProfileRequest,
   userAgent,
@@ -68,6 +70,28 @@ describe('heroesRequest', () => {
     );
     expect(request.endpoint).toBe('/v1/assets/heroes');
     expect(request.family).toBe('assets');
+  });
+});
+
+describe('itemsRequest and ranksRequest', () => {
+  it('builds the item and rank requests', () => {
+    // The whole item list (abilities, weapons and shop items) and the rank tiers, both in English.
+    expect(itemsRequest()).toEqual({
+      url: 'https://api.deadlock-api.com/v1/assets/items?language=english',
+      endpoint: '/v1/assets/items',
+      family: 'assets',
+    });
+    expect(ranksRequest()).toEqual({
+      url: 'https://api.deadlock-api.com/v1/assets/ranks?language=english',
+      endpoint: '/v1/assets/ranks',
+      family: 'assets',
+    });
+  });
+
+  it('carry no identifier: the path is the logged template', () => {
+    for (const request of [itemsRequest(), ranksRequest()]) {
+      expect(new URL(request.url).pathname).toBe(request.endpoint);
+    }
   });
 });
 

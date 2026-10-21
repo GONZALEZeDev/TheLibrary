@@ -86,6 +86,38 @@ export function heroesRequest(): ApiRequest {
 }
 
 /**
+ * The item catalogue, in English: every ability, weapon and shop item of the game, which names and
+ * illustrates the damage sources and the final build of a match.
+ *
+ * The answer is large (about 6.5 MB, 0.5 MB compressed on the wire) because it carries the full
+ * tooltips; `parseItemCatalogue` reduces it to the few fields the app shows (see
+ * `assets.schema.ts`). The endpoint has no filter that would shrink it.
+ *
+ * @returns The request.
+ */
+export function itemsRequest(): ApiRequest {
+  return {
+    url: `${DEADLOCK_API_BASE_URL}/v1/assets/items?language=english`,
+    endpoint: '/v1/assets/items',
+    family: 'assets',
+  };
+}
+
+/**
+ * The rank catalogue, in English: the twelve tiers (Obscurus to Eternus) with their names and
+ * badges.
+ *
+ * @returns The request.
+ */
+export function ranksRequest(): ApiRequest {
+  return {
+    url: `${DEADLOCK_API_BASE_URL}/v1/assets/ranks?language=english`,
+    endpoint: '/v1/assets/ranks',
+    family: 'assets',
+  };
+}
+
+/**
  * The detail of one match (players, items, damage and healing over time): the full payload the
  * app archives.
  *

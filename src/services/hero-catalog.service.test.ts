@@ -1,6 +1,6 @@
 /**
- * Tests of the hero catalogue: cache freshness, refresh and offline fallback, and the guard that
- * keeps the app silent while no account is linked.
+ * Tests of the hero catalogue: cache freshness, refresh and offline fallback, the portraits and
+ * loadouts it keeps, and the guard that keeps the app silent while no account is linked.
  *
  * @packageDocumentation
  */
@@ -12,7 +12,9 @@ import {
   type FixtureHandler,
 } from '../adapters/dev/fixture-http-client.adapter';
 import { MemoryLogger } from '../adapters/dev/memory-logger.adapter';
+import { ASSET_IMAGE_ORIGIN } from '../core/deadlock-api/assets.schema';
 import type { AccountId } from '../core/domain/account';
+import { PAIGE_HERO_ID } from '../core/domain/hero';
 import { AppError } from '../core/errors/app-error';
 import type { AccountSource } from '../ports/account-source.port';
 import { createTestDatabase, testAccountId } from '../test/test-data';
@@ -29,9 +31,9 @@ const ACCOUNT_ID = testAccountId(1000001);
  * Build the catalogue service on a shared database, with a controllable clock, handler and linked
  * account. An account is linked unless a test unlinks it.
  *
- * @returns The service, its HTTP client and logger, the clock, a way to change the handler, and the
- *   linked account: set `link.accountId` to `null` to unlink it, or `link.failure` to make the
- *   link unreadable.
+ * @returns The service, its HTTP client and logger, the cache it keeps the catalogue in, the clock,
+ *   a way to change the handler, and the linked account: set `link.accountId` to `null` to unlink
+ *   it, or `link.failure` to make the link unreadable.
  */
 function setUp() {
   const clock = { now: START };
@@ -52,15 +54,30 @@ function setUp() {
     appVersion: '0.1.0',
     now,
   });
-  const catalog = new HeroCatalogService(
-    accountSource,
-    api,
-    new ApiCacheRepository(database),
-    logger,
-    now,
-  );
-  return { catalog, http, logger, clock, answer, link };
+  const cache = new ApiCacheRepository(database);
+  const catalog = new HeroCatalogService(accountSource, api, cache, logger, now);
+  return { catalog, http, logger, cache, clock, answer, link };
 }
+
+/** Cache key of the catalogue (the service's own, which is not exported). */
+const CACHE_KEY = 'heroes.english';
+
+/** Paige as the fixture catalogue describes her: her portrait and her real loadout. */
+const PAIGE_ASSET = {
+  id: PAIGE_HERO_ID,
+  name: 'Paige',
+  imageUrl: `${ASSET_IMAGE_ORIGIN}assets-api-res/images/heroes/bookworm_sm.webp`,
+  loadout: {
+    weapon: 'citadel_weapon_bookworm_set2',
+    melee: 'ability_melee_bookworm',
+    abilities: [
+      'ability_bookworm_dragonfire',
+      'ability_bookworm_knightbarrier',
+      'ability_bookworm_aoemagic',
+      'ability_bookworm_knightcharge',
+    ],
+  },
+};
 
 describe('HeroCatalogService', () => {
   it('downloads the catalogue once, then serves it from the cache for a week', async () => {
@@ -140,6 +157,157 @@ describe('HeroCatalogService', () => {
     await expect(catalog.getHeroes()).rejects.toMatchObject({ kind: 'service_unavailable' });
   });
 
+  describe('portraits and loadouts', () => {
+    it('keeps images and loadouts in the cache', async () => {
+      const { catalog, http, clock } = setUp();
+      const downloaded = await catalog.getHeroAssets();
+      clock.now += DAY;
+
+      const cached = await catalog.getHeroAssets();
+
+      // The second read comes from the cache, so the portrait and the loadout went through it.
+      expect(http.requests).toHaveLength(1);
+      expect(cached).toEqual(downloaded);
+      expect(cached.find((hero) => hero.id === PAIGE_HERO_ID)).toEqual(PAIGE_ASSET);
+    });
+
+    it('keeps a hero without portrait or loadout as it is', async () => {
+      const { catalog, http, answer } = setUp();
+      answer.handler = () => jsonResponse([{ id: 99, name: 'Newcomer' }]);
+      await catalog.getHeroAssets();
+
+      const cached = await catalog.getHeroAssets();
+
+      expect(http.requests).toHaveLength(1);
+      expect(cached).toEqual([{ id: 99, name: 'Newcomer', imageUrl: null, loadout: null }]);
+    });
+
+    it('uses the cached images and loadouts when the catalogue cannot be refreshed', async () => {
+      const { catalog, clock, answer } = setUp();
+      await catalog.getHeroAssets();
+      clock.now += 30 * DAY;
+      answer.handler = () => {
+        throw new AppError('network', 'The request failed');
+      };
+
+      const heroes = await catalog.getHeroAssets();
+
+      expect(heroes.find((hero) => hero.id === PAIGE_HERO_ID)).toEqual(PAIGE_ASSET);
+    });
+
+    it('downloads again over an entry written before M4b', async () => {
+      const { catalog, http, logger, cache } = setUp();
+      // Before M4b, the cache held names only; the entry is fresh, so it would be served if it fit.
+      await cache.put(CACHE_KEY, {
+        payloadJson: JSON.stringify([{ id: PAIGE_HERO_ID, name: 'Paige' }]),
+        fetchedAt: START,
+        expiresAt: START + 7 * DAY,
+      });
+
+      const heroes = await catalog.getHeroAssets();
+
+      expect(http.requests).toHaveLength(1);
+      expect(heroes.find((hero) => hero.id === PAIGE_HERO_ID)).toEqual(PAIGE_ASSET);
+      // An old entry is no problem to report: it is replaced without a warning (the download itself
+      // only logs at debug level).
+      expect(logger.entries.filter((entry) => entry.level !== 'debug')).toEqual([]);
+    });
+
+    it('replaces an entry written before M4b with one that fits', async () => {
+      const { catalog, http, cache } = setUp();
+      await cache.put(CACHE_KEY, {
+        payloadJson: JSON.stringify([{ id: PAIGE_HERO_ID, name: 'Paige' }]),
+        fetchedAt: START,
+        expiresAt: START + 7 * DAY,
+      });
+      await catalog.getHeroAssets();
+
+      await expect(catalog.getHeroAssets()).resolves.toContainEqual(PAIGE_ASSET);
+
+      expect(http.requests).toHaveLength(1);
+    });
+
+    it('gives bare heroes from getHeroes, downloaded or cached', async () => {
+      const { catalog } = setUp();
+
+      const downloaded = await catalog.getHeroes();
+      const cached = await catalog.getHeroes();
+
+      for (const heroes of [downloaded, cached]) {
+        expect(heroes).toContainEqual({ id: PAIGE_HERO_ID, name: 'Paige' });
+        // Neither a portrait nor a loadout reaches the callers that only name heroes.
+        expect(heroes.every((hero) => Object.keys(hero).length === 2)).toBe(true);
+      }
+    });
+  });
+
+  describe('concurrent calls', () => {
+    it('send one request and all get the catalogue', async () => {
+      const { catalog, http } = setUp();
+
+      // The match page asks twice for the heroes at once (its header and its damage tab), and a
+      // screen that only names heroes asks too: the two methods share their download.
+      const [first, second, named] = await Promise.all([
+        catalog.getHeroAssets(),
+        catalog.getHeroAssets(),
+        catalog.getHeroes(),
+      ]);
+
+      expect(http.requests).toHaveLength(1);
+      expect(first.find((hero) => hero.id === PAIGE_HERO_ID)).toEqual(PAIGE_ASSET);
+      expect(second).toEqual(first);
+      expect(named).toContainEqual({ id: PAIGE_HERO_ID, name: 'Paige' });
+      // The catalogue was cached once, by the one download: a later call is served from it.
+      await catalog.getHeroAssets();
+      expect(http.requests).toHaveLength(1);
+    });
+
+    it('all fail with the one failed download, and the next call tries again', async () => {
+      const { catalog, http, answer } = setUp();
+      answer.handler = () => jsonResponse({}, 500);
+
+      const outcomes = await Promise.allSettled([catalog.getHeroAssets(), catalog.getHeroes()]);
+
+      expect(outcomes).toMatchObject([
+        { status: 'rejected', reason: { kind: 'service_unavailable' } },
+        { status: 'rejected', reason: { kind: 'service_unavailable' } },
+      ]);
+      // One download for both calls: a failure does not stay registered, so nothing is cached.
+      const sent = http.requests.length;
+      expect(sent).toBe(1);
+      answer.handler = createFixtureApi({ now: START });
+      const heroes = await catalog.getHeroAssets();
+      expect(heroes.find((hero) => hero.id === PAIGE_HERO_ID)).toEqual(PAIGE_ASSET);
+      expect(http.requests).toHaveLength(sent + 1);
+    });
+
+    it('refresh a stale catalogue once, and say once that they could not', async () => {
+      const { catalog, http, logger, clock, answer } = setUp();
+      const heroes = await catalog.getHeroAssets();
+      clock.now += 30 * DAY;
+      answer.handler = () => {
+        throw new AppError('network', 'The request failed');
+      };
+
+      const results = await Promise.all([catalog.getHeroAssets(), catalog.getHeroAssets()]);
+
+      expect(results).toEqual([heroes, heroes]);
+      expect(http.requests).toHaveLength(2);
+      expect(logger.entries.filter((entry) => entry.level === 'warn')).toHaveLength(1);
+    });
+
+    it('share nothing once the download is over', async () => {
+      const { catalog, http, clock } = setUp();
+      await Promise.all([catalog.getHeroAssets(), catalog.getHeroAssets()]);
+      clock.now += 7 * DAY;
+
+      await Promise.all([catalog.getHeroAssets(), catalog.getHeroAssets()]);
+
+      // One download for each pair, the second a week after the first.
+      expect(http.requests).toHaveLength(2);
+    });
+  });
+
   describe('without a linked account', () => {
     it('sends no request without a linked account', async () => {
       const { catalog, http, link } = setUp();
@@ -160,6 +328,26 @@ describe('HeroCatalogService', () => {
       await expect(catalog.getHeroes()).resolves.toEqual(heroes);
 
       expect(http.requests).toHaveLength(1);
+    });
+
+    it('gives the cached images and loadouts without a linked account', async () => {
+      const { catalog, http, clock, link } = setUp();
+      const heroes = await catalog.getHeroAssets();
+      clock.now += 30 * DAY;
+      link.accountId = null;
+
+      await expect(catalog.getHeroAssets()).resolves.toEqual(heroes);
+
+      expect(http.requests).toHaveLength(1);
+    });
+
+    it('sends no request for the images and loadouts without a linked account', async () => {
+      const { catalog, http, link } = setUp();
+      link.accountId = null;
+
+      await expect(catalog.getHeroAssets()).resolves.toEqual([]);
+
+      expect(http.requests).toHaveLength(0);
     });
 
     it('downloads the catalogue once an account is linked', async () => {

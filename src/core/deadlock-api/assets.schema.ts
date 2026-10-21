@@ -56,8 +56,12 @@ export function firstAssetImageUrl(candidates: readonly unknown[]): string | nul
   return null;
 }
 
-/** The kinds of entries of the item catalogue the app reads, as the API names them in `type`. */
-const ITEM_KINDS = ['ability', 'weapon', 'upgrade'] as const;
+/**
+ * The kinds of entries of the item catalogue the app reads, as the API names them in `type`.
+ * Exported so that whoever validates a catalogue entry again (the cache of the item catalogue) reads
+ * the very list the parser does.
+ */
+export const ITEM_KINDS = ['ability', 'weapon', 'upgrade'] as const;
 
 /**
  * Kind of a catalogue entry: an `ability` (a hero's signature, melee or innate ability), a `weapon`
@@ -65,17 +69,20 @@ const ITEM_KINDS = ['ability', 'weapon', 'upgrade'] as const;
  */
 export type ItemKind = (typeof ITEM_KINDS)[number];
 
-/** The slot types of a shop item, as the API names them in `item_slot_type`. */
-const ITEM_SLOTS = ['weapon', 'vitality', 'spirit'] as const;
+/**
+ * The slot types of a shop item, as the API names them in `item_slot_type`. Exported like
+ * {@link ITEM_KINDS}.
+ */
+export const ITEM_SLOTS = ['weapon', 'vitality', 'spirit'] as const;
 
 /** Slot of a shop item in the shop and in the inventory: weapon, vitality or spirit. */
 export type ItemSlot = (typeof ITEM_SLOTS)[number];
 
-/** Lowest tier of a shop item. */
-const MIN_ITEM_TIER = 1;
+/** Lowest tier of a shop item. Exported like {@link ITEM_KINDS}. */
+export const MIN_ITEM_TIER = 1;
 
-/** Highest tier of a shop item. */
-const MAX_ITEM_TIER = 5;
+/** Highest tier of a shop item. Exported like {@link ITEM_KINDS}. */
+export const MAX_ITEM_TIER = 5;
 
 /**
  * The tier of a shop item, `item_tier`: a whole number from {@link MIN_ITEM_TIER} to

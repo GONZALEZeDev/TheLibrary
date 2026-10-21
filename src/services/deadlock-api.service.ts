@@ -19,6 +19,12 @@
  */
 import { interpretResponse, type ApiOutcome } from '../core/deadlock-api/api-response';
 import {
+  parseItemCatalogue,
+  parseRankCatalogue,
+  type CatalogueItem,
+  type CatalogueRank,
+} from '../core/deadlock-api/assets.schema';
+import {
   ANALYTICS_RATE_LIMIT,
   ASSETS_RATE_LIMIT,
   AUTOMATIC_HISTORY_RATE_LIMIT,
@@ -32,12 +38,14 @@ import {
 import {
   heroesRequest,
   heroSampleRequest,
+  itemsRequest,
   matchHistoryRequest,
   matchMetadataRequest,
   MAX_RESPONSE_BYTES,
   metricBenchmarkRequest,
   performanceCurveRequest,
   playerRankRequest,
+  ranksRequest,
   redactAccountIds,
   REQUEST_TIMEOUT_MS,
   steamProfileRequest,
@@ -46,7 +54,7 @@ import {
   type CohortQuery,
 } from '../core/deadlock-api/endpoints';
 import { parseHeroSample } from '../core/deadlock-api/hero-sample.schema';
-import { parseHeroes } from '../core/deadlock-api/heroes.schema';
+import { parseHeroAssets } from '../core/deadlock-api/heroes.schema';
 import { parseMatchHistory } from '../core/deadlock-api/match-history.schema';
 import {
   parseMetricBenchmark,
@@ -59,7 +67,7 @@ import {
 import { parsePlayerRank } from '../core/deadlock-api/player-rank.schema';
 import { parseSteamProfiles, type SteamProfile } from '../core/deadlock-api/steam-profile.schema';
 import type { AccountId } from '../core/domain/account';
-import type { Hero } from '../core/domain/hero';
+import type { HeroAsset } from '../core/domain/hero';
 import type { MatchId, MatchSummary } from '../core/domain/match';
 import { AppError, errorLogContext, toAppError } from '../core/errors/app-error';
 import { checkRateLimit } from '../core/rate-limit/sliding-window';
@@ -310,11 +318,63 @@ export class DeadlockApiService {
   /**
    * Download and validate the hero catalogue.
    *
-   * @returns The playable heroes, with their English names.
+   * The request follows the rules of every asset request (see `#fetchAsset`).
+   *
+   * @returns The playable heroes, with their English names, small portraits and loadouts.
    * @throws AppError of kind `rate_limited` when deadlock-api asked to pause or the budget is
    *   exhausted, or any kind of {@link DeadlockApiService.fetchMatchHistory}.
    */
-  async fetchHeroes(): Promise<Hero[]> {
+  fetchHeroes(): Promise<HeroAsset[]> {
+    return this.#fetchAsset(heroesRequest(), parseHeroAssets);
+  }
+
+  /**
+   * Download and validate the item catalogue: the abilities, weapons and shop items of the game,
+   * reduced to what the app shows (see `parseItemCatalogue`).
+   *
+   * Same rules as {@link DeadlockApiService.fetchHeroes}, and the same budget: the heroes, the
+   * items and the ranks together may send {@link ASSETS_RATE_LIMIT} requests. The response is
+   * large (about 6.5 MB, 0.5 MB on the wire), so the caller keeps the reduced catalogue instead
+   * of asking again.
+   *
+   * @returns The readable entries.
+   * @throws AppError of kind `rate_limited` when deadlock-api asked to pause or the budget is
+   *   exhausted, `invalid_payload` when the answer holds no readable entry (an empty catalogue is
+   *   no catalogue: the caller treats it as a failed download), or any kind of
+   *   {@link DeadlockApiService.fetchMatchHistory}.
+   */
+  fetchItemCatalogue(): Promise<CatalogueItem[]> {
+    return this.#fetchAsset(itemsRequest(), parseItemCatalogue);
+  }
+
+  /**
+   * Download and validate the rank catalogue: the names and badges of the twelve tiers.
+   *
+   * Same rules as {@link DeadlockApiService.fetchItemCatalogue}.
+   *
+   * @returns The readable tiers, sorted by tier.
+   * @throws AppError, as {@link DeadlockApiService.fetchItemCatalogue}.
+   */
+  fetchRankCatalogue(): Promise<CatalogueRank[]> {
+    return this.#fetchAsset(ranksRequest(), parseRankCatalogue);
+  }
+
+  /**
+   * Send a request for static game data and validate the answer: what the three catalogues share.
+   *
+   * Unlike the community requests, a refusal is an error and not a result: the callers are caches,
+   * which treat any failure as a download that did not happen and keep what they hold. The pause
+   * comes first: while deadlock-api asked to wait, nothing is sent and nothing is counted. Then
+   * {@link ASSETS_RATE_LIMIT} applies, one window for every asset request.
+   *
+   * @param request - The request.
+   * @param parse - Validates the JSON of the answer.
+   * @returns The validated data.
+   * @throws AppError of kind `rate_limited` when deadlock-api asked to pause (also when it asks for
+   *   it in this very answer) or the budget is exhausted, any kind of a failed request, or the one
+   *   `parse` throws for an answer it refuses.
+   */
+  async #fetchAsset<T>(request: ApiRequest, parse: (json: unknown) => T): Promise<T> {
     const now = this.#now();
     const pausedUntil = await this.#activePause(now);
     if (pausedUntil !== null) {
@@ -330,11 +390,11 @@ export class DeadlockApiService {
         context: { nextAllowedAt: budget.nextAllowedAt },
       });
     }
-    const outcome = await this.#send(heroesRequest());
+    const outcome = await this.#send(request);
     if (outcome.kind === 'pause') {
       throw outcome.error;
     }
-    return parseHeroes(outcome.json);
+    return parse(outcome.json);
   }
 
   /**

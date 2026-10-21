@@ -11,8 +11,9 @@
  *   slot `(match_id % 12) + 1` with the hero, the team, the kills, deaths, assists and net worth of
  *   their history row. The eleven others are invented accounts (from 2,000,001 up) playing the
  *   heroes of the fixture catalogue;
- * - for every player: the cumulative `stats` snapshots, their `items` (purchases and ability
- *   upgrades) and their `death_details`;
+ * - for every player: the cumulative `stats` snapshots, their `items` (ability unlocks and
+ *   upgrades, shop items kept, consumed or sold), their `mvp_rank` (Valve's top three of the match)
+ *   and their `death_details`;
  * - for every player, what the match analysis reads: the `assigned_lane` (1, 4 or 6; two players of
  *   each team in each lane, the same number being the same lane for both teams), in a ranked match
  *   the `player_rank_data` with the badge the player had at the start, and the snapshot counters
@@ -22,21 +23,25 @@
  *
  * The deaths form one ledger (who killed whom, when) from which the deaths, the kills and the
  * `death_details` of all the players are read, so the numbers of the match agree with each other.
+ * The damage matrix and the items form another (`match-damage.fixture.ts`), from which the
+ * `player_damage` of every snapshot is read: it is the same number as the sum of the player's
+ * sources in the matrix.
  *
- * The fields of the analysis are drawn from a second generator, seeded by the match id as well: the
- * first one keeps the sequence it had before these fields existed, so every other figure of a
- * detail is still the one it always was.
+ * The fields of the analysis, and the items and the damage, are drawn from generators of their own,
+ * seeded by the match id as well, so that changing them never moves the figures the main generator
+ * draws.
  *
  * @packageDocumentation
  */
 import type { AccountId } from '../../../core/domain/account';
 import type { MatchId } from '../../../core/domain/match';
 import { RANKED_MATCH_MODE } from '../../../core/match-detail/detail-status';
+import { between, createRandom, pick, shuffled } from './fixture-random';
+import type { Random } from './fixture-random';
 import { FIXTURE_HERO_CATALOGUE } from './heroes.fixture';
+import { createMatchDamage } from './match-damage.fixture';
+import type { MatchDamage } from './match-damage.fixture';
 import type { RawMatchHistoryRow } from './match-history.fixture';
-
-/** A function returning pseudo-random numbers in [0, 1). */
-type Random = () => number;
 
 /** One of the twelve seats of a match: who sits in a slot. */
 interface Seat {
@@ -86,7 +91,6 @@ interface Totals {
   readonly netWorth: number;
   readonly lastHits: number;
   readonly denies: number;
-  readonly playerDamage: number;
   readonly damageTaken: number;
   readonly healing: number;
   /** Damage dealt to objectives (guardians, walkers, the patron…). */
@@ -109,9 +113,6 @@ type AnalysisTotals = Pick<
 
 /** The slots of a match: 1 to 12, as the API numbers them. */
 const SLOTS = Array.from({ length: 12 }, (_, index) => index + 1);
-
-/** The slot of the damage dealer that is not a player (neutral creeps, objectives…). */
-const NON_PLAYER_SLOT = 0;
 
 /** Number of players of each team. */
 const TEAM_SIZE = 6;
@@ -146,6 +147,12 @@ const BADGE_TIER_FACTOR = 10;
  */
 const ANALYSIS_SEED = 0x2f6e3a91;
 
+/**
+ * Mixed into the match id to seed the generator of the items and of the damage matrix (see
+ * `match-damage.fixture.ts`), so that it never shares a sequence with the others.
+ */
+const DAMAGE_SEED = 0x7a3c91d5;
+
 /** Mixed into the match id to seed the badge of the tracked player (see `fixtureTrackedBadge`). */
 const TRACKED_BADGE_SEED = 0x5bd1e995;
 
@@ -171,53 +178,6 @@ const MAP_RESOLUTION = 255;
 const MAP_HALF_SIZE = 8_192;
 
 /**
- * Items a player may buy. The ids are invented; like the real ones they are unsigned 32-bit
- * numbers, and several are above 2^31 so that code reading them must not assume signed integers.
- */
-const ITEM_IDS = [
-  380_000_101, 1_437_000_202, 2_500_000_303, 3_100_000_404, 4_200_000_505, 512_000_606,
-  2_900_000_707, 3_800_000_808,
-];
-
-/** The four abilities of a hero, whose upgrades appear in the `items` of a player. Invented ids. */
-const ABILITY_IDS = [610_000_011, 610_000_022, 610_000_033, 610_000_044];
-
-/** Where the damage comes from: a source of the damage matrix refers to one of them by index. */
-const DAMAGE_SOURCE_NAMES = ['weapon', 'ability_1', 'ability_2', 'neutral_creeps'];
-
-/** Index in {@link DAMAGE_SOURCE_NAMES} of each source the fixture uses. */
-const DAMAGE_SOURCE = { weapon: 0, firstAbility: 1, secondAbility: 2, creeps: 3 } as const;
-
-/**
- * A small deterministic pseudo-random generator (mulberry32): a detail must be the same at every
- * run, which `Math.random()` cannot guarantee. Same algorithm as `match-history.fixture.ts`.
- *
- * @param seed - Any 32-bit integer.
- * @returns A function returning numbers in [0, 1).
- */
-function createRandom(seed: number): Random {
-  let state = seed;
-  return () => {
-    state = (state + 0x6d2b79f5) | 0;
-    let value = Math.imul(state ^ (state >>> 15), 1 | state);
-    value = (value + Math.imul(value ^ (value >>> 7), 61 | value)) ^ value;
-    return ((value ^ (value >>> 14)) >>> 0) / 4_294_967_296;
-  };
-}
-
-/**
- * A pseudo-random whole number.
- *
- * @param random - The generator.
- * @param min - Smallest value.
- * @param max - Largest value (included).
- * @returns A whole number from `min` to `max`.
- */
-function between(random: Random, min: number, max: number): number {
-  return min + Math.floor(random() * (max - min + 1));
-}
-
-/**
  * The item at an index of a list the caller knows to be long enough. The type checker cannot know
  * it (`noUncheckedIndexedAccess`), and a miss is a mistake of this file, not of the data.
  *
@@ -232,32 +192,6 @@ function at<T>(items: readonly T[], index: number): T {
     throw new Error(`No item at index ${String(index)} of a list of ${String(items.length)}`);
   }
   return item;
-}
-
-/**
- * A pseudo-random item of a list.
- *
- * @param random - The generator.
- * @param items - A list that is not empty.
- * @returns One of its items.
- */
-function pick<T>(random: Random, items: readonly T[]): T {
-  return at(items, between(random, 0, items.length - 1));
-}
-
-/**
- * A shuffled copy of a list.
- *
- * @param random - The generator.
- * @param items - The list; it is not modified.
- * @returns The same items in a pseudo-random order.
- */
-function shuffled<T>(random: Random, items: readonly T[]): T[] {
-  // Sorting on a random key per item is a fair shuffle as long as the keys are distinct.
-  return items
-    .map((item) => ({ item, key: random() }))
-    .sort((first, second) => first.key - second.key)
-    .map(({ item }) => item);
 }
 
 /**
@@ -317,7 +251,7 @@ export function fixtureTrackedBadge(matchId: MatchId): number {
 export function createMatchMetadataFixture(row: RawMatchHistoryRow, accountId: AccountId): unknown {
   const random = createRandom(row.match_id);
   // The lanes, the badges and the totals the analysis reads come from their own generator, so that
-  // the figures drawn from `random` are the same as before these fields were added.
+  // adding or changing them never moves the figures drawn from `random`.
   const analysisRandom = createRandom(row.match_id ^ ANALYSIS_SEED);
   const durationS = row.match_duration_s;
   const seats = seatPlayers(random, analysisRandom, row, accountId);
@@ -326,7 +260,13 @@ export function createMatchMetadataFixture(row: RawMatchHistoryRow, accountId: A
     paths: seats.map((seat) => createPath(random, seat, durationS)),
     snapshotTimes: snapshotTimes(durationS),
   };
-  const players = seats.map((seat) => createPlayer(random, analysisRandom, row, seat, timeline));
+  // The items and the damage matrix have a generator of their own too. The `player_damage` of the
+  // snapshots is read from the matrix, so the two always agree.
+  const damage = createMatchDamage(createRandom(row.match_id ^ DAMAGE_SEED), seats, durationS);
+  const players = seats.map((seat) =>
+    createPlayer(random, analysisRandom, row, seat, timeline, damage),
+  );
+  const topThree = topThreeRanks(players);
   return {
     match_info: {
       match_id: row.match_id,
@@ -338,7 +278,13 @@ export function createMatchMetadataFixture(row: RawMatchHistoryRow, accountId: A
       winning_team: row.match_result,
       match_outcome: 0,
       // The API does not list the players by slot: neither does the fixture.
-      players: shuffled(random, players),
+      players: shuffled(
+        random,
+        players.map((player) => ({
+          ...player,
+          mvp_rank: topThree.get(player.player_slot) ?? null,
+        })),
+      ),
       match_paths: {
         version: 1,
         interval_s: 1,
@@ -346,7 +292,7 @@ export function createMatchMetadataFixture(row: RawMatchHistoryRow, accountId: A
         y_resolution: MAP_RESOLUTION,
         paths: timeline.paths,
       },
-      damage_matrix: createDamageMatrix(random, seats, timeline.snapshotTimes),
+      damage_matrix: damage.matrix,
     },
     hero_build_ids: [],
     pregame_hero_ids: seats.map((seat) => seat.heroId),
@@ -626,14 +572,17 @@ function positionAt(path: Path, timeS: number): { x: number; y: number; z: numbe
  * The kills and deaths of every player are read from the death ledger; for the tracked player the
  * ledger was built to agree with their history row. Their assists, net worth, last hits, denies and
  * level come from the row too. Their lane and their badge come from their seat (the badge only in a
- * ranked match). Everything else is invented.
+ * ranked match). Their items come from the damage ledger of the match, and so does the
+ * `player_damage` of their snapshots. Everything else is invented.
  *
  * @param random - The generator.
  * @param analysisRandom - The generator of the totals that only the analysis reads.
  * @param row - The history row of the match.
  * @param seat - The player.
  * @param timeline - The deaths, the paths and the snapshot times of the match.
- * @returns The player in the raw shape of the API.
+ * @param damage - The items and the damage of the match.
+ * @returns The player in the raw shape of the API, without their `mvp_rank` (see
+ *   {@link topThreeRanks}).
  */
 function createPlayer(
   random: Random,
@@ -641,6 +590,7 @@ function createPlayer(
   row: RawMatchHistoryRow,
   seat: Seat,
   timeline: Timeline,
+  damage: MatchDamage,
 ) {
   const { deaths, paths } = timeline;
   const durationS = row.match_duration_s;
@@ -650,7 +600,6 @@ function createPlayer(
     netWorth: between(random, 15_000, 60_000),
     lastHits: between(random, 60, 300),
     denies: between(random, 0, 40),
-    playerDamage: between(random, 15_000, 60_000),
     damageTaken: between(random, 15_000, 55_000),
     healing: between(random, 0, 15_000),
     ...createAnalysisTotals(analysisRandom),
@@ -688,8 +637,10 @@ function createPlayer(
     // Like the API: the rank data of a match that is not ranked is `null`.
     player_rank_data:
       row.match_mode === RANKED_MATCH_MODE ? { initial_display_rank: seat.badge } : null,
-    stats: createStats(seat, totals, deaths, timeline.snapshotTimes, durationS),
-    items: createItems(random, durationS),
+    stats: createStats(seat, totals, deaths, timeline.snapshotTimes, durationS, (timeS) =>
+      damage.damageAt(seat.slot, timeS),
+    ),
+    items: damage.itemsOf(seat.slot),
     death_details: ownDeaths.map((death) => ({
       game_time_s: death.timeS,
       killer_player_slot: death.killer,
@@ -704,14 +655,16 @@ function createPlayer(
 /**
  * The cumulative statistics of one player at the snapshot times.
  *
- * Kills and deaths are counted in the ledger up to each time; the other figures grow towards the
- * player's final numbers. At the end of the match every figure is the final one.
+ * Kills and deaths are counted in the ledger up to each time; the damage to heroes is the one the
+ * damage matrix has reached; the other figures grow towards the player's final numbers. At the end
+ * of the match every figure is the final one.
  *
  * @param seat - The player.
  * @param totals - Their final numbers.
  * @param deaths - Every death of the match.
  * @param times - The snapshot times.
  * @param durationS - Length of the match, in seconds.
+ * @param damageAt - The damage the player had dealt to enemy heroes at a time.
  * @returns One snapshot per time, in the shape of the API's `stats[]`.
  */
 function createStats(
@@ -720,6 +673,7 @@ function createStats(
   deaths: readonly Death[],
   times: readonly number[],
   durationS: number,
+  damageAt: (timeS: number) => number,
 ) {
   return times.map((timeS) => {
     const fraction = timeS / durationS;
@@ -733,7 +687,7 @@ function createStats(
       assists: Math.round(totals.assists * fraction),
       creep_kills: Math.round(totals.lastHits * fraction),
       denies: Math.round(totals.denies * fraction),
-      player_damage: Math.round(totals.playerDamage * fraction),
+      player_damage: damageAt(timeS),
       player_damage_taken: Math.round(totals.damageTaken * fraction),
       player_healing: Math.round(totals.healing * fraction),
       // Objectives fall late in the match, like souls.
@@ -767,139 +721,43 @@ function createAnalysisTotals(random: Random): AnalysisTotals {
   };
 }
 
+/** A player of the detail, as {@link topThreeRanks} reads them. */
+type Player = ReturnType<typeof createPlayer>;
+
+/** What each kill, assist and death is worth to the score that ranks the players of a match. */
+const KILL_SCORE = 3;
+const ASSIST_SCORE = 1;
+const DEATH_SCORE = -2;
+
+/** The damage to heroes that is worth one point of that score. */
+const DAMAGE_PER_SCORE_POINT = 2_000;
+
+/** How many players Valve ranks: the first, the second and the third. */
+const RANKED_PLAYERS = 3;
+
 /**
- * Invent the `items` of a player: the items they bought (some sold again later) and the upgrades of
- * their abilities. Only the upgrades carry an `upgrade_id`.
+ * Rank the three best players of the match, as `mvp_rank` does: 1, 2 and 3, on any team.
  *
- * @param random - The generator.
- * @param durationS - Length of the match, in seconds.
- * @returns The entries, in the order they happened.
+ * The best are the players with the best game, by a score made of what is in the detail (kills,
+ * assists, deaths and the damage dealt to heroes); a tie goes to the lowest slot, so that the top
+ * three is always three players and depends on nothing but the detail.
+ *
+ * @param players - The twelve players.
+ * @returns The rank (1 to 3) of the three best, by slot. The nine others are not in the map.
  */
-function createItems(random: Random, durationS: number) {
-  const lastTimeS = Math.max(30, durationS - 30);
-  const purchases = Array.from({ length: between(random, 6, 12) }, () => {
-    const boughtS = between(random, 30, lastTimeS);
-    // About one item in six is sold again, between one and ten minutes after it was bought.
-    const sold = random() < 1 / 6;
-    return {
-      game_time_s: boughtS,
-      item_id: pick(random, ITEM_IDS),
-      sold_time_s: sold ? Math.min(durationS, boughtS + between(random, 60, 600)) : 0,
-    };
-  });
-  const upgrades = ABILITY_IDS.flatMap((abilityId) =>
-    Array.from({ length: between(random, 1, 3) }, (_, level) => ({
-      game_time_s: between(random, 30, lastTimeS),
-      item_id: abilityId,
-      sold_time_s: 0,
-      upgrade_id: level + 1,
-    })),
+function topThreeRanks(players: readonly Player[]): ReadonlyMap<number, number> {
+  const scored = players.map((player) => ({
+    slot: player.player_slot,
+    score:
+      KILL_SCORE * player.kills +
+      ASSIST_SCORE * player.assists +
+      DEATH_SCORE * player.deaths +
+      (player.stats.at(-1)?.player_damage ?? 0) / DAMAGE_PER_SCORE_POINT,
+  }));
+  return new Map(
+    scored
+      .toSorted((first, second) => second.score - first.score || first.slot - second.slot)
+      .slice(0, RANKED_PLAYERS)
+      .map(({ slot }, index): [number, number] => [slot, index + 1]),
   );
-  return [...purchases, ...upgrades].toSorted(
-    (first, second) => first.game_time_s - second.game_time_s,
-  );
-}
-
-/**
- * Invent the damage matrix: who damaged whom, from which source, over time.
- *
- * Every player is a dealer. Their weapon hits all the players of the other team and the non-player
- * target (slot 0); each of their two abilities hits three of them. The non-player dealer (slot 0)
- * hits everybody. The damage is cumulative: one value per sample time, never decreasing.
- *
- * @param random - The generator.
- * @param seats - The twelve seats.
- * @param sampleTimes - The times of the samples, in seconds.
- * @returns The matrix in the shape of the API's `damage_matrix`.
- */
-function createDamageMatrix(
-  random: Random,
-  seats: readonly Seat[],
-  sampleTimes: readonly number[],
-) {
-  const playerDealers = seats.map((seat) => {
-    const opponentSlots = seats
-      .filter((other) => other.team !== seat.team)
-      .map((other) => other.slot);
-    const someOpponents = () =>
-      shuffled(random, opponentSlots)
-        .slice(0, 3)
-        .toSorted((first, second) => first - second);
-    return {
-      dealer_player_slot: seat.slot,
-      damage_sources: [
-        damageSource(
-          random,
-          DAMAGE_SOURCE.weapon,
-          [...opponentSlots, NON_PLAYER_SLOT],
-          sampleTimes,
-          [20, 60],
-        ),
-        damageSource(random, DAMAGE_SOURCE.firstAbility, someOpponents(), sampleTimes, [5, 30]),
-        damageSource(random, DAMAGE_SOURCE.secondAbility, someOpponents(), sampleTimes, [5, 30]),
-      ],
-    };
-  });
-  const creepsDealer = {
-    dealer_player_slot: NON_PLAYER_SLOT,
-    damage_sources: [damageSource(random, DAMAGE_SOURCE.creeps, SLOTS, sampleTimes, [1, 8])],
-  };
-  return {
-    sample_time_s: sampleTimes,
-    // All the sources deal damage (type 0).
-    source_details: {
-      stat_type: DAMAGE_SOURCE_NAMES.map(() => 0),
-      source_name: DAMAGE_SOURCE_NAMES,
-    },
-    damage_dealers: [creepsDealer, ...playerDealers],
-  };
-}
-
-/**
- * One damage source of a dealer.
- *
- * @param random - The generator.
- * @param sourceIndex - Index of the source in {@link DAMAGE_SOURCE_NAMES}.
- * @param targetSlots - The slots it hit.
- * @param sampleTimes - The times of the samples, in seconds.
- * @param rangePerSecond - The smallest and the largest damage per second on one target.
- * @returns The source in the shape of the API's `damage_sources[]`.
- */
-function damageSource(
-  random: Random,
-  sourceIndex: number,
-  targetSlots: readonly number[],
-  sampleTimes: readonly number[],
-  rangePerSecond: readonly [number, number],
-) {
-  return {
-    source_details_index: sourceIndex,
-    damage_to_players: targetSlots.map((targetSlot) => ({
-      target_player_slot: targetSlot,
-      damage: cumulativeSeries(
-        random,
-        sampleTimes,
-        between(random, rangePerSecond[0], rangePerSecond[1]),
-      ),
-    })),
-  };
-}
-
-/**
- * A running total sampled at some times.
- *
- * @param random - The generator, for the irregularity of each interval.
- * @param times - The sample times, in seconds, in ascending order.
- * @param perSecond - The average amount added per second.
- * @returns One total per time; never decreasing.
- */
-function cumulativeSeries(random: Random, times: readonly number[], perSecond: number): number[] {
-  let total = 0;
-  let previousS = 0;
-  return times.map((timeS) => {
-    // Each interval adds between half and one and a half times the average.
-    total += Math.round(perSecond * (timeS - previousS) * (0.5 + random()));
-    previousS = timeS;
-    return total;
-  });
 }

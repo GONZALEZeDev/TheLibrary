@@ -6,14 +6,27 @@
  */
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { readDamageMatrix } from '../../../core/analysis/damage-matrix';
+import {
+  abilityUnlockKey,
+  damageSourceKey,
+  itemOwnedDamageKey,
+  projectDamageSources,
+} from '../../../core/analysis/damage-sources';
 import { buildMatchContext, statAt } from '../../../core/analysis/match-context';
 import type { MatchContext, SnapshotStat } from '../../../core/analysis/match-context';
 import { parseMatchMetadata } from '../../../core/deadlock-api/match-metadata.schema';
 import { PAIGE_HERO_ID } from '../../../core/domain/hero';
 import { createArchiveEnvelope } from '../../../core/match-detail/archive-envelope';
+import type { ArchiveEnvelope } from '../../../core/match-detail/archive-envelope';
 import { findTrackedPlayer, pruneForPlayer } from '../../../core/match-detail/pruning';
 import { testAccountId, testMatchId } from '../../../test/test-data';
-import { FIXTURE_HERO_CATALOGUE } from './heroes.fixture';
+import {
+  FIXTURE_EXPRESS_SHOT_ID,
+  FIXTURE_PAIGE_ABILITY_IDS,
+  FIXTURE_SHOP_ITEM_IDS,
+} from './assets.fixture';
+import { FIXTURE_HERO_CATALOGUE, FIXTURE_PAIGE_ITEMS } from './heroes.fixture';
 import {
   createMatchHistoryFixture,
   FIXTURE_ACCOUNT_ID,
@@ -47,6 +60,35 @@ const ANALYSIS_STATS = [
   'teammate_healing',
   'teammate_barriering',
 ] as const satisfies readonly SnapshotStat[];
+
+/** The `stat_type` of the damage rows of the matrix, and of its one regeneration row. */
+const DAMAGE_STAT_TYPE = 0;
+const REGEN_STAT_TYPE = 5;
+
+/**
+ * The category rows of the damage matrix: each one repeats the per-source rows of its category.
+ * Written out here (not read from the core) so that the readers are tested against the payload.
+ */
+const AGGREGATE_NAMES: ReadonlySet<string> = new Set([
+  'Bullet',
+  'Ability',
+  'Melee',
+  'UnknownAbility',
+  'Misc',
+]);
+
+/** The seconds between two samples of the damage matrix; the last sample is the end of the match. */
+const MATRIX_STEP_S = 180;
+
+/** The most shop items a player owns at the end of a match: the inventory has 12 slots. */
+const MAX_KEPT_ITEMS = 12;
+
+/** `upgrade_id` of an ability unlock, and of a shop item (any other value is an ability upgrade). */
+const ABILITY_UNLOCK_ID = 0;
+const SHOP_ITEM_ID = 1;
+
+/** `upgrade_info` is the mask of the ability's level shifted left by this many bits. */
+const UPGRADE_INFO_SHIFT = 16;
 
 /**
  * The part of a detail these tests look at, typed so that a field the fixture forgets or misnames
@@ -92,8 +134,19 @@ const detailSchema = z.looseObject({
             teammate_barriering: z.int(),
           }),
         ),
+        // Valve's top three of the match (1 to 3); `null` for the nine other players.
+        mvp_rank: z.int().nullable(),
+        // The seven fields every entry of a real payload has.
         items: z.array(
-          z.looseObject({ game_time_s: z.int(), item_id: z.int(), upgrade_id: z.int().optional() }),
+          z.looseObject({
+            item_id: z.int(),
+            game_time_s: z.int(),
+            upgrade_id: z.int(),
+            sold_time_s: z.int(),
+            flags: z.int(),
+            imbued_ability_id: z.int(),
+            upgrade_info: z.int(),
+          }),
         ),
         death_details: z.array(
           z.looseObject({
@@ -182,21 +235,114 @@ function trackedOf(info: MatchInfo): Player {
 }
 
 /**
- * The match context the analysis builds from the archive of a fixture match: the detail goes
- * through the JSON wire, the schema, the pruning and the archive envelope, as in the app.
+ * The archive of a fixture match: the detail goes through the JSON wire, the schema, the pruning and
+ * the archive envelope, as in the app.
  *
  * @param row - The history row of the match.
- * @returns The context of the match.
+ * @returns The envelope the app would archive for the match.
  */
-function contextOf(row: RawMatchHistoryRow): MatchContext {
+function envelopeOf(row: RawMatchHistoryRow): ArchiveEnvelope {
   const metadata = parseMatchMetadata(
     JSON.parse(JSON.stringify(createMatchMetadataFixture(row, FIXTURE_ACCOUNT_ID))),
     testMatchId(row.match_id),
   );
   const tracked = findTrackedPlayer(metadata, FIXTURE_ACCOUNT_ID);
-  return buildMatchContext(
-    createArchiveEnvelope(pruneForPlayer(metadata, tracked.playerSlot), FIXTURE_ACCOUNT_ID, NOW),
+  return createArchiveEnvelope(
+    pruneForPlayer(metadata, tracked.playerSlot),
+    FIXTURE_ACCOUNT_ID,
+    NOW,
   );
+}
+
+/**
+ * The match context the analysis builds from the archive of a fixture match.
+ *
+ * @param row - The history row of the match.
+ * @returns The context of the match.
+ */
+function contextOf(row: RawMatchHistoryRow): MatchContext {
+  return buildMatchContext(envelopeOf(row));
+}
+
+/** One row of the damage matrix, with its source named: what a source of a dealer did to a target. */
+interface MatrixRow {
+  readonly dealer: number;
+  readonly name: string;
+  readonly statType: number;
+  readonly target: number;
+  /** The series as the payload has it: right-aligned on the grid, the leading zeros trimmed. */
+  readonly series: readonly number[];
+}
+
+/**
+ * Flatten the damage matrix into rows, each with the name and the stat type of its source.
+ *
+ * @param matrix - The `damage_matrix` of a detail.
+ * @returns Every row of every dealer.
+ */
+function matrixRows(matrix: MatchInfo['damage_matrix']): MatrixRow[] {
+  const { stat_type: statTypes, source_name: names } = matrix.source_details;
+  return matrix.damage_dealers.flatMap((dealer) =>
+    dealer.damage_sources.flatMap((source) => {
+      const name =
+        names[source.source_details_index] ?? expect.unreachable('the source is in the table');
+      const statType =
+        statTypes[source.source_details_index] ?? expect.unreachable('the source is in the table');
+      return source.damage_to_players.map((target): MatrixRow => ({
+        dealer: dealer.dealer_player_slot,
+        name,
+        statType,
+        target: target.target_player_slot,
+        series: target.damage,
+      }));
+    }),
+  );
+}
+
+/**
+ * Put a right-aligned series back on the whole grid: the trimmed leading zeros are written again.
+ *
+ * @param series - The series of a row.
+ * @param sampleCount - The number of samples of the grid.
+ * @returns One value per sample.
+ */
+function onGrid(series: readonly number[], sampleCount: number): number[] {
+  return [...Array.from({ length: sampleCount - series.length }, () => 0), ...series];
+}
+
+/**
+ * The rows that make up a player's damage to enemy heroes: their own dealer, the damage rows of the
+ * sources (not the category rows that repeat them), aimed at the players of the other team.
+ *
+ * @param info - The `match_info` of the detail.
+ * @param player - The player.
+ * @returns The rows, whose sum is `stats.player_damage`.
+ */
+function heroDamageRows(info: MatchInfo, player: Player): MatrixRow[] {
+  const enemySlots = new Set(
+    info.players.filter((other) => other.team !== player.team).map((other) => other.player_slot),
+  );
+  return matrixRows(info.damage_matrix).filter(
+    (row) =>
+      row.dealer === player.player_slot &&
+      row.statType === DAMAGE_STAT_TYPE &&
+      !AGGREGATE_NAMES.has(row.name) &&
+      enemySlots.has(row.target),
+  );
+}
+
+/**
+ * The times of the damage matrix's samples for a match: every 180 s, then the end.
+ *
+ * @param durationS - Length of the match, in seconds.
+ * @returns The times in ascending order; the last one is `durationS`.
+ */
+function expectedMatrixGrid(durationS: number): number[] {
+  const times: number[] = [];
+  for (let timeS = MATRIX_STEP_S; timeS < durationS; timeS += MATRIX_STEP_S) {
+    times.push(timeS);
+  }
+  return [...times, durationS];
 }
 
 describe('createMatchMetadataFixture', () => {
@@ -453,19 +599,116 @@ describe('createMatchMetadataFixture', () => {
     }
   });
 
-  it('lists items, some of them ability upgrades, in the order they were bought', () => {
+  it('lists the items in the order they happened, all inside the match', () => {
     for (const row of PAIGE_ROWS.slice(0, 30)) {
       const info = detailOf(row);
       for (const player of info.players) {
         const times = player.items.map((item) => item.game_time_s);
-        const upgrades = player.items.filter((item) => (item.upgrade_id ?? 0) > 0);
-        const purchases = player.items.filter((item) => item.upgrade_id === undefined);
 
         expect(times).toEqual(times.toSorted((a, b) => a - b));
-        expect(upgrades.length).toBeGreaterThan(0);
-        expect(purchases.length).toBeGreaterThan(0);
         expect(times.every((time) => time >= 0 && time <= info.duration_s)).toBe(true);
       }
+    }
+  });
+
+  it('gives every player unlocks, upgrades and at most 12 kept shop items', () => {
+    let consumed = 0;
+    let soldForSouls = 0;
+    for (const row of PAIGE_ROWS.slice(0, 30)) {
+      const info = detailOf(row);
+      for (const player of info.players) {
+        const unlocks = player.items.filter((item) => item.upgrade_id === ABILITY_UNLOCK_ID);
+        const upgrades = player.items.filter((item) => item.upgrade_id > SHOP_ITEM_ID);
+        const shopItems = player.items.filter((item) => item.upgrade_id === SHOP_ITEM_ID);
+        const abilityIds = unlocks.map((item) => item.item_id);
+
+        // Four abilities are unlocked, each once, with the first level of the mask.
+        expect(unlocks).toHaveLength(4);
+        expect(new Set(abilityIds).size).toBe(4);
+        for (const unlock of unlocks) {
+          expect(unlock).toMatchObject({ sold_time_s: 0, flags: 0, imbued_ability_id: 0 });
+          expect(unlock.upgrade_info).toBe(1 << UPGRADE_INFO_SHIFT);
+        }
+        // The tracked player's abilities are Paige's, with the ids of the item catalogue.
+        if (player.account_id === FIXTURE_ACCOUNT_ID) {
+          expect(abilityIds.toSorted((a, b) => a - b)).toEqual(
+            FIXTURE_PAIGE_ABILITY_IDS.toSorted((a, b) => a - b),
+          );
+        }
+
+        // An upgrade is of an unlocked ability, comes after its unlock, and carries a level mask
+        // of 2, 3 or 4 levels (the masks 3, 7 and 15).
+        expect(upgrades.length).toBeGreaterThan(0);
+        for (const upgrade of upgrades) {
+          const unlock = unlocks.find((item) => item.item_id === upgrade.item_id);
+          expect(unlock?.game_time_s).toBeLessThanOrEqual(upgrade.game_time_s);
+          expect([3, 7, 15].map((mask) => mask << UPGRADE_INFO_SHIFT)).toContain(
+            upgrade.upgrade_info,
+          );
+          expect(upgrade).toMatchObject({ sold_time_s: 0, flags: 0, imbued_ability_id: 0 });
+        }
+
+        // A shop item is of the catalogue and is bought once; the first level of the mask.
+        expect(new Set(shopItems.map((item) => item.item_id)).size).toBe(shopItems.length);
+        for (const item of shopItems) {
+          expect(FIXTURE_SHOP_ITEM_IDS).toContain(item.item_id);
+          expect(item.upgrade_info).toBe(1 << UPGRADE_INFO_SHIFT);
+          // An item imbued into an ability is imbued into one of the player's own.
+          if (item.imbued_ability_id !== 0) {
+            expect(abilityIds).toContain(item.imbued_ability_id);
+          }
+          if (item.sold_time_s > 0) {
+            expect(item.sold_time_s).toBeGreaterThanOrEqual(item.game_time_s);
+            expect(item.sold_time_s).toBeLessThanOrEqual(info.duration_s);
+          } else {
+            // Kept to the end: it was not consumed by an upgrade.
+            expect(item.flags).toBe(0);
+          }
+        }
+        const consumedItems = shopItems.filter((item) => item.flags === 1);
+        // A consumed component is sold in the second an upgrade was bought.
+        for (const item of consumedItems) {
+          expect(shopItems.some((other) => other.game_time_s === item.sold_time_s)).toBe(true);
+        }
+        consumed += consumedItems.length;
+        soldForSouls += shopItems.filter((item) => item.flags === 0 && item.sold_time_s > 0).length;
+
+        const kept = shopItems.filter((item) => item.sold_time_s === 0);
+        expect(kept.length).toBeGreaterThanOrEqual(5);
+        expect(kept.length).toBeLessThanOrEqual(MAX_KEPT_ITEMS);
+      }
+    }
+    // Both ways to leave the inventory are among the items, or half of the rules above go unseen.
+    expect(consumed).toBeGreaterThan(0);
+    expect(soldForSouls).toBeGreaterThan(0);
+  });
+
+  it('buys Express Shot between 5:00 and 12:00 in about half the matches', () => {
+    const rows = PAIGE_ROWS.slice(0, 60);
+
+    const boughtAt = rows.flatMap((row) => {
+      const item = trackedOf(detailOf(row)).items.find(
+        (entry) => entry.item_id === FIXTURE_EXPRESS_SHOT_ID,
+      );
+      return item === undefined ? [] : [item.game_time_s];
+    });
+
+    expect(boughtAt.every((timeS) => timeS >= 300 && timeS <= 720)).toBe(true);
+    expect(boughtAt.length / rows.length).toBeGreaterThan(0.3);
+    expect(boughtAt.length / rows.length).toBeLessThan(0.7);
+  });
+
+  it('gives the top three to three players', () => {
+    for (const row of PAIGE_ROWS.slice(0, 30)) {
+      const { players } = detailOf(row);
+
+      const ranks = players.flatMap((player) =>
+        player.mvp_rank === null ? [] : [player.mvp_rank],
+      );
+
+      // Exactly one first, one second and one third place, whichever team they are in.
+      expect(ranks.toSorted((a, b) => a - b)).toEqual([1, 2, 3]);
+      expect(players.filter((player) => player.mvp_rank === null)).toHaveLength(9);
     }
   });
 
@@ -484,7 +727,7 @@ describe('createMatchMetadataFixture', () => {
     }
   });
 
-  it('has one damage dealer per player plus the non-player slot 0, with one value per sample', () => {
+  it('has one damage dealer per player plus the non-player slot 0, with at most one value per sample', () => {
     const { damage_matrix: matrix } = detailOf(PAIGE_ROW);
     const dealerSlots = matrix.damage_dealers.map((dealer) => dealer.dealer_player_slot);
     const sourceCount = matrix.source_details.source_name.length;
@@ -497,7 +740,8 @@ describe('createMatchMetadataFixture', () => {
       for (const source of dealer.damage_sources) {
         expect(source.source_details_index).toBeLessThan(sourceCount);
         for (const target of source.damage_to_players) {
-          expect(target.damage).toHaveLength(matrix.sample_time_s.length);
+          // The series is right-aligned on the grid, its leading zeros trimmed: never longer.
+          expect(target.damage.length).toBeLessThanOrEqual(matrix.sample_time_s.length);
           // Cumulative damage: it never decreases.
           expect(target.damage).toEqual(target.damage.toSorted((a, b) => a - b));
         }
@@ -509,15 +753,163 @@ describe('createMatchMetadataFixture', () => {
     const info = detailOf(PAIGE_ROW);
     const teamOfSlot = new Map(info.players.map((player) => [player.player_slot, player.team]));
 
-    for (const dealer of info.damage_matrix.damage_dealers) {
-      const dealerTeam = teamOfSlot.get(dealer.dealer_player_slot);
-      for (const source of dealer.damage_sources) {
-        for (const target of source.damage_to_players) {
-          if (dealerTeam !== undefined && target.target_player_slot !== 0) {
-            expect(teamOfSlot.get(target.target_player_slot)).toBe(1 - dealerTeam);
+    // Only the damage rows: the regeneration row of a player is aimed at themselves.
+    for (const row of matrixRows(info.damage_matrix)) {
+      const dealerTeam = teamOfSlot.get(row.dealer);
+      if (row.statType === DAMAGE_STAT_TYPE && dealerTeam !== undefined && row.target !== 0) {
+        expect(teamOfSlot.get(row.target)).toBe(1 - dealerTeam);
+      }
+    }
+  });
+
+  it("sums the tracked player's damage by source to player_damage at every sample", () => {
+    let compared = 0;
+    let betweenSamples = 0;
+    // The long match has snapshots (1,200 s, 1,500 s…) that fall between two samples of the matrix.
+    for (const row of [...PAIGE_ROWS.slice(0, 20), rowWith({ match_duration_s: 3_235 })]) {
+      const info = detailOf(row);
+      const grid = info.damage_matrix.sample_time_s;
+      for (const player of info.players) {
+        const aligned = heroDamageRows(info, player).map((source) =>
+          onGrid(source.series, grid.length),
+        );
+        // The player's damage to enemy heroes at each sample: their sources, added.
+        const total = grid.map((_, position) =>
+          aligned.reduce((sum, series) => sum + (series[position] ?? 0), 0),
+        );
+
+        for (const snapshot of player.stats) {
+          const position = grid.indexOf(snapshot.time_stamp_s);
+          if (position === -1) {
+            betweenSamples += 1;
+          } else {
+            expect(snapshot.player_damage).toBe(total[position]);
+            compared += 1;
+          }
+        }
+        // The match ends on both grids and the player dealt damage.
+        expect(total.at(-1)).toBeGreaterThan(0);
+        expect(player.stats.at(-1)?.player_damage).toBe(total.at(-1));
+      }
+    }
+    // Both grids are among the checks: the shared times, and the snapshots that only one has.
+    expect(compared).toBeGreaterThan(500);
+    expect(betweenSamples).toBeGreaterThan(0);
+  });
+
+  it('right-aligns the series and duplicates the sources in the aggregate rows', () => {
+    let shorterThanGrid = 0;
+    for (const row of PAIGE_ROWS.slice(0, 20)) {
+      const info = detailOf(row);
+      const { damage_matrix: matrix } = info;
+      const grid = matrix.sample_time_s;
+      const rows = matrixRows(matrix);
+
+      expect(grid).toEqual(expectedMatrixGrid(row.match_duration_s));
+      for (const { series } of rows) {
+        // Leading zeros trimmed: a series that is not empty starts with its first positive value.
+        expect(series.length).toBeLessThanOrEqual(grid.length);
+        expect(series.length === 0 || (series[0] ?? 0) > 0).toBe(true);
+        shorterThanGrid += series.length < grid.length ? 1 : 0;
+      }
+
+      for (const player of info.players) {
+        const own = rows.filter(
+          (candidate) =>
+            candidate.dealer === player.player_slot && candidate.statType === DAMAGE_STAT_TYPE,
+        );
+        const aggregates = own.filter((candidate) => AGGREGATE_NAMES.has(candidate.name));
+        const sources = own.filter((candidate) => !AGGREGATE_NAMES.has(candidate.name));
+        // Each target, the five category rows add up to what the sources dealt to it: at each
+        // sample, their series (back on the whole grid) are the same.
+        const sumOn = (list: readonly MatrixRow[], target: number) =>
+          grid.map((_, position) =>
+            list
+              .filter((candidate) => candidate.target === target)
+              .reduce((sum, { series }) => sum + (onGrid(series, grid.length)[position] ?? 0), 0),
+          );
+
+        expect(new Set(aggregates.map((aggregate) => aggregate.name))).toEqual(AGGREGATE_NAMES);
+        for (const target of new Set(own.map((candidate) => candidate.target))) {
+          expect(sumOn(aggregates, target)).toEqual(sumOn(sources, target));
+        }
+        // One regeneration row, aimed at the dealer: regeneration is not damage.
+        expect(
+          rows.filter(
+            (candidate) =>
+              candidate.dealer === player.player_slot && candidate.statType === REGEN_STAT_TYPE,
+          ),
+        ).toEqual([
+          expect.objectContaining({ name: 'base_stat_regen', target: player.player_slot }),
+        ]);
+      }
+    }
+    // Some sources start after the first sample (an ability unlocked at 4:00…): the trimming is seen.
+    expect(shorterThanGrid).toBeGreaterThan(0);
+  });
+
+  it("deals an item's damage only while its player owns it", () => {
+    let kept = 0;
+    let sold = 0;
+    for (const row of PAIGE_ROWS.slice(0, 60)) {
+      const info = detailOf(row);
+      const grid = info.damage_matrix.sample_time_s;
+      for (const player of info.players) {
+        const bought = player.items.find((item) => item.item_id === FIXTURE_EXPRESS_SHOT_ID);
+        const expressShotRows = matrixRows(info.damage_matrix).filter(
+          (candidate) =>
+            candidate.dealer === player.player_slot &&
+            candidate.statType === DAMAGE_STAT_TYPE &&
+            candidate.name === 'upgrade_express_shot',
+        );
+        if (bought === undefined) {
+          // Not owned, no damage: the source is not in the matrix.
+          expect(expressShotRows).toEqual([]);
+          continue;
+        }
+        expect(expressShotRows.length).toBeGreaterThan(0);
+        const ownedUntilS = bought.sold_time_s === 0 ? info.duration_s : bought.sold_time_s;
+        kept += bought.sold_time_s === 0 ? 1 : 0;
+        sold += bought.sold_time_s === 0 ? 0 : 1;
+        for (const { series } of expressShotRows) {
+          const aligned = onGrid(series, grid.length);
+          for (const [position, timeS] of grid.entries()) {
+            // Nothing before the purchase; nothing more once it has left the inventory.
+            if (timeS <= bought.game_time_s) {
+              expect(aligned[position]).toBe(0);
+            }
+            if (timeS >= ownedUntilS) {
+              expect(aligned[position]).toBe(aligned.at(-1));
+            }
           }
         }
       }
+    }
+    // Both an item that was kept and one that was sold again are among the cases.
+    expect(kept).toBeGreaterThan(0);
+    expect(sold).toBeGreaterThan(0);
+  });
+
+  it("names Paige's sources after her loadout, and Plot Armor deals no damage", () => {
+    for (const row of PAIGE_ROWS.slice(0, 30)) {
+      const info = detailOf(row);
+      const tracked = trackedOf(info);
+      const boughtExpressShot = tracked.items.some(
+        (item) => item.item_id === FIXTURE_EXPRESS_SHOT_ID,
+      );
+
+      const names = new Set(heroDamageRows(info, tracked).map((source) => source.name));
+
+      expect([...names].toSorted()).toEqual(
+        [
+          FIXTURE_PAIGE_ITEMS.weapon_primary,
+          FIXTURE_PAIGE_ITEMS.weapon_melee,
+          FIXTURE_PAIGE_ITEMS.signature1,
+          FIXTURE_PAIGE_ITEMS.signature3,
+          FIXTURE_PAIGE_ITEMS.signature4,
+          ...(boughtExpressShot ? ['upgrade_express_shot'] : []),
+        ].toSorted(),
+      );
     }
   });
 
@@ -654,6 +1046,43 @@ describe('the match context of a fixture match', () => {
     // Both kinds of match are among the rows, or the test above would prove half of what it says.
     expect(badges.some((badge) => badge === null)).toBe(true);
     expect(badges.some((badge) => badge !== null)).toBe(true);
+  });
+});
+
+describe('the damage and the items of a fixture match, read by the core', () => {
+  it('reads back through readDamageMatrix and projectDamageSources without error', () => {
+    for (const row of PAIGE_ROWS.slice(0, 30)) {
+      const info = detailOf(row);
+      const tracked = trackedOf(info);
+      const envelope = envelopeOf(row);
+
+      const read =
+        readDamageMatrix(envelope) ?? expect.unreachable('the match has a damage matrix');
+      const values = projectDamageSources(read);
+
+      // The reader keeps the matrix's own grid, and the sources of the damage rows only: the
+      // category rows and the regeneration row are not sources. The total is the player's damage.
+      expect(read.sampleTimesS).toEqual(info.damage_matrix.sample_time_s);
+      expect([...read.sources.keys()].toSorted()).toEqual(
+        [...new Set(heroDamageRows(info, tracked).map((source) => source.name))].toSorted(),
+      );
+      expect(read.total.at(-1)).toBe(tracked.stats.at(-1)?.player_damage);
+      // A source that dealt damage is a value; Plot Armor, which never does, is none.
+      for (const className of read.sources.keys()) {
+        expect(values.get(damageSourceKey(className))).toBeGreaterThan(0);
+      }
+      expect(values.has(damageSourceKey(FIXTURE_PAIGE_ITEMS.signature2))).toBe(false);
+      // An ability is unlocked when its first entry says so.
+      for (const abilityId of FIXTURE_PAIGE_ABILITY_IDS) {
+        const unlockedAtS = tracked.items.find((item) => item.item_id === abilityId)?.game_time_s;
+        expect(unlockedAtS).toBeDefined();
+        expect(values.get(abilityUnlockKey(abilityId))).toBe(unlockedAtS);
+      }
+      // Every shop item the player had is a value: the damage they dealt while they owned it.
+      for (const item of read.items.filter((entry) => entry.isShopItem)) {
+        expect(values.get(itemOwnedDamageKey(item.itemId))).toBeGreaterThanOrEqual(0);
+      }
+    }
   });
 });
 

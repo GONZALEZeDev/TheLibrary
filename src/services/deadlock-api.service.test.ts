@@ -11,6 +11,11 @@ import {
   type FixtureHandler,
 } from '../adapters/dev/fixture-http-client.adapter';
 import {
+  FIXTURE_EXPRESS_SHOT_ID,
+  FIXTURE_PAIGE_ABILITY_IDS,
+  FIXTURE_SHOP_ITEM_IDS,
+} from '../adapters/dev/fixtures/assets.fixture';
+import {
   createMatchHistoryFixture,
   FIXTURE_ACCOUNT_ID,
 } from '../adapters/dev/fixtures/match-history.fixture';
@@ -18,12 +23,16 @@ import { isMetadataMissing } from '../adapters/dev/fixtures/match-metadata.fixtu
 import { FIXTURE_AVATAR_HASH, FIXTURE_PERSONA_NAME } from '../adapters/dev/fixtures/steam.fixture';
 import { MemoryLogger } from '../adapters/dev/memory-logger.adapter';
 import { DEFAULT_PAUSE_MS } from '../core/deadlock-api/api-response';
+import { ASSET_IMAGE_ORIGIN } from '../core/deadlock-api/assets.schema';
 import {
+  itemsRequest,
   MAX_RESPONSE_BYTES,
   matchMetadataRequest,
+  ranksRequest,
   type CohortQuery,
 } from '../core/deadlock-api/endpoints';
 import { PAIGE_HERO_ID } from '../core/domain/hero';
+import { RANK_TIER_NAMES } from '../core/domain/rank';
 import { AppError, errorLogContext, isAppError } from '../core/errors/app-error';
 import type { Database } from '../ports/database.port';
 import type { HttpRequest, HttpResponse } from '../ports/http-client.port';
@@ -301,7 +310,40 @@ describe('DeadlockApiService.fetchHeroes', () => {
   it('downloads the playable heroes', async () => {
     const { api } = setUp();
 
-    await expect(api.fetchHeroes()).resolves.toContainEqual({ id: 67, name: 'Paige' });
+    const heroes = await api.fetchHeroes();
+
+    expect(heroes.map((hero) => hero.name)).toContain('Paige');
+    // Baba is still in development in the fixture catalogue: no hero a player cannot pick.
+    expect(heroes.map((hero) => hero.name)).not.toContain('Baba');
+  });
+
+  it('fetches the heroes with their images and loadout', async () => {
+    const { api } = setUp();
+
+    const heroes = await api.fetchHeroes();
+
+    // Paige's loadout is the real one (hero asset 67): the weapon, the melee and the four
+    // signature abilities, the ultimate last.
+    expect(heroes.find((hero) => hero.id === PAIGE_HERO_ID)).toEqual({
+      id: PAIGE_HERO_ID,
+      name: 'Paige',
+      imageUrl: `${ASSET_IMAGE_ORIGIN}assets-api-res/images/heroes/bookworm_sm.webp`,
+      loadout: {
+        weapon: 'citadel_weapon_bookworm_set2',
+        melee: 'ability_melee_bookworm',
+        abilities: [
+          'ability_bookworm_dragonfire',
+          'ability_bookworm_knightbarrier',
+          'ability_bookworm_aoemagic',
+          'ability_bookworm_knightcharge',
+        ],
+      },
+    });
+    // Every playable hero of the fixture has a portrait on the asset bucket and a whole loadout.
+    for (const hero of heroes) {
+      expect(hero.imageUrl?.startsWith(ASSET_IMAGE_ORIGIN)).toBe(true);
+      expect(hero.loadout?.abilities).toHaveLength(4);
+    }
   });
 
   it('allows 2 requests per second', async () => {
@@ -319,6 +361,153 @@ describe('DeadlockApiService.fetchHeroes', () => {
     await syncState.setPausedUntil(START + 5_000);
 
     await expect(api.fetchHeroes()).rejects.toMatchObject({ kind: 'rate_limited' });
+  });
+});
+
+describe('DeadlockApiService asset requests', () => {
+  it('fetches the item and rank catalogues through the asset budget', async () => {
+    const { api, http } = setUp();
+
+    const items = await api.fetchItemCatalogue();
+    const ranks = await api.fetchRankCatalogue();
+
+    expect(http.requests.map((request) => request.url)).toEqual([
+      itemsRequest().url,
+      ranksRequest().url,
+    ]);
+    // Express Shot: the one shop item a Paige match damages with, a weapon item of tier 3.
+    const expressShot = items.find((item) => item.className === 'upgrade_express_shot');
+    expect(expressShot).toMatchObject({
+      id: 690458959,
+      name: 'Express Shot',
+      kind: 'upgrade',
+      slot: 'weapon',
+      tier: 3,
+    });
+    expect(expressShot?.imageUrl?.startsWith(ASSET_IMAGE_ORIGIN)).toBe(true);
+    // Paige's weapon: the real class name and id of the game data.
+    expect(items.find((item) => item.className === 'citadel_weapon_bookworm_set2')).toMatchObject({
+      id: 4260448939,
+      name: "Chapter's End",
+      kind: 'weapon',
+    });
+    // The twelve tiers, Obscurus to Eternus, each with a badge on the asset bucket.
+    expect(ranks.map((rank) => rank.tier)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(ranks.map((rank) => rank.name)).toEqual(RANK_TIER_NAMES);
+    for (const rank of ranks) {
+      expect(rank.imageUrl?.startsWith(ASSET_IMAGE_ORIGIN)).toBe(true);
+    }
+    // The three requests share one budget: the hero catalogue is refused in the same second.
+    await expect(api.fetchHeroes()).rejects.toMatchObject({ kind: 'rate_limited' });
+    expect(http.requests).toHaveLength(2);
+  });
+
+  it('refuses the third asset request of a second without sending it', async () => {
+    const { api, http, clock } = setUp();
+    await api.fetchHeroes();
+    await api.fetchItemCatalogue();
+
+    // Whichever catalogue asks, the third request of the second is refused with the time it may
+    // be sent, and none of them reaches the network.
+    for (const refused of [
+      () => api.fetchHeroes(),
+      () => api.fetchItemCatalogue(),
+      () => api.fetchRankCatalogue(),
+    ]) {
+      await expect(refused()).rejects.toMatchObject({
+        kind: 'rate_limited',
+        context: { nextAllowedAt: START + 1_000 },
+      });
+    }
+    expect(http.requests).toHaveLength(2);
+
+    // A refused request is not counted: a second later, the budget is whole again.
+    clock.now += 1_000;
+    await expect(api.fetchRankCatalogue()).resolves.toHaveLength(12);
+    await expect(api.fetchItemCatalogue()).resolves.not.toHaveLength(0);
+    expect(http.requests).toHaveLength(4);
+  });
+
+  it('throws rate_limited during a pause', async () => {
+    const { api, http, syncState } = setUp();
+    await syncState.setPausedUntil(START + 5_000);
+
+    await expect(api.fetchItemCatalogue()).rejects.toMatchObject({
+      kind: 'rate_limited',
+      context: { pausedUntil: START + 5_000 },
+    });
+    await expect(api.fetchRankCatalogue()).rejects.toMatchObject({
+      kind: 'rate_limited',
+      context: { pausedUntil: START + 5_000 },
+    });
+    // Nothing was sent, and the refusals used none of the asset budget.
+    expect(http.requests).toHaveLength(0);
+    await syncState.setPausedUntil(null);
+    await api.fetchItemCatalogue();
+    await expect(api.fetchRankCatalogue()).resolves.toHaveLength(12);
+  });
+
+  it('throws the pause deadlock-api asks for and keeps it for the next requests', async () => {
+    const { api, http, syncState } = setUp(() =>
+      jsonResponse({ status: 429 }, 429, { 'retry-after': '120' }),
+    );
+
+    await expect(api.fetchItemCatalogue()).rejects.toMatchObject({ kind: 'rate_limited' });
+
+    await expect(syncState.getPausedUntil()).resolves.toBe(START + 120_000);
+    await expect(api.fetchRankCatalogue()).rejects.toMatchObject({
+      kind: 'rate_limited',
+      context: { pausedUntil: START + 120_000 },
+    });
+    expect(http.requests).toHaveLength(1);
+  });
+
+  it('lets an empty catalogue fail as invalid_payload', async () => {
+    const { api } = setUp(() => jsonResponse([]));
+
+    // The cache service of the catalogues treats it as a failed download.
+    await expect(api.fetchItemCatalogue()).rejects.toMatchObject({ kind: 'invalid_payload' });
+    await expect(api.fetchRankCatalogue()).rejects.toMatchObject({ kind: 'invalid_payload' });
+  });
+
+  it('serves catalogues that agree with each other and with the ids they export', async () => {
+    const { api } = setUp();
+    const items = await api.fetchItemCatalogue();
+    const heroes = await api.fetchHeroes();
+    const idOf = (className: string) => items.find((item) => item.className === className)?.id;
+    const loadoutOf = (heroId: number) =>
+      heroes.find((hero) => hero.id === heroId)?.loadout ??
+      expect.unreachable('the hero has a loadout');
+
+    // Paige's whole loadout is in the item catalogue, her signatures under the exported ids.
+    const paige = loadoutOf(PAIGE_HERO_ID);
+    expect(paige.abilities.map(idOf)).toEqual(FIXTURE_PAIGE_ABILITY_IDS);
+    expect(idOf(paige.weapon)).toBe(4260448939);
+    expect(idOf(paige.melee)).toBe(3850113264);
+    // The ability of another hero is there too, under that hero's loadout and not Paige's.
+    const [otherAbility = ''] = loadoutOf(1).abilities;
+    expect(items.find((item) => item.className === otherAbility)).toMatchObject({
+      kind: 'ability',
+      name: 'Flame Wave',
+    });
+    expect(paige.abilities).not.toContain(otherAbility);
+    // The catalogue has an entry without a name, which the parser reads as unnamed.
+    expect(items.filter((item) => item.name === null)).toHaveLength(1);
+
+    // Every id is unique: `item_id` and `ability_id` of a match name one entry.
+    expect(new Set(items.map((item) => item.id)).size).toBe(items.length);
+    // The exported shop ids are the shop items of the catalogue, Express Shot among them, over the
+    // three slots and the tiers 1 to 4, each shown by an image of the asset bucket.
+    const shopItems = items.filter((item) => item.kind === 'upgrade');
+    expect(shopItems.map((item) => item.id)).toEqual(FIXTURE_SHOP_ITEM_IDS);
+    expect(FIXTURE_SHOP_ITEM_IDS).toContain(FIXTURE_EXPRESS_SHOT_ID);
+    expect(new Set(shopItems.map((item) => item.slot))).toEqual(
+      new Set(['weapon', 'vitality', 'spirit']),
+    );
+    expect(new Set(shopItems.map((item) => item.tier))).toEqual(new Set([1, 2, 3, 4]));
+    for (const item of shopItems) {
+      expect(item.imageUrl?.startsWith(ASSET_IMAGE_ORIGIN)).toBe(true);
+    }
   });
 });
 

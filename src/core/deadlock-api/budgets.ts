@@ -25,7 +25,10 @@ export const HISTORY_RATE_LIMIT: RateLimit = { limit: 8, windowMs: HOUR_MS };
  */
 export const AUTOMATIC_HISTORY_RATE_LIMIT: RateLimit = { limit: 6, windowMs: HOUR_MS };
 
-/** Static game data (the hero catalogue): 2 requests per second. */
+/**
+ * Static game data (the hero, item and rank catalogues, which share this one budget): 2 requests per
+ * second.
+ */
 export const ASSETS_RATE_LIMIT: RateLimit = { limit: 2, windowMs: 1_000 };
 
 /**

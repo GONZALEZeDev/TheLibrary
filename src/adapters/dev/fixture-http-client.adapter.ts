@@ -13,7 +13,9 @@ import { avatarUrl } from '../../core/account/linked-account';
 import { AppError } from '../../core/errors/app-error';
 import {
   heroesRequest,
+  itemsRequest,
   matchHistoryRequest,
+  ranksRequest,
   DEADLOCK_API_BASE_URL,
 } from '../../core/deadlock-api/endpoints';
 import { parseAccountId, type AccountId } from '../../core/domain/account';
@@ -33,6 +35,7 @@ import {
   createPlayerRankFixture,
   createUnrankedPlayerRankFixture,
 } from './fixtures/analytics.fixture';
+import { FIXTURE_ITEM_CATALOGUE, FIXTURE_RANK_CATALOGUE } from './fixtures/assets.fixture';
 import { FIXTURE_HERO_CATALOGUE } from './fixtures/heroes.fixture';
 import {
   createMatchHistoryFixture,
@@ -368,7 +371,8 @@ function answerCheckAuthentication(form: string, confirmed: Set<string>): Fixtur
  * Imitate deadlock-api and the two Steam servers the sign-in reaches, with the synthetic fixtures:
  *
  * - deadlock-api: the match history of one account (refreshed "from Steam"), an empty history for
- *   any other account, the hero catalogue, the detail of the matches of that history
+ *   any other account, the hero, item and rank catalogues (`GET /v1/assets/…`, with the portraits
+ *   and loadouts of the heroes), the detail of the matches of that history
  *   (`GET /v1/matches/{match_id}/metadata`, see `answerMatchMetadata`), and the Steam profile
  *   (`GET /v1/players/steam`, with or without `refresh`) of the fixture account, an empty list for
  *   any other, and the community data of the match analysis (the benchmark, the performance curve
@@ -417,6 +421,12 @@ export function createFixtureApi(options: FixtureApiOptions): FixtureHandler {
     }
     if (request.url === heroesRequest().url) {
       return jsonResponse(FIXTURE_HERO_CATALOGUE);
+    }
+    if (request.url === itemsRequest().url) {
+      return jsonResponse(FIXTURE_ITEM_CATALOGUE);
+    }
+    if (request.url === ranksRequest().url) {
+      return jsonResponse(FIXTURE_RANK_CATALOGUE);
     }
     // Only the API's own host is imitated: the path is read once the base URL is cut off.
     const path = request.url.startsWith(DEADLOCK_API_BASE_URL)

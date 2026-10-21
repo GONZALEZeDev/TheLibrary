@@ -10,6 +10,11 @@
  * edits the archive the queue wrote, which keeps the match recorded as archived, exactly like a
  * file the app wrote with an older version would be.
  *
+ * What a projection stores is the metrics of the registry and the damage sources of the match (the
+ * damage of each source, of each item owned, the unlock time of each ability). The synthetic matches
+ * hold a damage matrix and items, so every archived match stores damage keys: the tests derive how
+ * many from the archive itself, they do not hard-code it.
+ *
  * @packageDocumentation
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -20,6 +25,8 @@ import {
 } from '../adapters/dev/fixtures/match-history.fixture';
 import { fixtureTrackedBadge } from '../adapters/dev/fixtures/match-metadata.fixture';
 import { MemoryLogger, type LogEntry } from '../adapters/dev/memory-logger.adapter';
+import * as damageMatrixReader from '../core/analysis/damage-matrix';
+import { DAMAGE_KEY_PREFIXES, projectDamageSources } from '../core/analysis/damage-sources';
 import { PERSONAL_WINDOW } from '../core/analysis/insights/thresholds';
 import { buildMatchContext } from '../core/analysis/match-context';
 import { accuracyMetric } from '../core/analysis/metrics/accuracy.metric';
@@ -27,6 +34,7 @@ import { kdaMetric } from '../core/analysis/metrics/kda.metric';
 import { projectMetrics, PROJECTION_VERSION } from '../core/analysis/registry';
 import type { MatchId } from '../core/domain/match';
 import { AppError } from '../core/errors/app-error';
+import type { ArchiveEnvelope } from '../core/match-detail/archive-envelope';
 import { accountFolderName, archivePath } from '../core/match-detail/archive-layout';
 import type { LogContext, LogLevel } from '../ports/logger.port';
 import { createTestServices } from '../test/create-test-services';
@@ -55,8 +63,17 @@ const RUN = 'run-0001';
 /** An account id that appears in every synthetic match detail, as one of the other players. */
 const FAKE_OTHER_PLAYER = '2000001';
 
-/** How many values a projection stores: the 24 metrics and the 12 community windows. */
-const VALUE_COUNT = 36;
+/** How many values the metrics of a projection make: the 24 metrics and the 12 community windows. */
+const METRIC_VALUE_COUNT = 36;
+
+/**
+ * The last version of the projection that stored no damage source: the projections an older
+ * release of the app left on the disk.
+ */
+const VERSION_BEFORE_DAMAGE_SOURCES = 1;
+
+/** The `issue` of a damage matrix whose grid of samples goes back, whatever the code of the check. */
+const BROKEN_MATRIX_ISSUE = /^damage_matrix\.sample_time_s: \w+$/;
 
 /** The match mode of a ranked match, the only one in which the player has a badge. */
 const RANKED_MODE = 4;
@@ -97,17 +114,30 @@ interface EditablePlayer {
   stats?: Record<string, unknown>[];
 }
 
-/** The part of an archive file that the tests edit. */
-interface EditableEnvelope {
-  payload: { match_info: { players: EditablePlayer[] } };
+/** The part of the damage matrix of an archive that the tests edit. */
+interface EditableDamageMatrix {
+  sample_time_s: number[];
 }
 
-/** The players of an archive that a test may edit. */
-interface EditablePlayers {
+/** The part of the `match_info` of an archive that the tests edit. */
+interface EditableMatchInfo {
+  players: EditablePlayer[];
+  damage_matrix?: EditableDamageMatrix;
+}
+
+/** The part of an archive file that the tests edit. */
+interface EditableEnvelope {
+  payload: { match_info: EditableMatchInfo };
+}
+
+/** What a test may edit in an archive. */
+interface EditableMatch {
   /** The tracked player. */
   readonly tracked: EditablePlayer;
   /** Another player of the match. */
   readonly other: EditablePlayer;
+  /** The match itself: its players, and its damage matrix when it has one. */
+  readonly matchInfo: EditableMatchInfo;
 }
 
 /**
@@ -179,49 +209,116 @@ function expectedBadge(matchId: MatchId): number | null {
 }
 
 /**
- * The values the registry gives for the archive of a match, which a projection must store.
+ * Read the archive of a match, as it is on the disk now (edited or not).
+ *
+ * @param context - What {@link setUp} built.
+ * @param matchId - The match.
+ * @returns The decoded archive.
+ */
+async function envelopeOf(context: TestContext, matchId: MatchId): Promise<ArchiveEnvelope> {
+  const read = await context.reader.readArchive(ACCOUNT, matchId);
+  if (read.kind !== 'read') {
+    expect.unreachable('the archive of the match is readable');
+  }
+  return read.envelope;
+}
+
+/**
+ * The values the metrics of the registry give for the archive of a match.
+ *
+ * @param context - What {@link setUp} built.
+ * @param matchId - The match.
+ * @returns The values by key: {@link METRIC_VALUE_COUNT} of them.
+ */
+async function metricValuesOf(context: TestContext, matchId: MatchId) {
+  return projectMetrics(buildMatchContext(await envelopeOf(context, matchId)));
+}
+
+/**
+ * The damage-source values the archive of a match gives, which a projection must store next to the
+ * metrics.
+ *
+ * @param context - What {@link setUp} built.
+ * @param matchId - The match; its damage matrix must be readable, or absent.
+ * @returns The values by key; none for a match with no damage matrix.
+ */
+async function damageValuesOf(
+  context: TestContext,
+  matchId: MatchId,
+): Promise<ReadonlyMap<string, number>> {
+  const read = damageMatrixReader.readDamageMatrix(await envelopeOf(context, matchId));
+  return read === null ? new Map() : projectDamageSources(read);
+}
+
+/**
+ * Everything a projection must store for the archive of a match: the values of the metrics, then
+ * the damage sources.
  *
  * @param context - What {@link setUp} built.
  * @param matchId - The match.
  * @returns The values by key.
  */
-async function registryValues(context: TestContext, matchId: MatchId) {
-  const read = await context.reader.readArchive(ACCOUNT, matchId);
-  if (read.kind !== 'read') {
-    expect.unreachable('the archive of the match is readable');
-  }
-  return projectMetrics(buildMatchContext(read.envelope));
+async function projectedValuesOf(context: TestContext, matchId: MatchId) {
+  return new Map([
+    ...(await metricValuesOf(context, matchId)),
+    ...(await damageValuesOf(context, matchId)),
+  ]);
 }
 
 /**
- * Edit the archive the queue wrote for a match: the tracked player and another one are edited, and
- * the file is written again. The match stays recorded as archived.
+ * How many values a projection of a match stores: the metrics, and as many damage values as the
+ * archive gives. Derived from the archive, so that the fixture can change without the tests.
  *
  * @param context - What {@link setUp} built.
  * @param matchId - The match.
- * @param edit - Edits the players of the archive.
+ * @returns The number of values.
+ */
+async function expectedValueCount(context: TestContext, matchId: MatchId): Promise<number> {
+  return METRIC_VALUE_COUNT + (await damageValuesOf(context, matchId)).size;
+}
+
+/**
+ * Edit the archive the queue wrote for a match: the tracked player, another one and the match
+ * itself are edited, and the file is written again. The match stays recorded as archived.
+ *
+ * @param context - What {@link setUp} built.
+ * @param matchId - The match.
+ * @param edit - Edits the archive.
  */
 async function editArchive(
   context: TestContext,
   matchId: MatchId,
-  edit: (players: EditablePlayers) => void,
+  edit: (match: EditableMatch) => void,
 ): Promise<void> {
-  const read = await context.reader.readArchive(ACCOUNT, matchId);
-  if (read.kind !== 'read') {
-    expect.unreachable('the archive of the match is readable');
-  }
-  const envelope = JSON.parse(JSON.stringify(read.envelope)) as EditableEnvelope;
-  const { players } = envelope.payload.match_info;
+  const envelope = JSON.parse(
+    JSON.stringify(await envelopeOf(context, matchId)),
+  ) as EditableEnvelope;
+  const matchInfo = envelope.payload.match_info;
   edit({
     tracked:
-      players.find((player) => player.account_id === ACCOUNT) ??
+      matchInfo.players.find((player) => player.account_id === ACCOUNT) ??
       expect.unreachable('the tracked player is in the match'),
     other:
-      players.find((player) => player.account_id !== ACCOUNT) ??
+      matchInfo.players.find((player) => player.account_id !== ACCOUNT) ??
       expect.unreachable('another player is in the match'),
+    matchInfo,
   });
   const bytes = new TextEncoder().encode(JSON.stringify(envelope));
   await context.archiveStore.write(ACCOUNT, matchId, await context.compressor.compress(bytes));
+}
+
+/**
+ * Break the damage matrix of an archive the way the analysis cannot read: the grid of samples goes
+ * back in time. The rest of the archive stays valid, so the match is still analysable.
+ *
+ * @param context - What {@link setUp} built.
+ * @param matchId - The match, which must have a damage matrix.
+ */
+async function breakDamageMatrix(context: TestContext, matchId: MatchId): Promise<void> {
+  await editArchive(context, matchId, ({ matchInfo }) => {
+    const matrix = matchInfo.damage_matrix ?? expect.unreachable('the match has a damage matrix');
+    matrix.sample_time_s = [360, 180];
+  });
 }
 
 /**
@@ -319,7 +416,8 @@ describe('ProjectionService.catchUp', () => {
 
     expect(report).toEqual({ ...NOTHING, projected: archived.length });
     await expect(metrics.listToProject(ACCOUNT, PROJECTION_VERSION)).resolves.toEqual([]);
-    // The matches are projected most recent first, and each one is stored as the registry projects it.
+    // The matches are projected most recent first, and each one is stored as the registry projects
+    // it, with the damage sources of its archive.
     for (const [index, matchId] of archived.entries()) {
       await expect(metrics.getProjection(ACCOUNT, matchId)).resolves.toMatchObject({
         matchId,
@@ -330,8 +428,8 @@ describe('ProjectionService.catchUp', () => {
         projectedAt: PROJECTION_START + index * YIELD_STEP_MS,
       });
       const values = await metrics.getValues(ACCOUNT, matchId);
-      expect(values.size).toBe(VALUE_COUNT);
-      expect(values).toEqual(await registryValues(context, matchId));
+      expect(values.size).toBe(await expectedValueCount(context, matchId));
+      expect(values).toEqual(await projectedValuesOf(context, matchId));
     }
     // The synthetic history has ranked and unranked matches: both ways to get a badge are covered.
     expect(archived.map(expectedBadge)).toContain(null);
@@ -419,9 +517,253 @@ describe('ProjectionService.catchUp', () => {
       });
       const values = await metrics.getValues(ACCOUNT, matchId);
       expect(values.has('stale_metric')).toBe(false);
-      expect(values).toEqual(await registryValues(context, matchId));
+      expect(values).toEqual(await projectedValuesOf(context, matchId));
     }
     expect(linesOf(logger, 'Projection done')).toHaveLength(1);
+  });
+
+  it('projects every match again after the version bump', async () => {
+    const context = await setUp();
+    const { service, metrics, logger, archived } = context;
+    // The state the release before the bump left: the metrics of each match and no damage source,
+    // stored with its version.
+    for (const matchId of archived) {
+      await metrics.saveProjection(
+        ACCOUNT,
+        matchId,
+        {
+          version: VERSION_BEFORE_DAMAGE_SOURCES,
+          playerBadge: expectedBadge(matchId),
+          hasLeaver: false,
+          failed: false,
+          projectedAt: 1,
+        },
+        await metricValuesOf(context, matchId),
+      );
+    }
+    // The bump is what makes them to project: those projections are not of the current version.
+    expect(PROJECTION_VERSION).toBeGreaterThan(VERSION_BEFORE_DAMAGE_SOURCES);
+    await expect(metrics.listToProject(ACCOUNT, VERSION_BEFORE_DAMAGE_SOURCES)).resolves.toEqual(
+      [],
+    );
+    await expect(metrics.listToProject(ACCOUNT, PROJECTION_VERSION)).resolves.toEqual(archived);
+
+    const report = await service.catchUp(ACCOUNT, RUN);
+
+    expect(report).toEqual({ ...NOTHING, projected: archived.length });
+    await expect(metrics.listToProject(ACCOUNT, PROJECTION_VERSION)).resolves.toEqual([]);
+    for (const matchId of archived) {
+      await expect(metrics.getProjection(ACCOUNT, matchId)).resolves.toMatchObject({
+        version: PROJECTION_VERSION,
+        failed: false,
+      });
+      // The values of the old version are gone with it, and the damage sources are there.
+      const values = await metrics.getValues(ACCOUNT, matchId);
+      expect(values.size).toBeGreaterThan(METRIC_VALUE_COUNT);
+      expect(values).toEqual(await projectedValuesOf(context, matchId));
+    }
+    // The archives were on the disk already: the bump costs no download, only one line of the run.
+    expect(linesOf(logger, 'Projection done')).toHaveLength(1);
+  });
+
+  it('stores the damage sources with the metrics', async () => {
+    const context = await setUp();
+    const { service, metrics, logger, archived } = context;
+
+    await service.catchUp(ACCOUNT, RUN);
+
+    const damageKeys: string[] = [];
+    for (const matchId of archived) {
+      const values = await metrics.getValues(ACCOUNT, matchId);
+      const damage = await damageValuesOf(context, matchId);
+      // The synthetic matches hold a damage matrix and items: each one gives damage values.
+      expect(damage.size, String(matchId)).toBeGreaterThan(0);
+      expect(values.size, String(matchId)).toBe(METRIC_VALUE_COUNT + damage.size);
+      // The metrics are what they were, key by key (the unknown ones stay unknown)…
+      for (const [key, value] of await metricValuesOf(context, matchId)) {
+        expect(values.get(key), key).toEqual(value);
+      }
+      // …and the damage sources are stored as the archive gives them, next to them.
+      for (const [key, value] of damage) {
+        expect(values.get(key), key).toBe(value);
+        damageKeys.push(key);
+      }
+      // No other key: whatever is not a metric is a damage value.
+      const stored = [...values.keys()].filter((key) =>
+        DAMAGE_KEY_PREFIXES.some((prefix) => key.startsWith(prefix)),
+      );
+      expect(new Set(stored)).toEqual(new Set(damage.keys()));
+    }
+    // The three families of keys are stored: the damage of the sources, of the items, the unlocks.
+    for (const prefix of DAMAGE_KEY_PREFIXES) {
+      expect(
+        damageKeys.some((key) => key.startsWith(prefix)),
+        prefix,
+      ).toBe(true);
+    }
+    // A damage matrix that is read is no news: nothing is logged about it.
+    expect(linesOf(logger, 'Damage sources not read')).toEqual([]);
+    expect(linesOf(logger, 'Metric not computed')).toEqual([]);
+  });
+
+  it('projects a match without a damage matrix', async () => {
+    const context = await setUp();
+    const { service, metrics, logger, archived } = context;
+    const bare = archived[1] ?? expect.unreachable('the history holds several archived matches');
+    // The detail of some matches comes without a damage matrix.
+    await editArchive(context, bare, ({ matchInfo }) => {
+      delete matchInfo.damage_matrix;
+    });
+
+    const report = await service.catchUp(ACCOUNT, RUN);
+
+    // The match is projected like any other, with its metrics and no damage key at all: its items
+    // alone say nothing about the damage.
+    expect(report).toEqual({ ...NOTHING, projected: archived.length });
+    await expect(metrics.getProjection(ACCOUNT, bare)).resolves.toMatchObject({
+      failed: false,
+      version: PROJECTION_VERSION,
+    });
+    const values = await metrics.getValues(ACCOUNT, bare);
+    expect(values.size).toBe(METRIC_VALUE_COUNT);
+    expect(values).toEqual(await metricValuesOf(context, bare));
+    // The others keep their damage sources.
+    const other = archived[0] ?? expect.unreachable();
+    expect((await metrics.getValues(ACCOUNT, other)).size).toBe(
+      await expectedValueCount(context, other),
+    );
+    expect((await metrics.getValues(ACCOUNT, other)).size).toBeGreaterThan(METRIC_VALUE_COUNT);
+    // A match with no matrix is not a problem: nothing is logged about it.
+    expect(linesOf(logger, 'Damage sources not read')).toEqual([]);
+    expect(linesOf(logger, 'Match could not be analysed')).toEqual([]);
+  });
+
+  it('keeps the metrics of a match whose damage matrix cannot be read', async () => {
+    const context = await setUp();
+    const { service, metrics, logger, archived } = context;
+    const broken = archived[1] ?? expect.unreachable('the history holds several archived matches');
+    await breakDamageMatrix(context, broken);
+
+    const report = await service.catchUp(ACCOUNT, RUN);
+
+    // The match is projected, not failed and not skipped: its metrics do not depend on the matrix.
+    expect(report).toEqual({ ...NOTHING, projected: archived.length });
+    await expect(metrics.getProjection(ACCOUNT, broken)).resolves.toMatchObject({
+      version: PROJECTION_VERSION,
+      failed: false,
+      playerBadge: expectedBadge(broken),
+    });
+    const values = await metrics.getValues(ACCOUNT, broken);
+    expect(values.size).toBe(METRIC_VALUE_COUNT);
+    expect(values).toEqual(await metricValuesOf(context, broken));
+    // The matches around it are not affected.
+    const other = archived[0] ?? expect.unreachable();
+    expect(await metrics.getValues(ACCOUNT, other)).toEqual(
+      await projectedValuesOf(context, other),
+    );
+    // One line at the info level, with the match and the place and the code of the problem, never a
+    // value of the archive.
+    expect(linesOf(logger, 'Damage sources not read')).toEqual([
+      {
+        level: 'info',
+        scope: 'projection',
+        message: 'Damage sources not read',
+        context: {
+          syncRunId: RUN,
+          matchId: broken,
+          issue: expect.stringMatching(BROKEN_MATRIX_ISSUE) as unknown,
+        },
+      },
+    ]);
+    expect(linesOf(logger, 'Match could not be analysed')).toEqual([]);
+    expect(linesOf(logger, 'Match not projected')).toEqual([]);
+    expect(JSON.stringify(logger.entries)).not.toContain(FAKE_OTHER_PLAYER);
+    expectNoAccountId(logger);
+    // The verdict is on the damage sources only: the match is not tried again.
+    await expect(metrics.listToProject(ACCOUNT, PROJECTION_VERSION)).resolves.toEqual([]);
+  });
+
+  it('tells a damage matrix that cannot be read once per run', async () => {
+    const context = await setUp();
+    const { service, metrics, logger, archived } = context;
+    const [, first, second] = archived;
+    await breakDamageMatrix(context, first ?? expect.unreachable());
+    await breakDamageMatrix(context, second ?? expect.unreachable());
+
+    const report = await service.catchUp(ACCOUNT, RUN);
+
+    // Both matches are projected, and the run tells about the first one only: a matrix that cannot
+    // be read is a change of the payload, which hits most matches, so a line for each would flood.
+    expect(report).toEqual({ ...NOTHING, projected: archived.length });
+    expect(linesOf(logger, 'Damage sources not read')).toMatchObject([
+      { level: 'info', context: { syncRunId: RUN, matchId: first } },
+    ]);
+    for (const matchId of [first, second]) {
+      expect((await metrics.getValues(ACCOUNT, matchId ?? expect.unreachable())).size).toBe(
+        METRIC_VALUE_COUNT,
+      );
+    }
+
+    // The next run tells again: it does not know what an earlier run said.
+    logger.entries.length = 0;
+    await metrics.deleteAccount(ACCOUNT);
+    await service.catchUp(ACCOUNT, 'run-0002');
+    expect(linesOf(logger, 'Damage sources not read')).toMatchObject([
+      { context: { syncRunId: 'run-0002', matchId: first } },
+    ]);
+  });
+
+  it('does not let the line about a damage matrix that cannot be read stop the projection', async () => {
+    const context = await setUp();
+    const { reader, metrics, details, archived } = context;
+    /** A logger that breaks the contract of the port: it throws on the line about the damage. */
+    class FussyLogger extends MemoryLogger {
+      override log(level: LogLevel, scope: string, message: string, logContext?: LogContext): void {
+        if (message === 'Damage sources not read') {
+          throw new Error('The log is full');
+        }
+        super.log(level, scope, message, logContext);
+      }
+    }
+    const logger = new FussyLogger();
+    const service = new ProjectionService({ reader, metrics, details, logger });
+    const broken = archived[1] ?? expect.unreachable('the history holds several archived matches');
+    await breakDamageMatrix(context, broken);
+
+    const report = await service.catchUp(ACCOUNT, RUN);
+
+    // The metrics of the match are not lost for a line of the log.
+    expect(report).toEqual({ ...NOTHING, projected: archived.length });
+    expect((await metrics.getValues(ACCOUNT, broken)).size).toBe(METRIC_VALUE_COUNT);
+    expect(linesOf(logger, 'Match not projected')).toEqual([]);
+  });
+
+  it.each([
+    { label: 'a bug', error: new TypeError('Cannot read properties of undefined') },
+    { label: 'a failure of the app', error: new AppError('storage', 'The disk failed') },
+  ])('skips a match whose damage matrix fails on $label', async ({ error }) => {
+    const context = await setUp();
+    const { service, metrics, logger, archived } = context;
+    const failing = archived[0] ?? expect.unreachable('the history holds archived matches');
+    // Only a matrix that is not what is expected is a verdict on the damage sources: any other error
+    // says nothing about the match, so it is not told as one and nothing is recorded.
+    vi.spyOn(damageMatrixReader, 'readDamageMatrix').mockImplementationOnce(() => {
+      throw error;
+    });
+
+    const report = await service.catchUp(ACCOUNT, RUN);
+
+    expect(report).toEqual({ ...NOTHING, projected: archived.length - 1, skipped: 1 });
+    await expect(metrics.getProjection(ACCOUNT, failing)).resolves.toBeNull();
+    expect(linesOf(logger, 'Match not projected')).toMatchObject([
+      { level: 'warn', context: { matchId: failing } },
+    ]);
+    expect(linesOf(logger, 'Damage sources not read')).toEqual([]);
+    // The next run tries it again, and projects it.
+    await expect(service.catchUp(ACCOUNT, 'run-0002')).resolves.toEqual({
+      ...NOTHING,
+      projected: 1,
+    });
   });
 
   it('projects an archive that lacks some stats', async () => {
@@ -446,7 +788,7 @@ describe('ProjectionService.catchUp', () => {
       version: PROJECTION_VERSION,
     });
     const values = await metrics.getValues(ACCOUNT, lacking);
-    expect(values.size).toBe(VALUE_COUNT);
+    expect(values.size).toBe(await expectedValueCount(context, lacking));
     for (const key of [
       'accuracy',
       'boss_damage_per_min',
@@ -511,7 +853,9 @@ describe('ProjectionService.catchUp', () => {
       failed: false,
       version: PROJECTION_VERSION,
     });
-    expect((await metrics.getValues(ACCOUNT, ranked)).size).toBe(VALUE_COUNT);
+    expect((await metrics.getValues(ACCOUNT, ranked)).size).toBe(
+      await expectedValueCount(context, ranked),
+    );
     expect(linesOf(logger, 'Projection stopped')).toEqual([]);
     expect(linesOf(logger, 'Match not projected')).toEqual([]);
   });
@@ -1048,7 +1392,7 @@ describe('ProjectionService.projectMatch', () => {
         projectedAt: PROJECTION_START + index * YIELD_STEP_MS,
       });
       await expect(metrics.getValues(ACCOUNT, matchId)).resolves.toEqual(
-        await registryValues(context, matchId),
+        await projectedValuesOf(context, matchId),
       );
     }
     // What was projected is exactly the habits of the match: the analysis reads these same matches.

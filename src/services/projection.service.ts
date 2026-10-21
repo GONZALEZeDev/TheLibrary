@@ -26,7 +26,11 @@
  * - the archive is projected: its values are stored, with the badge of the player, whether somebody
  *   left, and the version (`projected`). A metric the archive does not hold what it needs for is an
  *   unknown value (`null`), which is no failure; a metric that throws is the same, and it is told
- *   in the log, once for each metric in a run;
+ *   in the log, once for each metric in a run. The values are the metrics and, next to them, the
+ *   damage sources of the match (`../core/analysis/damage-sources`). A match with no damage matrix
+ *   has no damage source, which is no news; a match whose damage matrix is not what is expected
+ *   has none either, and it is told in the log, once in a run. Neither costs the match its metrics,
+ *   nor makes it fail: it is projected, and not projected again before the version changes;
  * - the analysis cannot read the match, since the archive does not hold what it expects of a match
  *   (`failed`): the match is stored as failed, with no values. That is a verdict on the match, which
  *   is not tried again before the version changes: downloading it again would give the same detail;
@@ -57,18 +61,21 @@
  *
  * @packageDocumentation
  */
+import { readDamageMatrix, type DamageMatrixRead } from '../core/analysis/damage-matrix';
+import { projectDamageSources } from '../core/analysis/damage-sources';
 import { PERSONAL_WINDOW } from '../core/analysis/insights/thresholds';
 import { buildMatchContext, type MatchContext } from '../core/analysis/match-context';
 import type { MetricKey } from '../core/analysis/metric';
 import { projectMetrics, PROJECTION_VERSION } from '../core/analysis/registry';
 import type { AccountId } from '../core/domain/account';
 import type { MatchId } from '../core/domain/match';
-import { isAppError, toAppError } from '../core/errors/app-error';
+import { isAppError, toAppError, type AppError } from '../core/errors/app-error';
+import type { ArchiveEnvelope } from '../core/match-detail/archive-envelope';
 import type { LogContext, Logger } from '../ports/logger.port';
 import type { ArchiveReaderService } from './archive-reader.service';
 import type { MatchDetailRepository } from './match-detail.repository';
 import { describeErrorForLog } from './match-detail-verdicts';
-import type { MetricsRepository } from './metrics.repository';
+import type { MetricsRepository, MetricValues } from './metrics.repository';
 
 /** What {@link ProjectionService} needs. */
 export interface ProjectionServiceDependencies {
@@ -122,7 +129,7 @@ const STOPPED_AT_ONCE: ProjectionReport = {
   stoppedBy: 'storage',
 };
 
-/** What a run counts as it goes, and the metrics it already told about. */
+/** What a run counts as it goes, and what it already told about. */
 interface RunState {
   projected: number;
   failed: number;
@@ -130,6 +137,20 @@ interface RunState {
   skipped: number;
   /** The keys of the metrics that were told as not computed in this run. */
   readonly toldKeys: Set<MetricKey>;
+  /** Whether this run told that a damage matrix could not be read. */
+  hasToldDamageNotRead: boolean;
+}
+
+/**
+ * The place and the code of the problem an `invalid_payload` error reports, as `<path>: <code>`:
+ * never a value of the payload, so it can be logged.
+ *
+ * @param error - The error of an archive that is not what is expected.
+ * @returns The issue, or `unknown` when the error carries none.
+ */
+function issueOf(error: AppError): string {
+  const { issue } = error.context;
+  return typeof issue === 'string' ? issue : 'unknown';
 }
 
 /**
@@ -312,7 +333,14 @@ export class ProjectionService {
     matchIds: readonly MatchId[],
     tags: LogContext,
   ): Promise<ProjectionReport> {
-    const run: RunState = { projected: 0, failed: 0, reset: 0, skipped: 0, toldKeys: new Set() };
+    const run: RunState = {
+      projected: 0,
+      failed: 0,
+      reset: 0,
+      skipped: 0,
+      toldKeys: new Set(),
+      hasToldDamageNotRead: false,
+    };
     let stoppedBy: ProjectionReport['stoppedBy'] = null;
     // The matches that failed one after the other, up to the one being projected.
     let failuresInARow = 0;
@@ -415,18 +443,21 @@ export class ProjectionService {
         new Map(),
       );
       run.failed += 1;
-      const { issue } = error.context;
       this.#logger.log('warn', LOG_SCOPE, 'Match could not be analysed', {
         ...tags,
         matchId,
-        issue: typeof issue === 'string' ? issue : 'unknown',
+        issue: issueOf(error),
       });
       return;
     }
 
-    const values = projectMetrics(context, (key, error) => {
+    // The metrics, then the damage sources next to them: their keys never meet (a damage key starts
+    // with the prefix of its family), so nothing is overwritten.
+    const metricValues = projectMetrics(context, (key, error) => {
       this.#logMetricFailure(run, tags, matchId, key, error);
     });
+    const damageValues = this.#projectDamageSources(run, tags, matchId, read.envelope);
+    const values: MetricValues = new Map([...metricValues, ...damageValues]);
     await this.#metrics.saveProjection(
       accountId,
       matchId,
@@ -477,6 +508,71 @@ export class ProjectionService {
       });
     } catch {
       // The logger promises not to throw; if it does, the metric is `null` all the same.
+    }
+  }
+
+  /**
+   * Work out the damage-source values of a match from its archive. A match with no damage matrix
+   * has none, and so has a match whose damage matrix is not what is expected (the payload changed,
+   * say): the metrics of the match do not depend on it, so the match is projected all the same,
+   * and the problem is told, once in a run.
+   *
+   * @param run - What the run counts, and what it told about.
+   * @param tags - What every line about a match holds besides its own fields: the run it belongs to.
+   * @param matchId - The match being projected.
+   * @param envelope - The decoded archive of the match.
+   * @returns The values by key; none when the damage sources cannot be read.
+   * @throws The error that is not about the content of the matrix (a bug): the match is not
+   *   projected, as for any failure that says nothing about the match.
+   */
+  #projectDamageSources(
+    run: RunState,
+    tags: LogContext,
+    matchId: MatchId,
+    envelope: ArchiveEnvelope,
+  ): ReadonlyMap<string, number> {
+    let read: DamageMatrixRead | null;
+    try {
+      read = readDamageMatrix(envelope);
+    } catch (error) {
+      // Only a matrix that is not what is expected is a verdict on the damage sources. Any other
+      // error is a bug, which must be seen as one instead of silently dropping the damage.
+      if (!isAppError(error) || error.kind !== 'invalid_payload') {
+        throw error;
+      }
+      this.#logDamageNotRead(run, tags, matchId, error);
+      return new Map();
+    }
+    // No matrix: some matches come without one, which is no news.
+    return read === null ? new Map() : projectDamageSources(read);
+  }
+
+  /**
+   * Tell that the damage sources of a match could not be read, the first time it happens in a run.
+   * A change of the payload hits most matches, so the log would otherwise hold a line for each
+   * match. The line holds the place and the code of the problem, never a value of the archive.
+   *
+   * It never throws, like the line about a metric that failed: telling about the damage sources is
+   * not worth losing the metrics of a match, which are computed already.
+   *
+   * @param run - What the run counts, and what it told about.
+   * @param tags - What every line about a match holds besides its own fields: the run it belongs to.
+   * @param matchId - The match being projected.
+   * @param error - The `invalid_payload` error of the damage matrix.
+   */
+  #logDamageNotRead(run: RunState, tags: LogContext, matchId: MatchId, error: AppError): void {
+    try {
+      if (run.hasToldDamageNotRead) {
+        return;
+      }
+      run.hasToldDamageNotRead = true;
+      this.#logger.log('info', LOG_SCOPE, 'Damage sources not read', {
+        ...tags,
+        matchId,
+        issue: issueOf(error),
+      });
+    } catch {
+      // The logger promises not to throw; if it does, the match has no damage sources all the same.
     }
   }
 

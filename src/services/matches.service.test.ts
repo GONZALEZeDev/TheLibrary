@@ -15,6 +15,7 @@ import {
   matchSummary,
   TEST_ACCOUNT_ID,
   testAccountId,
+  testMatchId,
 } from '../test/test-data';
 import { MatchesRepository } from './matches.repository';
 import { MatchesService } from './matches.service';
@@ -190,6 +191,99 @@ describe('MatchesService', () => {
 
     await expect(detailStatusesOf(early)).resolves.toEqual({ 1: 'pending' });
     await expect(detailStatusesOf(late)).resolves.toEqual({ 1: null });
+  });
+
+  it('getMatch reads one match of the linked account', async () => {
+    const repository = new MatchesRepository(createTestDatabase());
+    const wanted = matchSummary({ matchId: 2, startTime: startedDaysAgo(2), kills: 11 });
+    await repository.upsertMany([
+      matchSummary({ matchId: 1, startTime: startedDaysAgo(1) }),
+      wanted,
+      matchSummary({ matchId: 3, startTime: startedDaysAgo(3) }),
+    ]);
+    const service = new MatchesService(accountSource(TEST_ACCOUNT_ID), repository, () => NOW);
+
+    // The match as the list gives it: its summary, and where its detail stands.
+    await expect(service.getMatch(testMatchId(2))).resolves.toEqual({
+      ...wanted,
+      detailStatus: 'pending',
+    });
+  });
+
+  it('getMatch answers null without an account', async () => {
+    const repository = new MatchesRepository(createTestDatabase());
+    // The match is stored, but no account is linked to own it.
+    await repository.upsertMany([matchSummary({ matchId: 1 })]);
+
+    await expect(
+      new MatchesService(accountSource(null), repository).getMatch(testMatchId(1)),
+    ).resolves.toBeNull();
+  });
+
+  it("getMatch answers null for an unknown match or another account's match", async () => {
+    const repository = new MatchesRepository(createTestDatabase());
+    await repository.upsertMany([
+      matchSummary({ matchId: 1 }),
+      matchSummary({ matchId: 2, accountId: testAccountId(42) }),
+    ]);
+    const service = new MatchesService(accountSource(TEST_ACCOUNT_ID), repository, () => NOW);
+
+    await expect(service.getMatch(testMatchId(9))).resolves.toBeNull();
+    await expect(service.getMatch(testMatchId(2))).resolves.toBeNull();
+  });
+
+  it('getMatch gives the detail status the list gives', async () => {
+    const database = createTestDatabase();
+    const repository = new MatchesRepository(database);
+    const recent = startedDaysAgo(1);
+    await repository.upsertMany([
+      // Eligible, with each status of the queue but `pending`, which is the default.
+      matchSummary({ matchId: 1, startTime: recent }),
+      matchSummary({ matchId: 2, startTime: recent }),
+      matchSummary({ matchId: 3, startTime: recent }),
+      matchSummary({ matchId: 4, startTime: recent }),
+      matchSummary({ matchId: 5, startTime: recent }),
+      // Without detail: another hero, Street Brawl, a private lobby, older than 90 days.
+      matchSummary({ matchId: 6, startTime: recent, heroId: PAIGE_HERO_ID + 1 }),
+      matchSummary({ matchId: 7, startTime: recent, gameMode: 4 }),
+      matchSummary({ matchId: 8, startTime: recent, matchMode: 2 }),
+      matchSummary({ matchId: 9, startTime: startedDaysAgo(91) }),
+      // Archived while recent, and since out of the 90-day window.
+      matchSummary({ matchId: 10, startTime: startedDaysAgo(120) }),
+    ]);
+    await setDetailStatus(database, 2, 'retry');
+    await setDetailStatus(database, 3, 'ready');
+    await setDetailStatus(database, 4, 'unavailable');
+    await setDetailStatus(database, 5, 'invalid');
+    await setDetailStatus(database, 8, 'retry');
+    await setDetailStatus(database, 10, 'ready');
+    const service = new MatchesService(accountSource(TEST_ACCOUNT_ID), repository, () => NOW);
+
+    const listed = (await service.listRecent(100)).matches;
+
+    // Every case of the list, so the one rule is shared: a match is the same item read either way.
+    expect(listed).toHaveLength(10);
+    for (const item of listed) {
+      await expect(service.getMatch(item.matchId)).resolves.toEqual(item);
+    }
+    // Guard against a vacuous comparison: the cases do differ.
+    expect(new Set(listed.map((item) => item.detailStatus))).toEqual(
+      new Set(['pending', 'retry', 'ready', 'unavailable', 'invalid', null]),
+    );
+  });
+
+  it('getMatch does not take an unreadable linked account for no account', async () => {
+    const unreadable: AccountSource = {
+      currentAccountId: () =>
+        Promise.reject(new AppError('storage', 'The linked account is invalid')),
+    };
+    const service = new MatchesService(
+      unreadable,
+      new MatchesRepository(createTestDatabase()),
+      () => NOW,
+    );
+
+    await expect(service.getMatch(testMatchId(1))).rejects.toMatchObject({ kind: 'storage' });
   });
 });
 

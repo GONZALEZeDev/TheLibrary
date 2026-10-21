@@ -19,7 +19,7 @@
 import { z } from 'zod';
 import { parseAccountId, type AccountId } from '../core/domain/account';
 import type { HeroId } from '../core/domain/hero';
-import { matchIdSchema, type MatchSummary } from '../core/domain/match';
+import { matchIdSchema, type MatchId, type MatchSummary } from '../core/domain/match';
 import type { PeriodTotals } from '../core/domain/period-stats';
 import { AppError } from '../core/errors/app-error';
 import {
@@ -205,15 +205,35 @@ export class MatchesRepository {
         ),
       'Could not read the matches',
     );
-    return rows.map((row) => {
-      const parsed = matchRowSchema.safeParse(row);
-      if (!parsed.success) {
-        throw new AppError('storage', 'A stored match is invalid', {
-          context: { issue: parsed.error.issues[0]?.message ?? 'unknown' },
-        });
-      }
-      return toStoredMatch(parsed.data, accountId);
-    });
+    return rows.map((row) => parseStoredMatch(row, accountId));
+  }
+
+  /**
+   * One match of a player, by its id.
+   *
+   * It reads the same columns as {@link MatchesRepository.listRecent} and validates the row the
+   * same way, so a match is the same whether the list or this call gives it.
+   *
+   * @param accountId - The player.
+   * @param matchId - The match.
+   * @returns The match with where its detail stands, or `null` when the player has no such match
+   *   (an unknown id, or the match of another player).
+   * @throws AppError of kind `storage` when the database fails or holds an invalid row (a match id
+   *   or a detail status the app does not know included).
+   */
+  async get(accountId: AccountId, matchId: MatchId): Promise<StoredMatch | null> {
+    const rows = await this.#run(
+      () =>
+        this.#database.select(
+          `SELECT ${LIST_COLUMNS.join(', ')}
+           FROM matches WHERE account_id = $1 AND match_id = $2`,
+          [accountId, matchId],
+        ),
+      'Could not read the match',
+    );
+    // The pair (account, match) is the primary key of the table: there is one row at most.
+    const [row] = rows;
+    return row === undefined ? null : parseStoredMatch(row, accountId);
   }
 
   /**
@@ -348,6 +368,25 @@ function toParams(match: MatchSummary, syncedAt: number): SqlValue[] {
     match.rankDelta,
     syncedAt,
   ];
+}
+
+/**
+ * Validate a row read with {@link LIST_COLUMNS} and turn it into a stored match.
+ *
+ * @param row - The row, as the database gave it.
+ * @param accountId - The player the row was read for.
+ * @returns The stored match.
+ * @throws AppError of kind `storage` when the row is invalid. The error names the first problem
+ *   found, never the value that caused it.
+ */
+function parseStoredMatch(row: unknown, accountId: AccountId): StoredMatch {
+  const parsed = matchRowSchema.safeParse(row);
+  if (!parsed.success) {
+    throw new AppError('storage', 'A stored match is invalid', {
+      context: { issue: parsed.error.issues[0]?.message ?? 'unknown' },
+    });
+  }
+  return toStoredMatch(parsed.data, accountId);
 }
 
 /**

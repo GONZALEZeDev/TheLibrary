@@ -8,7 +8,9 @@
  * of a match, for a rank and a match length) is the cache of `./benchmark.service`. The phase table
  * is the only part read from the archive of the match (`./archive-reader.service`): the totals of
  * the souls, the damage and the kills in each phase, and their share of the team. This service reads
- * all of it; the comparisons and the view types are in `./analysis-view`, a pure module.
+ * all of it; the comparisons and the view types are in `./analysis-view`, a pure module. Where a
+ * match stands before any of it is read (the states below) is decided by `./analysis-subject`,
+ * which the damage view of the match page shares.
  *
  * Every archived match is analysed after each synchronisation: at the end of its run, the
  * synchronisation projects every archived match that has no projection of the current version. A
@@ -50,14 +52,18 @@
  * @packageDocumentation
  */
 import { cohortRankFor, durationWindowOf, type Cohort } from '../core/analysis/cohort';
-import { PERSONAL_WINDOW } from '../core/analysis/insights/thresholds';
+import { PREVIOUS_LOOKUP } from '../core/analysis/insights/thresholds';
 import { buildMatchContext, type MatchContext } from '../core/analysis/match-context';
 import { PROJECTION_VERSION } from '../core/analysis/registry';
-import type { AccountId } from '../core/domain/account';
 import type { MatchId } from '../core/domain/match';
 import { AppError, isAppError } from '../core/errors/app-error';
 import type { AccountSource } from '../ports/account-source.port';
 import type { LogContext, Logger } from '../ports/logger.port';
+import {
+  analysisSubjectOf,
+  type AnalysisSubject,
+  type AnalysisSubjectDependencies,
+} from './analysis-subject';
 import { buildAnalysis, type MatchAnalysisView } from './analysis-view';
 import type { ArchiveReaderService } from './archive-reader.service';
 import type { BenchmarkService, CohortRefresh } from './benchmark.service';
@@ -106,44 +112,8 @@ export interface AnalysisServiceDependencies {
   readonly logger: Logger;
 }
 
-/**
- * What a match is before anything is read for its analysis: a state that says there is nothing to
- * compare yet (the kinds of {@link MatchAnalysisView} that are not `ready`), or the account and the
- * projection to go on from. A `pending` match carries the account it is pending for, since that is
- * the account the projection is made for.
- */
-type Subject =
-  | { readonly kind: 'not_analysed' | 'failed' }
-  | { readonly kind: 'pending'; readonly accountId: AccountId }
-  | {
-      readonly kind: 'projected';
-      readonly accountId: AccountId;
-      readonly projection: StoredProjection;
-    };
-
-/**
- * What `#subjectOf` needs to find projected, with the current version of the metrics, to call a
- * match `projected` rather than `pending`:
- * - `match`: the match itself. It tells whether the analysis of a match that was just projected can
- *   be shown: it can, even when an earlier match of its window could not be projected;
- * - `window`: the match, and every earlier match of the window its habits are made of (the ones
- *   `MetricsRepository.listToProjectUpTo` lists). It tells a page whether to ask for the analysis:
- *   a match projected as part of the window of a later match has only the part of its own window
- *   that the two windows share.
- */
-type RequiredProjection = 'match' | 'window';
-
 /** The scope of the log line of this service. */
 const LOG_SCOPE = 'analysis';
-
-/**
- * How many earlier matches are read to find the habits of the player: five times
- * {@link PERSONAL_WINDOW}. The habits of a metric are its {@link PERSONAL_WINDOW} most recent known
- * values, and a metric is often unknown (the late game of a short match, the lane of a player the
- * archive gives none), so reading only the last 20 matches would leave such a metric with too few
- * values to compare with.
- */
-const PREVIOUS_LOOKUP = 5 * PERSONAL_WINDOW;
 
 /**
  * The cohort a match is compared with: the rank the player had in it (the current rank of the
@@ -162,9 +132,9 @@ function cohortOf(projection: StoredProjection, rank: LinkedAccountRank | null):
 
 /** Compares the matches of the linked account with the community and with the player's habits. */
 export class AnalysisService {
-  readonly #accountSource: AccountSource;
+  /** What {@link analysisSubjectOf} reads to find where a match stands (the gate the damage view shares). */
+  readonly #subjectDeps: AnalysisSubjectDependencies;
   readonly #metrics: MetricsRepository;
-  readonly #details: MatchDetailRepository;
   readonly #reader: ArchiveReaderService;
   readonly #benchmarks: BenchmarkService;
   readonly #accounts: LinkedAccountRepository;
@@ -197,9 +167,12 @@ export class AnalysisService {
    * @param dependencies - See {@link AnalysisServiceDependencies}.
    */
   constructor(dependencies: AnalysisServiceDependencies) {
-    this.#accountSource = dependencies.accountSource;
+    this.#subjectDeps = {
+      accountSource: dependencies.accountSource,
+      details: dependencies.details,
+      metrics: dependencies.metrics,
+    };
     this.#metrics = dependencies.metrics;
-    this.#details = dependencies.details;
     this.#reader = dependencies.reader;
     this.#benchmarks = dependencies.benchmarks;
     this.#accounts = dependencies.accounts;
@@ -225,7 +198,7 @@ export class AnalysisService {
    *   error is a bug and is not hidden behind a state.
    */
   async getMatchAnalysis(matchId: MatchId): Promise<MatchAnalysisView> {
-    return this.#viewOf(matchId, await this.#subjectOf(matchId, 'window'));
+    return this.#viewOf(matchId, await analysisSubjectOf(this.#subjectDeps, matchId, 'window'));
   }
 
   /**
@@ -309,7 +282,7 @@ export class AnalysisService {
    * @throws AppError of kind `storage` when the database fails. The download itself never rejects.
    */
   async refreshCommunity(matchId: MatchId): Promise<CohortRefresh> {
-    const subject = await this.#subjectOf(matchId, 'window');
+    const subject = await analysisSubjectOf(this.#subjectDeps, matchId, 'window');
     if (subject.kind !== 'projected') {
       return 'fresh';
     }
@@ -361,13 +334,13 @@ export class AnalysisService {
    *   be read or the compressor is broken, or when the projection did not store the match.
    */
   async #analyseInSection(matchId: MatchId): Promise<MatchAnalysisView> {
-    let subject = await this.#subjectOf(matchId, 'window');
+    let subject = await analysisSubjectOf(this.#subjectDeps, matchId, 'window');
     if (subject.kind === 'pending') {
       await this.#projection.projectMatch(subject.accountId, matchId);
       // The window is not looked at again: an earlier match the projection keeps skipping would
       // otherwise fail the analysis of a match that is projected, or answer `pending`, which the
       // page would ask for again.
-      subject = await this.#subjectOf(matchId, 'match');
+      subject = await analysisSubjectOf(this.#subjectDeps, matchId, 'match');
       if (subject.kind === 'pending') {
         throw new AppError(
           'storage',
@@ -384,12 +357,12 @@ export class AnalysisService {
    * the cache of the community data.
    *
    * @param matchId - The match.
-   * @param subject - Where the match stands, from `#subjectOf`.
+   * @param subject - Where the match stands, from {@link analysisSubjectOf}.
    * @returns The view, see {@link AnalysisService.getMatchAnalysis}.
    * @throws AppError of kind `storage` when the database fails, or when the file of the archive
    *   cannot be read or the compressor is broken. Any other error is a bug.
    */
-  async #viewOf(matchId: MatchId, subject: Subject): Promise<MatchAnalysisView> {
+  async #viewOf(matchId: MatchId, subject: AnalysisSubject): Promise<MatchAnalysisView> {
     if (subject.kind !== 'projected') {
       return { kind: subject.kind };
     }
@@ -432,57 +405,6 @@ export class AnalysisService {
       kind: 'ready',
       analysis: buildAnalysis({ projection, context, values, previous, cohortRead }),
     };
-  }
-
-  /**
-   * Find where a match stands before anything heavy is read for it: the one gate that
-   * {@link AnalysisService.getMatchAnalysis}, {@link AnalysisService.analyseMatch} and
-   * {@link AnalysisService.refreshCommunity} share, so that a match is projected, or downloaded
-   * community data for, only when it can be analysed.
-   *
-   * The window is looked at last, for a match that is projected and not failed only: it costs the
-   * two statements of `MetricsRepository.listToProjectUpTo`, and a failed match has no analysis
-   * for habits to complete.
-   *
-   * @param matchId - The match.
-   * @param required - What has to be projected for the match not to be `pending`, see
-   *   {@link RequiredProjection}.
-   * @returns `not_analysed` without an account or for a match whose detail is not archived;
-   *   `pending` (with the account it is pending for) without a projection of the current version,
-   *   or, when `required` is `window`, while an earlier match of its window lacks one; `failed` for
-   *   a projection that could not read the match; the account and the projection otherwise.
-   * @throws AppError of kind `storage` when the database fails.
-   */
-  async #subjectOf(matchId: MatchId, required: RequiredProjection): Promise<Subject> {
-    const accountId = await this.#accountSource.currentAccountId();
-    if (accountId === null) {
-      return { kind: 'not_analysed' };
-    }
-    const detail = await this.#details.getDetail(accountId, matchId);
-    if (detail?.status !== 'ready') {
-      return { kind: 'not_analysed' };
-    }
-    const projection = await this.#metrics.getProjection(accountId, matchId);
-    if (projection?.version !== PROJECTION_VERSION) {
-      return { kind: 'pending', accountId };
-    }
-    if (projection.failed) {
-      return { kind: 'failed' };
-    }
-    if (required === 'window') {
-      // The match itself is projected, so what is listed is the window: the earlier matches the
-      // analysis of this match would project.
-      const toProject = await this.#metrics.listToProjectUpTo(
-        accountId,
-        matchId,
-        PROJECTION_VERSION,
-        PERSONAL_WINDOW,
-      );
-      if (toProject.length > 0) {
-        return { kind: 'pending', accountId };
-      }
-    }
-    return { kind: 'projected', accountId, projection };
   }
 
   /**

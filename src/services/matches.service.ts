@@ -1,5 +1,6 @@
 /**
- * Match history use cases: list the matches of the linked account, and sum up a period of them.
+ * Match history use cases: list the matches of the linked account, read one of them, and sum up a
+ * period of them.
  *
  * The account is resolved here, not by the caller, so the interface never passes account ids
  * around (and never puts them in query keys, which are logged when a query fails).
@@ -7,7 +8,7 @@
  * @packageDocumentation
  */
 import type { HeroId } from '../core/domain/hero';
-import type { MatchSummary } from '../core/domain/match';
+import type { MatchId, MatchSummary } from '../core/domain/match';
 import { periodStartTime, type Period } from '../core/domain/period';
 import { periodStats, type PeriodStats } from '../core/domain/period-stats';
 import { isDetailEligible, type DetailStatus } from '../core/match-detail/detail-status';
@@ -83,6 +84,25 @@ export class MatchesService {
     // The clock is read once for the whole list, so that every match is judged at the same instant.
     const now = this.#now();
     return { accountLinked: true, total, matches: matches.map((match) => toListItem(match, now)) };
+  }
+
+  /**
+   * One match of the linked account, as the list gives it.
+   *
+   * @param matchId - The match.
+   * @returns The match with its detail status (the one {@link MatchesService.listRecent} computes),
+   *   or `null` when no account is linked or the account has no such match: an unknown id and the
+   *   match of another account are the same answer.
+   * @throws AppError of kind `storage` when the database fails, or when the linked account cannot be
+   *   read: an unreadable account is never reported as "no match".
+   */
+  async getMatch(matchId: MatchId): Promise<MatchListItem | null> {
+    const accountId = await this.#accountSource.currentAccountId();
+    if (accountId === null) {
+      return null;
+    }
+    const match = await this.#repository.get(accountId, matchId);
+    return match === null ? null : toListItem(match, this.#now());
   }
 
   /**

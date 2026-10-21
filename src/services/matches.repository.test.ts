@@ -11,6 +11,7 @@ import {
   matchSummary,
   TEST_ACCOUNT_ID,
   testAccountId,
+  testMatchId,
 } from '../test/test-data';
 import { MatchesRepository } from './matches.repository';
 
@@ -198,6 +199,78 @@ describe('MatchesRepository', () => {
       // The error names the problem; the stored value stays out of the logs.
       context: { issue: expect.not.stringContaining('corrupt-status') as unknown },
     });
+  });
+
+  it('reads one stored match', async () => {
+    const database = createTestDatabase();
+    const repository = new MatchesRepository(database);
+    // A match with nothing in common with its neighbours, so that a wrong row would show.
+    const wanted = matchSummary({
+      accountId: ACCOUNT_ID,
+      matchId: 100000002,
+      startTime: 2_000,
+      won: false,
+      kills: 9,
+      rankDelta: null,
+    });
+    await repository.upsertMany([
+      matchSummary({ accountId: ACCOUNT_ID, matchId: 100000001, startTime: 1_000 }),
+      wanted,
+      matchSummary({ accountId: ACCOUNT_ID, matchId: 100000003, startTime: 3_000 }),
+    ]);
+    // The detail queue writes the status; the history never does.
+    await database.execute(`UPDATE matches SET detail_status = 'ready' WHERE match_id = $1`, [
+      wanted.matchId,
+    ]);
+
+    await expect(repository.get(ACCOUNT_ID, wanted.matchId)).resolves.toEqual({
+      ...wanted,
+      detailStatus: 'ready',
+    });
+  });
+
+  it("answers null for another account's match or an unknown one", async () => {
+    const repository = new MatchesRepository(createTestDatabase());
+    await repository.upsertMany([
+      // Only the other account has this match.
+      matchSummary({ accountId: OTHER_ACCOUNT_ID, matchId: 100000001 }),
+      // Both accounts have this one (the key of a match is the pair), with different numbers.
+      matchSummary({ accountId: ACCOUNT_ID, matchId: 100000002, kills: 1 }),
+      matchSummary({ accountId: OTHER_ACCOUNT_ID, matchId: 100000002, kills: 2 }),
+    ]);
+
+    await expect(repository.get(ACCOUNT_ID, testMatchId(100000001))).resolves.toBeNull();
+    await expect(repository.get(ACCOUNT_ID, testMatchId(100000009))).resolves.toBeNull();
+    // The match two accounts have is read for the account asked, never the other's.
+    await expect(repository.get(ACCOUNT_ID, testMatchId(100000002))).resolves.toMatchObject({
+      accountId: ACCOUNT_ID,
+      kills: 1,
+    });
+    await expect(repository.get(OTHER_ACCOUNT_ID, testMatchId(100000001))).resolves.not.toBeNull();
+  });
+
+  it('reports an invalid stored match as a storage error when it reads one', async () => {
+    const database = createTestDatabase();
+    const repository = new MatchesRepository(database);
+    await repository.upsertMany([matchSummary({ accountId: ACCOUNT_ID, matchId: 100000001 })]);
+    // A value the app cannot read: SQLite integers go beyond the safe integers of JavaScript.
+    await database.execute(`UPDATE matches SET kills = 9007199254740993`);
+
+    await expect(repository.get(ACCOUNT_ID, testMatchId(100000001))).rejects.toMatchObject({
+      kind: 'storage',
+      message: 'A stored match is invalid',
+    });
+  });
+
+  it('reports a failure of the database as a storage error when it reads one match', async () => {
+    const broken: Database = {
+      execute: () => Promise.reject(new Error('disk I/O error')),
+      select: () => Promise.reject(new Error('disk I/O error')),
+    };
+
+    await expect(
+      new MatchesRepository(broken).get(ACCOUNT_ID, testMatchId(100000001)),
+    ).rejects.toMatchObject({ kind: 'storage', cause: new Error('disk I/O error') });
   });
 
   it('deletes every match of an account and only those', async () => {

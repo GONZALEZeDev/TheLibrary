@@ -23,8 +23,10 @@ import { ArchiveReaderService } from './archive-reader.service';
 import { BenchmarkService } from './benchmark.service';
 import { DatabaseMaintenanceRepository } from './database-maintenance.repository';
 import { DeadlockApiService } from './deadlock-api.service';
+import { GameAssetService } from './game-asset.service';
 import { HeroCatalogService } from './hero-catalog.service';
 import { LinkedAccountRepository } from './linked-account.repository';
+import { MatchBreakdownService } from './match-breakdown.service';
 import { MatchDetailRepository } from './match-detail.repository';
 import { MatchDetailService } from './match-detail.service';
 import { MatchesRepository } from './matches.repository';
@@ -162,6 +164,27 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     exclusive: sync,
     logger,
   });
+  // The hero and the item catalogues name what the match page shows; they share the cache table
+  // and the asset budget, and the breakdown below reads them through the very instances the UI uses.
+  const heroes = new HeroCatalogService(linkedAccounts, api, apiCache, logger, now);
+  const assets = new GameAssetService({
+    accountSource: linkedAccounts,
+    api,
+    cache: apiCache,
+    logger,
+    now,
+  });
+  // Tells the damage of a match by source, and its build, from the projections stored, the archive
+  // (through the very `reader` above) and the two catalogues.
+  const breakdown = new MatchBreakdownService({
+    accountSource: linkedAccounts,
+    details: detailRepository,
+    metrics,
+    reader,
+    heroes,
+    assets,
+    logger,
+  });
   // Deletes the data of an account from the very instances the other services work with, so that
   // nothing of an account stays in a repository, the archive or the memory of the detail queue.
   const accountData = new AccountDataService({
@@ -199,10 +222,12 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     logger,
     settings: new SettingsService(settingsStore, logger),
     matches: new MatchesService(linkedAccounts, matches, now),
-    heroes: new HeroCatalogService(linkedAccounts, api, apiCache, logger, now),
+    heroes,
+    assets,
     details,
     sync,
     account,
     analysis,
+    breakdown,
   };
 }

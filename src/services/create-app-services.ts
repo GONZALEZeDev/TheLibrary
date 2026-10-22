@@ -25,6 +25,7 @@ import { DatabaseMaintenanceRepository } from './database-maintenance.repository
 import { DeadlockApiService } from './deadlock-api.service';
 import { GameAssetService } from './game-asset.service';
 import { HeroCatalogService } from './hero-catalog.service';
+import { ItemBenchmarkService } from './item-benchmark.service';
 import { LinkedAccountRepository } from './linked-account.repository';
 import { MatchBreakdownService } from './match-breakdown.service';
 import { MatchDetailRepository } from './match-detail.repository';
@@ -34,6 +35,7 @@ import { MatchesService } from './matches.service';
 import { MetricsRepository } from './metrics.repository';
 import { PlayerRankService } from './player-rank.service';
 import { ProjectionService } from './projection.service';
+import { ReviewService } from './review.service';
 import { SettingsService } from './settings.service';
 import { SteamProfileService } from './steam-profile.service';
 import { SteamSignInService } from './steam-sign-in.service';
@@ -192,6 +194,26 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     assets,
     logger,
   });
+  // Sums up the last matches against the tier above and the matches before them, from the stored
+  // projections, the community data of the very `benchmarks` above and the catalogues. The item
+  // statistics of the tier above are only read and downloaded by the review, so `itemBenchmarks` is
+  // not one of the services: it shares the one `api` (and so its budgets and pause) and the cache.
+  const review = new ReviewService({
+    accountSource: linkedAccounts,
+    accounts: linkedAccounts,
+    metrics,
+    benchmarks,
+    itemBenchmarks: new ItemBenchmarkService({
+      api,
+      cache: apiCache,
+      accountSource: linkedAccounts,
+      logger,
+      now,
+    }),
+    assets,
+    heroes,
+    logger,
+  });
   // Deletes the data of an account from the very instances the other services work with, so that
   // nothing of an account stays in a repository, the archive or the memory of the detail queue.
   const accountData = new AccountDataService({
@@ -235,5 +257,6 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     account,
     analysis,
     breakdown,
+    review,
   };
 }

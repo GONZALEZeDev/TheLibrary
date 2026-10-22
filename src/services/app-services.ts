@@ -14,6 +14,7 @@ import type { HeroCatalogService } from './hero-catalog.service';
 import type { MatchBreakdownService } from './match-breakdown.service';
 import type { MatchDetailService } from './match-detail.service';
 import type { MatchesService } from './matches.service';
+import type { ReviewService } from './review.service';
 import type { SettingsService } from './settings.service';
 import type { SyncService } from './sync.service';
 
@@ -37,4 +38,6 @@ export interface AppServices {
   readonly analysis: AnalysisService;
   /** Breakdown of the Paige matches: the damage by source with its build, read from the archive. */
   readonly breakdown: MatchBreakdownService;
+  /** Review of the last Paige matches: the comparison with the tier above and with the matches before. */
+  readonly review: ReviewService;
 }

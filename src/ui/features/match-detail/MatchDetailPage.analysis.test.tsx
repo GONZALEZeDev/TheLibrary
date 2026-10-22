@@ -835,7 +835,9 @@ describe('MatchDetailPage analysis start', () => {
     const kda = families.flatMap((family) => family.rows).find((row) => row.key === 'kda');
     expect(kda?.personal?.count).toBe(PERSONAL_WINDOW);
     await findComparison();
-  });
+    // It archives a long history and analyses two full windows: about 2 s alone, more than the
+    // default 5 s when the whole suite runs in parallel.
+  }, 30_000);
 
   it('starts the analysis again on a page left open while the account changes', async () => {
     const strings = ANALYSING_STRINGS.en;

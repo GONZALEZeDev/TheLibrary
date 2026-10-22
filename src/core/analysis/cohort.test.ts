@@ -8,7 +8,6 @@ import { describe, expect, it } from 'vitest';
 import { present } from '../../test/analysis-context';
 import {
   DURATION_WINDOWS,
-  RANK_TIER_NAMES,
   badgeBounds,
   cohortKey,
   cohortRankFor,
@@ -102,26 +101,6 @@ describe('badgeBounds', () => {
     expect(badgeBounds(4)).toEqual({ min: 41, max: 46 });
     expect(badgeBounds(1)).toEqual({ min: 11, max: 16 });
     expect(badgeBounds(11)).toEqual({ min: 111, max: 116 });
-  });
-});
-
-describe('RANK_TIER_NAMES', () => {
-  it('names the twelve tiers, indexed by tier', () => {
-    expect(RANK_TIER_NAMES).toEqual([
-      'Obscurus',
-      'Initiate',
-      'Seeker',
-      'Acolyte',
-      'Sentinel',
-      'Mystic',
-      'Ritualist',
-      'Emissary',
-      'Oracle',
-      'Phantom',
-      'Ascendant',
-      'Eternus',
-    ]);
-    expect(RANK_TIER_NAMES[4]).toBe('Sentinel');
   });
 });
 

@@ -596,6 +596,33 @@ describe('MatchBreakdownService', () => {
       expect((await context.breakdown.getDamageTab(context.newest)).kind).toBe('ready');
     });
 
+    it('answers catalogue_unavailable when the hero catalogue cannot be read', async () => {
+      const down = new Set([heroesRequest().url]);
+      const context = await setUpWithUrlsDown(down);
+
+      await expect(context.breakdown.getDamageTab(context.newest)).resolves.toEqual({
+        kind: 'catalogue_unavailable',
+      });
+
+      // Without the loadout of Paige, the sources cannot be told apart: one line for the call, at
+      // `info`, like a missing item catalogue.
+      const lines = breakdownLogs(context);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatchObject({
+        level: 'info',
+        scope: LOG_SCOPE,
+        message: 'A catalogue of the game could not be read',
+        context: { matchId: context.newest, kind: 'network' },
+      });
+      expect(JSON.stringify(lines)).not.toContain(String(ACCOUNT));
+
+      // The state is not kept: once the catalogue can be read again, so is the tab. The budget of
+      // the catalogue requests (two a second) was spent by the first call.
+      down.clear();
+      context.clock.now += SECOND_MS;
+      expect((await context.breakdown.getDamageTab(context.newest)).kind).toBe('ready');
+    });
+
     it('answers catalogue_unavailable when the hero catalogue gives Paige no loadout', async () => {
       const fixtureApi = createApi();
       // Paige's ultimate is missing: a partial loadout would classify the sources wrongly.
@@ -771,6 +798,8 @@ describe('MatchBreakdownService', () => {
         kind: 'unreadable',
       });
 
+      // A match that cannot be shown downloads nothing: the archive is read before the catalogues.
+      expect(assetRequests(context)).toEqual([]);
       // The detail view explains the archive and offers to download it again; this view does not
       // touch the match.
       await expect(context.details.getDetail(ACCOUNT, context.newest)).resolves.toMatchObject({
@@ -795,6 +824,8 @@ describe('MatchBreakdownService', () => {
         kind: 'unreadable',
       });
 
+      // A match that cannot be shown downloads nothing: its items are read before the catalogues.
+      expect(assetRequests(context)).toEqual([]);
       // One warning for the match, with the place and the kind of the problem, never a value.
       const lines = breakdownLogs(context);
       expect(lines).toEqual([
@@ -823,6 +854,18 @@ describe('MatchBreakdownService', () => {
       await expect(context.breakdown.getDamageTab(context.newest)).rejects.toMatchObject({
         kind: 'storage',
       });
+    });
+
+    it('is unreadable rather than catalogue_unavailable when neither the archive nor a catalogue can be read', async () => {
+      const context = await setUpWithUrlsDown(new Set([heroesRequest().url, itemsRequest().url]));
+      await context.archiveStore.removeEntry(accountFolderName(ACCOUNT));
+
+      // The archive is read first: the state is the archive's, and no catalogue is asked for.
+      await expect(context.breakdown.getDamageTab(context.newest)).resolves.toEqual({
+        kind: 'unreadable',
+      });
+      expect(assetRequests(context)).toEqual([]);
+      expect(breakdownLogs(context)).toEqual([]);
     });
   });
 
@@ -882,8 +925,13 @@ describe('MatchBreakdownService', () => {
         expect(trackedRows).toHaveLength(1);
         expect(trackedRows[0]).toMatchObject({ heroId: PAIGE_HERO_ID, heroName: 'Paige' });
         expect(trackedRows[0]?.heroImageUrl).not.toBeNull();
-        // The other players of the match are people: nothing on a row says who they are.
-        expect(JSON.stringify(view)).not.toMatch(/account/i);
+        // The other players of the match are people: nothing on a row says who they are, neither
+        // by name nor by value.
+        const text = JSON.stringify(view);
+        expect(text).not.toMatch(/account/i);
+        for (const raw of info.players) {
+          expect(text).not.toContain(String(raw.account_id));
+        }
       }
 
       // The order above is the tracked team's, not the lowest number's: both teams were tracked.

@@ -16,6 +16,26 @@ import {
   rankName,
 } from './rank';
 
+describe('RANK_TIER_NAMES', () => {
+  it('names the twelve tiers, indexed by tier', () => {
+    expect(RANK_TIER_NAMES).toEqual([
+      'Obscurus',
+      'Initiate',
+      'Seeker',
+      'Acolyte',
+      'Sentinel',
+      'Mystic',
+      'Ritualist',
+      'Emissary',
+      'Oracle',
+      'Phantom',
+      'Ascendant',
+      'Eternus',
+    ]);
+    expect(RANK_TIER_NAMES[4]).toBe('Sentinel');
+  });
+});
+
 describe('badge bounds', () => {
   it('starts the badges at 1', () => {
     expect(MIN_BADGE).toBe(1);

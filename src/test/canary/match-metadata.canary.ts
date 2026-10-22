@@ -7,24 +7,33 @@
  * check of the data source. It runs only with `pnpm canary` (see vitest.canary.config.ts) and by the
  * weekly workflow `API canary`, never with `pnpm test` nor `pnpm check`.
  *
- * Requests (at most six per run, well under the limits of the API):
+ * Requests (at most eight per run, well under the limits of the API):
  * 1. the list of the most recent normal-mode Paige matches (match-level fields only: no player, so
  *    no account id);
  * 2. the detail of those matches, in order, until one answers 200 (at most five). The API does not
  *    hold every match, so a 404 or a server error other than 503 moves on to the next one, whereas a
  *    429 or a 503 ends the run at once: deadlock-api asked to pause, and the canary never hammers.
- *    `disable_steam=true` is always sent, as in the app, and `force_refetch` never is.
+ *    `disable_steam=true` is always sent, as in the app, and `force_refetch` never is;
+ * 3. the hero catalogue, for Paige's loadout;
+ * 4. the item catalogue (about 6.5 MB, the largest answer the app downloads), for the ids, class
+ *    names and kinds the damage tab and the build are joined on.
+ * The two catalogues are the last requests, sent once the checks that need no network have passed.
+ * They follow the same rule: a 429 or a 503 ends the run at once.
  *
  * The requests are the ones of the app: they go through its HTTP client (`TauriHttpClient`, given
  * Node's `fetch` instead of the Tauri plugin's) with the headers of its service, and the responses
  * are interpreted by its rules (`interpretResponse`). The detail then goes through what the app does
  * with it: the schema, the tracked player, the pruning, the envelope, the zstd codec, the facts
- * the detail page reads, and the analysis (the context of the match, the snapshot counters and the
- * death details it reads, and the metrics projected from it).
+ * the detail page reads, the analysis (the context of the match, the snapshot counters and the
+ * death details it reads, and the metrics projected from it), and what the match detail page reads
+ * (the damage matrix and the damage sources projected from it, the tracked player's items, the
+ * scoreboard, Paige's loadout in the hero catalogue, and the item catalogue that names the build,
+ * the ability unlocks and the loadout by id and by class name).
  *
  * Privacy: the detail holds the account ids of the twelve players, and this repository is public,
  * and so are its workflow logs. No message of this file contains a value of a payload, an account id
- * or a match id; they only hold paths, codes, statuses and counts. Two rules follow from that:
+ * or a match id; they only hold paths, codes, statuses, counts, booleans and percentages. Two rules
+ * follow from that:
  * - an assertion compares counts or booleans, never an object or a payload value that would be
  *   printed when it fails;
  * - the errors of the app, which hold a path and a code by design, are the only ones forwarded.
@@ -35,20 +44,27 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { TauriHttpClient } from '../../adapters/tauri/tauri-http-client.adapter';
+import { readDamageMatrix } from '../../core/analysis/damage-matrix';
+import { damageSourceKey, projectDamageSources } from '../../core/analysis/damage-sources';
 import { SNAPSHOT_STATS, buildMatchContext } from '../../core/analysis/match-context';
 import { MATCH_METRICS, projectMetrics } from '../../core/analysis/registry';
 import type { ApiOutcome } from '../../core/deadlock-api/api-response';
 import { interpretResponse } from '../../core/deadlock-api/api-response';
+import { parseItemCatalogue, type CatalogueItem } from '../../core/deadlock-api/assets.schema';
 import type { ApiRequest } from '../../core/deadlock-api/endpoints';
 import {
   DEADLOCK_API_BASE_URL,
   MAX_RESPONSE_BYTES,
   REQUEST_TIMEOUT_MS,
+  heroesRequest,
+  itemsRequest,
   matchMetadataRequest,
   userAgent,
 } from '../../core/deadlock-api/endpoints';
+import { parseHeroAssets } from '../../core/deadlock-api/heroes.schema';
 import { parseMatchMetadata } from '../../core/deadlock-api/match-metadata.schema';
 import { parseAccountId } from '../../core/domain/account';
+import type { HeroAsset } from '../../core/domain/hero';
 import { PAIGE_HERO_ID } from '../../core/domain/hero';
 import type { MatchId } from '../../core/domain/match';
 import { parseMatchId } from '../../core/domain/match';
@@ -62,6 +78,8 @@ import {
 import { summarizeArchive } from '../../core/match-detail/archive-facts';
 import { ARCHIVED_GAME_MODE } from '../../core/match-detail/detail-status';
 import { findTrackedPlayer, pruneForPlayer } from '../../core/match-detail/pruning';
+import { readScoreboard } from '../../core/match-detail/scoreboard';
+import { finalBuildOf, readTrackedItems } from '../../core/match-detail/tracked-items';
 import { compressBytes, decompressBytes } from '../../workers/zstd-codec';
 
 /** Replaced by Vite with the version of package.json (see `define` in vitest.canary.config.ts). */
@@ -78,6 +96,47 @@ const LISTED_MATCHES = 5;
  * counters and the death details) are checked on their own for that.
  */
 const MIN_KNOWN_MATCH_METRICS = 10;
+
+/**
+ * How far the total of the damage matrix may be from the tracked player's last `player_damage`
+ * snapshot, as a share of that snapshot (0.1 %). Both are the same damage, so on the matches checked
+ * they are equal to the point; the margin is there for rounding only (the series of the matrix are
+ * real numbers, the snapshot counter a whole one, and the series are summed). It is far under what a
+ * change of layout would cost: a category row counted with the sources twice doubles the total, and a
+ * target taken for an enemy hero adds a share of the damage to heroes.
+ */
+const DAMAGE_TOTAL_TOLERANCE = 0.001;
+
+/** The least the two damage totals may differ by, in damage points, whatever their size. */
+const DAMAGE_TOTAL_MIN_TOLERANCE = 1;
+
+/**
+ * The fewest items a final build holds. A player who ends a normal match with nothing in their
+ * inventory is not what a real match looks like; an empty build means the items are no longer read
+ * (a renamed `upgrade_id`, a `sold_time_s` set on every entry).
+ */
+const MIN_FINAL_BUILD_ITEMS = 1;
+
+/** The most items a final build holds: the inventory of a player has twelve places in all. */
+const MAX_FINAL_BUILD_ITEMS = 12;
+
+/** The most players with a place in Valve's top three of a match (`mvpRank` 1 to 3). */
+const MAX_MVP_PLAYERS = 3;
+
+/**
+ * The fewest players with a place in Valve's top three. Every match has its top three since
+ * 2026-01-06, and the canary reads one of the most recent matches: none means that `mvp_rank` is no
+ * longer read (a renamed field reads as no place, which the app tolerates for an older match).
+ */
+const MIN_MVP_PLAYERS = 1;
+
+/**
+ * The largest share of `MAX_RESPONSE_BYTES` the answer of the item catalogue may take (80 %). It is
+ * the largest answer the app downloads (about 65 % of the limit on 2026-10-21), and past the limit
+ * its download fails for good: a fresh install would then never name a damage source. The margin
+ * turns the canary red while there is still time to raise the limit.
+ */
+const MAX_ITEM_CATALOGUE_SHARE = 0.8;
 
 /**
  * The list of the most recent normal-mode Paige matches. It is the bulk endpoint of deadlock-api:
@@ -101,6 +160,11 @@ interface CountingApi {
   readonly get: (request: ApiRequest) => Promise<ApiOutcome>;
   /** How many requests were sent so far. */
   readonly requestCount: () => number;
+  /**
+   * The size of the body of the last response, in bytes, as the size limit of the app counts it
+   * (decompressed); 0 before the first response.
+   */
+  readonly lastBodyBytes: () => number;
 }
 
 /**
@@ -116,8 +180,10 @@ function createCountingApi(): CountingApi {
   // The client of the desktop app, given Node's `fetch` instead of the Tauri plugin's.
   const http = new TauriHttpClient(fetch);
   let requests = 0;
+  let bodyBytes = 0;
   return {
     requestCount: () => requests,
+    lastBodyBytes: () => bodyBytes,
     async get(request) {
       requests += 1;
       let response;
@@ -137,6 +203,8 @@ function createCountingApi(): CountingApi {
         }
         throw error;
       }
+      // The body is decoded as UTF-8: encoding it again gives back the bytes that were received.
+      bodyBytes = new TextEncoder().encode(response.body).length;
       return interpretResponse(request, response, Date.now());
     },
   };
@@ -221,6 +289,48 @@ async function fetchFirstAvailableDetail(
 }
 
 /**
+ * Ask the API for the hero catalogue and read it the way the app does.
+ *
+ * It is the next to last request of a run. A 429 or a 503 (a pause), like any other answer that is
+ * not a success, ends the run at once: the catalogue is a single request, with no other one to move
+ * on to.
+ *
+ * @param api - The sender of the run.
+ * @returns The playable heroes with their portrait and loadout, sorted by id.
+ * @throws Error when the request does not answer 200, or when the catalogue is not what the app
+ *   expects. The message holds a kind, a status or a path and a code, never a value of the body.
+ */
+async function fetchHeroCatalogue(api: CountingApi): Promise<HeroAsset[]> {
+  const outcome = await api.get(heroesRequest());
+  if (outcome.kind !== 'success') {
+    throw requestFailure('hero catalogue request', outcome);
+  }
+  return inStep('hero catalogue', () => parseHeroAssets(outcome.json));
+}
+
+/**
+ * Ask the API for the item catalogue and read it the way the app does.
+ *
+ * It is the last request of a run, under the same rule as the hero catalogue.
+ *
+ * @param api - The sender of the run.
+ * @returns The readable entries, in the order of the body, and the size of the answer in bytes
+ *   (what `MAX_RESPONSE_BYTES` is checked against).
+ * @throws Error when the request does not answer 200, or when the catalogue is not what the app
+ *   expects. The message holds a kind, a status or a path and a code, never a value of the body.
+ */
+async function fetchItemCatalogue(
+  api: CountingApi,
+): Promise<{ items: CatalogueItem[]; bodyBytes: number }> {
+  const outcome = await api.get(itemsRequest());
+  if (outcome.kind !== 'success') {
+    throw requestFailure('item catalogue request', outcome);
+  }
+  const bodyBytes = api.lastBodyBytes();
+  return { items: inStep('item catalogue', () => parseItemCatalogue(outcome.json)), bodyBytes };
+}
+
+/**
  * Run a step of the pipeline, naming it if it fails with an error of the app.
  *
  * The errors of the app carry a path and a code (`context.issue`) and never a value of the payload,
@@ -286,6 +396,23 @@ function sameValue(left: unknown, right: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Tell whether the total of the damage matrix and the damage counter of the snapshots agree: both
+ * are the damage the tracked player dealt to enemy heroes, read from two places of the payload.
+ *
+ * They are compared as numbers, within the margin of {@link DAMAGE_TOTAL_TOLERANCE} (a share of the
+ * counter) and {@link DAMAGE_TOTAL_MIN_TOLERANCE} (a floor, for a player who dealt little).
+ *
+ * @param matrixTotal - The total of the damage matrix at its last sample.
+ * @param snapshotDamage - The `player_damage` of the tracked player's last snapshot.
+ * @returns `true` when they differ by no more than the margin. A boolean on purpose: whoever
+ *   asserts on it prints no value of the payload.
+ */
+function damageTotalsAgree(matrixTotal: number, snapshotDamage: number): boolean {
+  const margin = Math.max(DAMAGE_TOTAL_MIN_TOLERANCE, snapshotDamage * DAMAGE_TOTAL_TOLERANCE);
+  return Math.abs(matrixTotal - snapshotDamage) <= margin;
 }
 
 describe('deadlock-api match detail', () => {
@@ -356,7 +483,7 @@ describe('deadlock-api match detail', () => {
     // --- 6. The facts the detail page reads ---
     const facts = inStep('archive facts', () => summarizeArchive(decoded));
     expect(facts.snapshots, 'stats snapshots of the tracked player').toBeGreaterThan(0);
-    expect(facts.durationS, 'match_info.duration_s').toBeGreaterThan(0);
+    expect(decoded.payload.match_info.duration_s, 'match_info.duration_s').toBeGreaterThan(0);
 
     // --- 7. The analysis: the context of the match, and the metrics projected from it ---
     // The context is built from the archive the way the projection of the app does it, so a payload
@@ -401,5 +528,136 @@ describe('deadlock-api match detail', () => {
       `snapshot counters missing from the tracked player's last snapshot: ${missingCounters.join(', ')}`,
     ).toBe(0);
     expect(deathDetailsComplete, 'every player has one death detail per death').toBe(true);
+
+    // --- 8. Damage, items, scoreboard: what the match detail page reads ---
+    // The damage matrix of the tracked player. A match without one reads as `null`, which the app
+    // accepts for an old archive, but a fresh match of the API must have it.
+    const damageMatrix = present(
+      inStep('damage matrix', () => readDamageMatrix(decoded)),
+      'the damage matrix of the match',
+    );
+    // Its total at the last sample is the damage to enemy heroes over the whole match, which the
+    // last snapshot of the tracked player counts too (`player_damage`). A matrix that sums the
+    // category rows with the sources, or counts a target it should not, drifts from it.
+    const matrixTotal = present(damageMatrix.total.at(-1), 'the total of the damage matrix');
+    const snapshotDamage = present(
+      lastSnapshot?.stats.player_damage,
+      'player_damage in the last snapshot of the tracked player',
+    );
+    const totalsAgree = damageTotalsAgree(matrixTotal, snapshotDamage);
+    // The `damage_source.` keys the projection stores: one per source that dealt damage.
+    const damageValues = projectDamageSources(damageMatrix);
+    const damageSourceKeys = [...damageValues.keys()].filter((key) =>
+      key.startsWith(damageSourceKey('')),
+    );
+    // The final build comes from the items read on their own, not through the damage matrix.
+    const trackedItems = inStep('tracked player items', () => readTrackedItems(decoded));
+    const finalBuild = finalBuildOf(trackedItems);
+    // The scoreboard of the archive: every player of the match, none of them identified.
+    const scoreboard = inStep('scoreboard', () => readScoreboard(decoded));
+    const mvpPlayers = scoreboard.players.filter((player) => player.mvpRank !== null).length;
+    await annotate(
+      `damage: ${String(damageMatrix.sources.size)} sources, ${String(damageSourceKeys.length)} damage_source keys, ${String(damageMatrix.sampleTimesS.length)} samples, matrix total agrees with the last snapshot: ${String(totalsAgree)}`,
+    );
+    await annotate(
+      `items: ${String(trackedItems.length)} entries, ${String(finalBuild.length)} in the final build`,
+    );
+    await annotate(
+      `scoreboard: ${String(scoreboard.players.length)} players, ${String(mvpPlayers)} with an mvp rank`,
+    );
+    // Counts and booleans, as in the steps above; no message names a value of the payload.
+    expect(totalsAgree, 'damage matrix total differs from the last player_damage snapshot').toBe(
+      true,
+    );
+    expect(
+      damageSourceKeys.length,
+      'damage_source keys projected from the damage matrix',
+    ).toBeGreaterThan(0);
+    expect(
+      finalBuild.length,
+      'items in the final build of the tracked player (at least)',
+    ).toBeGreaterThanOrEqual(MIN_FINAL_BUILD_ITEMS);
+    expect(
+      finalBuild.length,
+      'items in the final build of the tracked player (at most)',
+    ).toBeLessThanOrEqual(MAX_FINAL_BUILD_ITEMS);
+    expect(
+      scoreboard.players.length,
+      'players read by the scoreboard (every player of the archive)',
+    ).toBe(decoded.payload.match_info.players.length);
+    expect(
+      mvpPlayers,
+      'players with an mvpRank (the top three of the match, at least)',
+    ).toBeGreaterThanOrEqual(MIN_MVP_PLAYERS);
+    expect(
+      mvpPlayers,
+      'players with an mvpRank (the top three of the match, at most)',
+    ).toBeLessThanOrEqual(MAX_MVP_PLAYERS);
+
+    // --- 9. The catalogues the match page names and classifies everything with ---
+    // The hero catalogue, for the loadout of Paige. The weapon of the loadout is looked up by the
+    // key of its damage source in the projection, which holds a key only for a source that dealt
+    // damage to enemy heroes (its critical hits are merged into it).
+    const heroes = await fetchHeroCatalogue(api);
+    const paigeHero = heroes.find((hero) => hero.id === PAIGE_HERO_ID);
+    // Annotated before the checks, so that a run without Paige or her loadout still prints them.
+    await annotate(
+      `heroes: ${String(heroes.length)} playable, ${String(heroes.filter((hero) => hero.loadout !== null).length)} with a loadout, Paige with a loadout: ${String((paigeHero?.loadout ?? null) !== null)}`,
+    );
+    const loadout = present(
+      present(paigeHero, 'Paige in the hero catalogue').loadout,
+      'the loadout of Paige in the hero catalogue',
+    );
+    expect(
+      damageValues.has(damageSourceKey(loadout.weapon)),
+      'the weapon of the loadout of Paige is a damage source of the match',
+    ).toBe(true);
+
+    // The item catalogue, the last request of the run. The damage tab rests on three joins with it,
+    // which fail quietly when the API changes (an unknown id or kind is shown unnamed, or as another
+    // source, with no error): the items of the build by id, the ability unlocks by the ids of the
+    // abilities of the loadout, and the loadout by class name.
+    const { items, bodyBytes } = await fetchItemCatalogue(api);
+    const itemsById = new Map(items.map((item) => [item.id, item]));
+    const itemsByClassName = new Map(items.map((item) => [item.className, item]));
+    const buildItemsNotUpgrades = finalBuild.filter(
+      (entry) => itemsById.get(entry.itemId)?.kind !== 'upgrade',
+    ).length;
+    const loadoutAbilityIds = new Set(
+      loadout.abilities.map((className) => itemsByClassName.get(className)?.id),
+    );
+    // The entries of the items that are not shop items: the unlocks and the upgrades of abilities.
+    const abilityEntries = trackedItems.filter((entry) => !entry.isShopItem);
+    const abilityEntriesOutsideLoadout = abilityEntries.filter(
+      (entry) => !loadoutAbilityIds.has(entry.itemId),
+    ).length;
+    const loadoutClassNames = [loadout.weapon, loadout.melee, ...loadout.abilities];
+    const loadoutClassNamesMissing = loadoutClassNames.filter(
+      (className) => !itemsByClassName.has(className),
+    ).length;
+    const responseShare = bodyBytes / MAX_RESPONSE_BYTES;
+    // Counts and a percentage only: no id, class name or value of the catalogue.
+    await annotate(
+      `item catalogue: ${String(items.length)} entries, answer at ${(responseShare * 100).toFixed(0)} % of MAX_RESPONSE_BYTES`,
+    );
+    await annotate(
+      `item joins: ${String(finalBuild.length - buildItemsNotUpgrades)} of ${String(finalBuild.length)} build items are catalogue upgrades, ${String(abilityEntries.length - abilityEntriesOutsideLoadout)} of ${String(abilityEntries.length)} ability entries are abilities of the loadout, ${String(loadoutClassNames.length - loadoutClassNamesMissing)} of ${String(loadoutClassNames.length)} loadout class names in the catalogue; ${String(api.requestCount())} requests in all`,
+    );
+    expect(
+      buildItemsNotUpgrades,
+      'items of the final build that are not an upgrade of the item catalogue',
+    ).toBe(0);
+    expect(
+      abilityEntriesOutsideLoadout,
+      'ability entries whose item_id is not the catalogue id of an ability of the loadout of Paige',
+    ).toBe(0);
+    expect(
+      loadoutClassNamesMissing,
+      'class names of the loadout of Paige missing from the item catalogue',
+    ).toBe(0);
+    expect(
+      responseShare <= MAX_ITEM_CATALOGUE_SHARE,
+      'the answer of the item catalogue takes at most 80 % of MAX_RESPONSE_BYTES',
+    ).toBe(true);
   });
 });

@@ -18,7 +18,8 @@
  * (`../core/analysis/damage-breakdown`), not stored. Where a match stands before any of it is read
  * (the states below) is decided by `./analysis-subject`, the gate the analysis shares: the two
  * views of a match tell the same states the same way. Nothing is projected, nothing is downloaded
- * for a match that is not `projected`, and the view never changes the match.
+ * for a match that is not `projected` or whose archive cannot be read, and the view never changes
+ * the match.
  *
  * What the damage tab can be told about a match (`DamageTabView`):
  * - `not_analysed`: there is nothing to show. No account is linked, or the detail of the match is
@@ -39,8 +40,9 @@
  * its twelve players by team, with their hero, their rank and their place in Valve's top three, and
  * the places the tracked player takes among them. It reads the archive of the match
  * (`./archive-reader.service`, `../core/match-detail/scoreboard`) and nothing else of the match: it
- * needs no projection, so it does not go through `./analysis-subject` and is shown whether or not
- * the analysis has run. The hero and rank catalogues (`./hero-catalog.service`,
+ * needs no projection, so it asks `./analysis-subject` only whether the match is archived for the
+ * linked account (`archivedAccountOf`), not whether it is analysed, and is shown whether or not the
+ * analysis has run. The hero and rank catalogues (`./hero-catalog.service`,
  * `./game-asset.service`) only decorate it: without them the players are shown by the id of their
  * hero and without the badge of their rank, and no state says so.
  *
@@ -77,7 +79,7 @@ import {
 import { PAIGE_HERO_ID, type HeroAsset, type HeroLoadout } from '../core/domain/hero';
 import type { MatchId } from '../core/domain/match';
 import { badgeParts, rankName } from '../core/domain/rank';
-import { errorLogContext, isAppError, toAppError } from '../core/errors/app-error';
+import { errorLogContext, isAppError, issueOf, toAppError } from '../core/errors/app-error';
 import {
   placesOf,
   readScoreboard,
@@ -91,13 +93,18 @@ import {
   type FinalBuildEntry,
 } from '../core/match-detail/tracked-items';
 import type { AccountSource } from '../ports/account-source.port';
-import type { LogContext, Logger } from '../ports/logger.port';
-import { analysisSubjectOf, type AnalysisSubjectDependencies } from './analysis-subject';
+import type { Logger } from '../ports/logger.port';
+import {
+  analysisSubjectOf,
+  archivedAccountOf,
+  type AnalysisSubjectDependencies,
+} from './analysis-subject';
 import type { ArchiveReaderService } from './archive-reader.service';
 import type { GameAssetService, ItemCatalogue } from './game-asset.service';
 import type { HeroCatalogService } from './hero-catalog.service';
 import type { MatchDetailRepository } from './match-detail.repository';
 import type { MetricsRepository } from './metrics.repository';
+import { ReportOnce } from './report-once';
 
 /**
  * One item of the build a player ended the match with, named and shown by the item catalogue.
@@ -372,10 +379,11 @@ function describeTeams(read: ScoreboardRead, catalogues: PlayerCatalogues): read
 
 /** Tells what the match page shows besides the analysis of a match, from its projection and archive. */
 export class MatchBreakdownService {
-  /** What {@link analysisSubjectOf} reads to find where a match stands (the gate the analysis shares). */
+  /**
+   * What the gates the analysis shares read to find where a match stands: {@link analysisSubjectOf}
+   * for the damage tab, {@link archivedAccountOf} for the players tab.
+   */
   readonly #subjectDeps: AnalysisSubjectDependencies;
-  readonly #accountSource: AccountSource;
-  readonly #details: MatchDetailRepository;
   readonly #metrics: MetricsRepository;
   readonly #reader: ArchiveReaderService;
   readonly #heroes: HeroCatalogService;
@@ -383,12 +391,12 @@ export class MatchBreakdownService {
   readonly #logger: Logger;
 
   /**
-   * The problems already reported, each by the match and the message of the line. A match whose
-   * items or scoreboard cannot be read stays so until its archive is written again, and the page
-   * reads the views every time it is shown: a problem is reported once, not at every read. The two
-   * problems of one match are two reports: finding one must not hide the other.
+   * Reports a match whose items or scoreboard cannot be read. Such a match stays so until its
+   * archive is written again, and the page reads the views every time it is shown: a problem is
+   * reported once, not at every read. The two problems of one match are two reports: finding one
+   * must not hide the other.
    */
-  readonly #reported = new Set<string>();
+  readonly #reports: ReportOnce;
 
   /**
    * @param dependencies - See {@link MatchBreakdownServiceDependencies}.
@@ -399,13 +407,12 @@ export class MatchBreakdownService {
       details: dependencies.details,
       metrics: dependencies.metrics,
     };
-    this.#accountSource = dependencies.accountSource;
-    this.#details = dependencies.details;
     this.#metrics = dependencies.metrics;
     this.#reader = dependencies.reader;
     this.#heroes = dependencies.heroes;
     this.#assets = dependencies.assets;
     this.#logger = dependencies.logger;
+    this.#reports = new ReportOnce(dependencies.logger, LOG_SCOPE);
   }
 
   /**
@@ -413,13 +420,16 @@ export class MatchBreakdownService {
    * player dealt with each source, compared with their habits, and the items they ended the match
    * with. Nothing is projected and nothing is changed; the only request this can send is the
    * download of a catalogue that is older than a week (or that was never downloaded), and only for a
-   * match that can be shown.
+   * match that can be shown: the archive is read before the catalogues, so a match whose archive or
+   * items cannot be read downloads nothing.
    *
    * @param matchId - The match.
    * @returns What the tab shows, see {@link DamageTabView}. A match that is not archived is
    *   `not_analysed`; one without a projection of the current version is `pending`; one the
-   *   projection could not read is `failed`; one whose archive is gone or damaged is `unreadable`;
-   *   one for which the hero or item catalogue cannot be read is `catalogue_unavailable`.
+   *   projection could not read is `failed`; one whose archive is gone or damaged, or whose items
+   *   cannot be read, is `unreadable`; one for which the hero or item catalogue cannot be read is
+   *   `catalogue_unavailable`. The states are checked in this order: an unreadable archive is
+   *   `unreadable` whatever the catalogues.
    * @throws AppError of kind `storage` when the database fails (the projections, the habits, the
    *   detail state), or when the file of the archive cannot be read or the compressor is broken
    *   (neither says anything about the match). A failure of the catalogues never comes out, of
@@ -433,6 +443,19 @@ export class MatchBreakdownService {
       return { kind: subject.kind };
     }
     const { accountId } = subject;
+
+    // The archive comes before the catalogues: a match that cannot be shown downloads nothing.
+    const archive = await this.#reader.readArchive(accountId, matchId);
+    if (archive.kind === 'unreadable') {
+      // The reader told why; the detail view of the match explains the archive.
+      return { kind: 'unreadable' };
+    }
+    const build = this.#readOrReport(matchId, 'The items of a match could not be read', () =>
+      finalBuildOf(readTrackedItems(archive.envelope)),
+    );
+    if (build === null) {
+      return { kind: 'unreadable' };
+    }
 
     const catalogues = await this.#readDamageCatalogues(matchId);
     if (catalogues === null) {
@@ -453,18 +476,6 @@ export class MatchBreakdownService {
       loadout: catalogues.loadout,
       itemsByClassName: catalogues.items.byClassName,
     });
-
-    const archive = await this.#reader.readArchive(accountId, matchId);
-    if (archive.kind === 'unreadable') {
-      // The reader told why; the detail view of the match explains the archive.
-      return { kind: 'unreadable' };
-    }
-    const build = this.#readOrReport(matchId, 'The items of a match could not be read', () =>
-      finalBuildOf(readTrackedItems(archive.envelope)),
-    );
-    if (build === null) {
-      return { kind: 'unreadable' };
-    }
     return { kind: 'ready', breakdown, build: describeBuild(build, catalogues.items) };
   }
 
@@ -489,12 +500,8 @@ export class MatchBreakdownService {
    */
   async getPlayersTab(matchId: MatchId): Promise<PlayersTabView> {
     // Only the archive is needed: no projection, so the tab is there before the analysis has run.
-    const accountId = await this.#accountSource.currentAccountId();
+    const accountId = await archivedAccountOf(this.#subjectDeps, matchId);
     if (accountId === null) {
-      return { kind: 'not_archived' };
-    }
-    const detail = await this.#details.getDetail(accountId, matchId);
-    if (detail?.status !== 'ready') {
       return { kind: 'not_archived' };
     }
 
@@ -613,7 +620,7 @@ export class MatchBreakdownService {
    * @param read - Reads it out of the decoded archive of the match.
    * @returns What `read` returns, or `null` when the archive lacks what is read or holds it in a
    *   shape that is not expected: that says something about the archive, not about the match, so it
-   *   is reported (once, see `#reportOnce`) and the view is `unreadable`. The match is not changed:
+   *   is reported (once, see `#reports`) and the view is `unreadable`. The match is not changed:
    *   the archive passed the checks of the door when it was written.
    * @throws Error when the reading fails for any other reason: that is a bug, which must be seen as
    *   one.
@@ -625,29 +632,8 @@ export class MatchBreakdownService {
       if (!isAppError(error) || error.kind !== 'invalid_payload') {
         throw error;
       }
-      this.#reportOnce(matchId, message, {
-        issue: typeof error.context.issue === 'string' ? error.context.issue : 'unknown',
-      });
+      this.#reports.warn(matchId, message, { issue: issueOf(error) });
       return null;
     }
-  }
-
-  /**
-   * Log a warning about a match, unless that problem of that match was already reported. A line
-   * holds the match and what the caller adds, which is a field path and an issue code at most: never
-   * a value of the payload.
-   *
-   * @param matchId - The match.
-   * @param message - What is wrong with the match. It also tells the problem from another of the
-   *   same match.
-   * @param details - Context besides the match: the path and the issue code of a payload problem.
-   */
-  #reportOnce(matchId: MatchId, message: string, details: LogContext): void {
-    const problem = `${String(matchId)} ${message}`;
-    if (this.#reported.has(problem)) {
-      return;
-    }
-    this.#reported.add(problem);
-    this.#logger.log('warn', LOG_SCOPE, message, { matchId, ...details });
   }
 }

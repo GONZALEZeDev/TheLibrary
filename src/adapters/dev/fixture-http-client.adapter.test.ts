@@ -15,7 +15,7 @@ import {
   REQUEST_TIMEOUT_MS,
   steamProfileRequest,
 } from '../../core/deadlock-api/endpoints';
-import { parseHeroes } from '../../core/deadlock-api/heroes.schema';
+import { parseHeroAssets } from '../../core/deadlock-api/heroes.schema';
 import { parseMatchHistory } from '../../core/deadlock-api/match-history.schema';
 import { parseMatchMetadata } from '../../core/deadlock-api/match-metadata.schema';
 import { parseSteamProfiles } from '../../core/deadlock-api/steam-profile.schema';
@@ -117,7 +117,7 @@ describe('createFixtureApi', () => {
 
   it('serves a hero catalogue that passes the validation of the real API', async () => {
     const response = await client.get(get(heroesRequest().url));
-    const heroes = parseHeroes(JSON.parse(response.body));
+    const heroes = parseHeroAssets(JSON.parse(response.body)).map(({ id, name }) => ({ id, name }));
 
     expect(heroes).toContainEqual({ id: PAIGE_HERO_ID, name: 'Paige' });
     expect(heroes.map((hero) => hero.name)).not.toContain('Baba');

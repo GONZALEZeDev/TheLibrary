@@ -386,9 +386,24 @@ describe('createMatchMetadataFixture', () => {
   });
 
   it('uses every slot once and puts six players in each team, whichever team the row says', () => {
-    // The slot only depends on the match id and the team on the row: both rows below sit in the
-    // same slot, in opposite teams, and the other slots must still split six and six.
-    for (const row of [...HISTORY, rowWith({ player_team: 0 }), rowWith({ player_team: 1 })]) {
+    // The slot only depends on the match id and the team on the row, so one row per slot of the
+    // tracked player and per team covers every case of the history without building all of its
+    // details (a few seconds on a busy runner). The two rows below sit in the same slot, in
+    // opposite teams, and the other slots must still split six and six.
+    const cases = new Map<string, RawMatchHistoryRow>();
+    for (const row of HISTORY) {
+      const key = `${String(row.match_id % 12)} ${String(row.player_team)}`;
+      if (!cases.has(key)) {
+        cases.set(key, row);
+      }
+    }
+    // The history puts the tracked player in every slot, in both teams.
+    expect(cases.size).toBe(12 * 2);
+    for (const row of [
+      ...cases.values(),
+      rowWith({ player_team: 0 }),
+      rowWith({ player_team: 1 }),
+    ]) {
       const info = detailOf(row);
       const slots = info.players.map((player) => player.player_slot).toSorted((a, b) => a - b);
       const teamSizes = [0, 1].map(
@@ -432,9 +447,11 @@ describe('createMatchMetadataFixture', () => {
     );
 
     for (const row of PAIGE_ROWS) {
-      const { players } = detailOf(row);
+      // One detail per row: building one is the cost of this test.
+      const info = detailOf(row);
+      const { players } = info;
       const others = players.filter((player) => player.account_id !== FIXTURE_ACCOUNT_ID);
-      const tracked = trackedOf(detailOf(row));
+      const tracked = trackedOf(info);
 
       expect(others.map((player) => player.account_id).toSorted((a, b) => a - b)).toEqual(
         Array.from({ length: 11 }, (_, index) => 2_000_001 + index),

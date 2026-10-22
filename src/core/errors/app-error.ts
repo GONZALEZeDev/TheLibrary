@@ -125,6 +125,19 @@ export function errorLogContext(error: AppError): AppErrorContext {
 }
 
 /**
+ * The problem an `invalid_payload` error reports: its context `issue`, which the readers of a
+ * payload write as `<path>: <code>` (or a name such as `tracked_player_missing`) and never as a
+ * value of the payload, so it can be logged.
+ *
+ * @param error - The error of a payload that is not what is expected.
+ * @returns The issue, or `unknown` when the error carries none (or one that is not a text).
+ */
+export function issueOf(error: AppError): string {
+  const { issue } = error.context;
+  return typeof issue === 'string' ? issue : 'unknown';
+}
+
+/**
  * Message for a thrown value that is not an {@link AppError}.
  *
  * An `Error` is described by its message, or by its name when the message is empty. `String()`

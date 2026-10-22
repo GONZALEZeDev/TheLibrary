@@ -1,9 +1,10 @@
 # API canary.
 # Every Monday, fetches one recent Paige match from the real deadlock-api and runs it through the
-# pipeline of the app (schema, tracked player, pruning, envelope, zstd codec, facts). If deadlock-api
+# pipeline of the app (schema, tracked player, pruning, envelope, zstd codec, facts, analysis,
+# damage, items, scoreboard), then checks the hero and item catalogues against it. If deadlock-api
 # changes its payload, this workflow turns red before the users of the app notice.
 # It is separate from the CI workflow on purpose: it depends on a third-party service, so its
-# failures must never block a push or a pull request. It makes at most six requests per run, keeps
+# failures must never block a push or a pull request. It makes at most eight requests per run, keeps
 # nothing and prints no payload (see src/test/canary/match-metadata.canary.ts).
 # Third-party actions are pinned by commit SHA (supply-chain hardening); Renovate
 # keeps the SHAs up to date.

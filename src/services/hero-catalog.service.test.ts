@@ -55,7 +55,7 @@ function setUp() {
     now,
   });
   const cache = new ApiCacheRepository(database);
-  const catalog = new HeroCatalogService(accountSource, api, cache, logger, now);
+  const catalog = new HeroCatalogService({ accountSource, api, cache, logger, now });
   return { catalog, http, logger, cache, clock, answer, link };
 }
 
@@ -225,6 +225,75 @@ describe('HeroCatalogService', () => {
       await expect(catalog.getHeroAssets()).resolves.toContainEqual(PAIGE_ASSET);
 
       expect(http.requests).toHaveLength(1);
+    });
+
+    it('fails over an entry written before M4b when the catalogue cannot be downloaded', async () => {
+      const { catalog, http, logger, cache, answer } = setUp();
+      await cache.put(CACHE_KEY, {
+        payloadJson: JSON.stringify([{ id: PAIGE_HERO_ID, name: 'Paige' }]),
+        fetchedAt: START,
+        expiresAt: START + 7 * DAY,
+      });
+      const failure = new AppError('network', 'The request failed');
+      answer.handler = () => {
+        throw failure;
+      };
+
+      // The old entry is nothing cached: there is no stale catalogue to fall back on, so the failed
+      // download is the answer, for the bare heroes too.
+      await expect(catalog.getHeroAssets()).rejects.toMatchObject({ kind: 'network' });
+      await expect(catalog.getHeroes()).rejects.toMatchObject({ kind: 'network' });
+
+      expect(http.requests).toHaveLength(2);
+      // Nothing is logged: the failure is the caller's to handle, and the old entry no problem.
+      expect(logger.entries.filter((entry) => entry.level !== 'debug')).toEqual([]);
+      // The old entry is left as it was, for the next download to replace.
+      await expect(cache.get(CACHE_KEY)).resolves.toMatchObject({
+        payloadJson: JSON.stringify([{ id: PAIGE_HERO_ID, name: 'Paige' }]),
+      });
+    });
+
+    it.each([
+      [
+        'a portrait off the asset bucket',
+        { ...PAIGE_ASSET, imageUrl: 'https://example.net/bookworm_sm.webp' },
+      ],
+      [
+        'a portrait on a look-alike host',
+        { ...PAIGE_ASSET, imageUrl: 'https://assets-bucket.deadlock-api.com.example.net/x.webp' },
+      ],
+      [
+        'three signature abilities',
+        {
+          ...PAIGE_ASSET,
+          loadout: { ...PAIGE_ASSET.loadout, abilities: PAIGE_ASSET.loadout.abilities.slice(0, 3) },
+        },
+      ],
+      [
+        'five signature abilities',
+        {
+          ...PAIGE_ASSET,
+          loadout: {
+            ...PAIGE_ASSET.loadout,
+            abilities: [...PAIGE_ASSET.loadout.abilities, 'ability_bookworm_extra'],
+          },
+        },
+      ],
+    ])('downloads again over a cached hero with %s, quietly', async (_name, hero) => {
+      const { catalog, http, logger, cache } = setUp();
+      // The entry is fresh, so it would be served if it fit. The release only loads images from the
+      // asset bucket, and a loadout is four signature abilities, whatever the cache holds.
+      await cache.put(CACHE_KEY, {
+        payloadJson: JSON.stringify([hero]),
+        fetchedAt: START,
+        expiresAt: START + 7 * DAY,
+      });
+
+      const heroes = await catalog.getHeroAssets();
+
+      expect(http.requests).toHaveLength(1);
+      expect(heroes.find((entry) => entry.id === PAIGE_HERO_ID)).toEqual(PAIGE_ASSET);
+      expect(logger.entries.filter((entry) => entry.level !== 'debug')).toEqual([]);
     });
 
     it('gives bare heroes from getHeroes, downloaded or cached', async () => {

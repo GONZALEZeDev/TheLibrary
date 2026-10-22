@@ -8,7 +8,7 @@
  *
  * @packageDocumentation
  */
-import { BADGES_PER_TIER, RANK_TIER_NAMES, SUBRANKS_PER_TIER, isBadge } from '../domain/rank';
+import { BADGES_PER_TIER, SUBRANKS_PER_TIER, isBadge } from '../domain/rank';
 import { MIN_PHASE_MINUTES } from './insights/thresholds';
 import type { PhaseSpan } from './phases';
 
@@ -52,12 +52,6 @@ export const DURATION_WINDOWS: readonly DurationWindow[] = [
   { minS: 2_400, maxS: 2_699 },
   LONGEST_WINDOW,
 ];
-
-/**
- * The names of the rank tiers now live with the rest of the badge rules in `../domain/rank`; they
- * are re-exported here so that the modules that already read them from the cohorts do not change.
- */
-export { RANK_TIER_NAMES };
 
 /**
  * The time up to which a match of the shortest window is taken to have been played, in seconds

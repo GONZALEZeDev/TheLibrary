@@ -56,9 +56,9 @@ import { PREVIOUS_LOOKUP } from '../core/analysis/insights/thresholds';
 import { buildMatchContext, type MatchContext } from '../core/analysis/match-context';
 import { PROJECTION_VERSION } from '../core/analysis/registry';
 import type { MatchId } from '../core/domain/match';
-import { AppError, isAppError } from '../core/errors/app-error';
+import { AppError, isAppError, issueOf } from '../core/errors/app-error';
 import type { AccountSource } from '../ports/account-source.port';
-import type { LogContext, Logger } from '../ports/logger.port';
+import type { Logger } from '../ports/logger.port';
 import {
   analysisSubjectOf,
   type AnalysisSubject,
@@ -71,6 +71,7 @@ import type { LinkedAccountRank, LinkedAccountRepository } from './linked-accoun
 import type { MatchDetailRepository } from './match-detail.repository';
 import type { MetricsRepository, StoredProjection } from './metrics.repository';
 import type { ProjectionService } from './projection.service';
+import { ReportOnce } from './report-once';
 
 /**
  * Runs a task in a section that a change of the linked account waits for, and refuses once the
@@ -140,14 +141,13 @@ export class AnalysisService {
   readonly #accounts: LinkedAccountRepository;
   readonly #projection: ProjectionService;
   readonly #exclusive: ExclusiveRunner;
-  readonly #logger: Logger;
 
   /**
-   * The matches already reported, as unanalysable or as having two lengths. Such a match stays so
-   * until it is projected again, and the page reads its analysis every time it is shown: it is
-   * reported once, not at every read.
+   * Reports a match as unanalysable or as having two lengths. Such a match stays so until it is
+   * projected again, and the page reads its analysis every time it is shown: each problem of a
+   * match is reported once, not at every read.
    */
-  readonly #reportedMatches = new Set<MatchId>();
+  readonly #reports: ReportOnce;
 
   /**
    * The analyses that are running or waiting for their turn ({@link AnalysisService.analyseMatch}),
@@ -178,7 +178,7 @@ export class AnalysisService {
     this.#accounts = dependencies.accounts;
     this.#projection = dependencies.projection;
     this.#exclusive = dependencies.exclusive;
-    this.#logger = dependencies.logger;
+    this.#reports = new ReportOnce(dependencies.logger, LOG_SCOPE);
   }
 
   /**
@@ -269,9 +269,9 @@ export class AnalysisService {
   }
 
   /**
-   * Download the community data a match is compared with, unless the cache holds it still fresh. A
-   * page calls it when it opens, then reads the analysis again; one download serves every match of
-   * the same rank and length for a day.
+   * Download the community data a match is compared with, unless the cache holds it still fresh. The
+   * match page calls it when its analysis tab opens, then reads the analysis again; one download
+   * serves every match of the same rank and length for a day.
    *
    * @param matchId - The match.
    * @returns `fresh` when nothing was requested: the cached data is less than a day old, or there is
@@ -383,16 +383,14 @@ export class AnalysisService {
       if (!isAppError(error) || error.kind !== 'invalid_payload') {
         throw error;
       }
-      this.#reportOnce(matchId, 'Match could not be analysed', {
-        issue: typeof error.context.issue === 'string' ? error.context.issue : 'unknown',
-      });
+      this.#reports.warn(matchId, 'Match could not be analysed', { issue: issueOf(error) });
       return { kind: 'failed' };
     }
 
     if (context.durationS !== projection.durationS) {
       // The view leaves out what a different window would make wrong; the line is the evidence of
       // how often the two lengths really differ.
-      this.#reportOnce(matchId, 'Match lengths disagree');
+      this.#reports.warn(matchId, 'Match lengths disagree');
     }
 
     const [values, previous, rank] = await Promise.all([
@@ -405,23 +403,5 @@ export class AnalysisService {
       kind: 'ready',
       analysis: buildAnalysis({ projection, context, values, previous, cohortRead }),
     };
-  }
-
-  /**
-   * Log a warning about a match, unless a match with that id was already reported. A line holds the
-   * match and what the caller adds, which is a field path and an issue code at most: never a value
-   * of the payload.
-   *
-   * @param matchId - The match.
-   * @param message - What is wrong with the match.
-   * @param details - Context besides the match: the path and the issue code of a payload problem.
-   *   None by default.
-   */
-  #reportOnce(matchId: MatchId, message: string, details: LogContext = {}): void {
-    if (this.#reportedMatches.has(matchId)) {
-      return;
-    }
-    this.#reportedMatches.add(matchId);
-    this.#logger.log('warn', LOG_SCOPE, message, { matchId, ...details });
   }
 }

@@ -24,8 +24,10 @@ export const REPOSITORY_URL = 'https://github.com/GONZALEZeDev/TheLibrary';
 export const REQUEST_TIMEOUT_MS = 15_000;
 
 /**
- * Largest response body accepted, in bytes. The largest payload the app will download (a match
- * detail, about 1 MB) stays far below it; anything bigger is malformed or hostile.
+ * Largest response body accepted, in bytes, counted once decompressed. The largest payload the app
+ * downloads is the item catalogue (`itemsRequest`, about 6.5 MB on 2026-10-21, some 65 % of the
+ * limit; a match detail is about 1 MB); anything bigger is malformed or hostile. Past the limit the
+ * download of the item catalogue would fail for good, so the API canary watches its share.
  */
 export const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 

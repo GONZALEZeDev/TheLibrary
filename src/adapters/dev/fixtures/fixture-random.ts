@@ -1,11 +1,12 @@
 /**
- * Seeded pseudo-randomness shared by the fixtures that invent a match.
+ * Seeded pseudo-randomness shared by the fixtures that invent a match or a match history.
  *
  * A fixture must give the same data at every run, which `Math.random()` cannot: everything is drawn
- * from a generator seeded by the match, and a fixture that needs several independent sequences
- * seeds one generator for each (see `match-metadata.fixture.ts`). The functions below draw from the
- * generator they are given, one draw for `between` and `pick` and one per item for `shuffled`; the
- * order of the draws is part of what a fixture generates, so they must not change.
+ * from a generator seeded by the match (the history, by a constant), and a fixture that needs
+ * several independent sequences seeds one generator for each (see `match-metadata.fixture.ts`). The
+ * functions below draw from the generator they are given, one draw for `between` and `pick` and one
+ * per item for `shuffled`; the order of the draws is part of what a fixture generates, so they must
+ * not change.
  *
  * @packageDocumentation
  */
@@ -14,8 +15,7 @@
 export type Random = () => number;
 
 /**
- * A small deterministic pseudo-random generator (mulberry32). Same algorithm as
- * `match-history.fixture.ts`.
+ * A small deterministic pseudo-random generator (mulberry32), the one every fixture draws from.
  *
  * @param seed - Any 32-bit integer.
  * @returns A function returning numbers in [0, 1).

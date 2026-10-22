@@ -164,9 +164,16 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     exclusive: sync,
     logger,
   });
-  // The hero and the item catalogues name what the match page shows; they share the cache table
-  // and the asset budget, and the breakdown below reads them through the very instances the UI uses.
-  const heroes = new HeroCatalogService(linkedAccounts, api, apiCache, logger, now);
+  // The hero, item and rank catalogues name what the match page shows; they share the cache table
+  // and the asset budget. The UI reads the heroes itself, and the items and the ranks only through
+  // the breakdown below, which gets the very instances (so `assets` is not one of the services).
+  const heroes = new HeroCatalogService({
+    accountSource: linkedAccounts,
+    api,
+    cache: apiCache,
+    logger,
+    now,
+  });
   const assets = new GameAssetService({
     accountSource: linkedAccounts,
     api,
@@ -175,7 +182,7 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     now,
   });
   // Tells the damage of a match by source, and its build, from the projections stored, the archive
-  // (through the very `reader` above) and the two catalogues.
+  // (through the very `reader` above) and the catalogues.
   const breakdown = new MatchBreakdownService({
     accountSource: linkedAccounts,
     details: detailRepository,
@@ -223,7 +230,6 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     settings: new SettingsService(settingsStore, logger),
     matches: new MatchesService(linkedAccounts, matches, now),
     heroes,
-    assets,
     details,
     sync,
     account,

@@ -153,21 +153,11 @@ function catchAppError(action: () => unknown): AppError {
 describe('summarizeArchive', () => {
   it('summarises the tracked player of an archive', () => {
     expect(summarizeArchive(archive())).toEqual({
-      won: true,
-      durationS: 2_070,
-      kills: 11,
-      deaths: 3,
-      assists: 17,
-      netWorth: 41_250,
       snapshots: 13,
       // 7 entries of which 3 are shop items (`upgrade_id` 1); the rest unlock or upgrade abilities.
       itemsBought: 3,
       fetchedAt: FETCHED_AT,
     });
-  });
-
-  it('reads a defeat', () => {
-    expect(summarizeArchive(archive({ matchInfo: { winning_team: 0 } })).won).toBe(false);
   });
 
   it('reads the tracked player by account id, wherever they are in the list', () => {
@@ -177,7 +167,8 @@ describe('summarizeArchive', () => {
     const facts = summarizeArchive(archive({ players: [tracked, ...others] }));
     const lastFacts = summarizeArchive(archive({ players: [...others, tracked] }));
 
-    expect(facts.kills).toBe(11);
+    // 13 snapshots are the tracked player's (every other player has one).
+    expect(facts.snapshots).toBe(13);
     expect(lastFacts).toEqual(facts);
   });
 
@@ -187,7 +178,7 @@ describe('summarizeArchive', () => {
     expect(facts.snapshots).toBe(0);
     expect(facts.itemsBought).toBe(0);
     // The rest of the facts is unaffected.
-    expect(facts.kills).toBe(11);
+    expect(facts.fetchedAt).toBe(FETCHED_AT);
   });
 
   it('counts empty arrays as zero', () => {
@@ -261,6 +252,8 @@ describe('summarizeArchive', () => {
     }
   });
 
+  // The scoreboard fields are not among the facts, but this reader is the door check of an archive:
+  // an archive whose tracked player's line of the scoreboard is unreadable is refused.
   it.each([
     ['kills', { kills: 'S3CR3T' }, 'tracked_player.kills: invalid_type'],
     ['deaths', { deaths: undefined }, 'tracked_player.deaths: invalid_type'],

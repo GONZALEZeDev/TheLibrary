@@ -9,6 +9,9 @@
  * (`projected`). {@link analysisSubjectOf} is that decision, so that the two cannot drift apart. It
  * reads the database only: no archive, no download, no write.
  *
+ * Its first step, {@link archivedAccountOf}, is the whole gate of a view that reads the archive and
+ * nothing else (the players tab): the linked account, and a match archived for it.
+ *
  * @packageDocumentation
  */
 import { PERSONAL_WINDOW } from '../core/analysis/insights/thresholds';
@@ -57,6 +60,28 @@ export interface AnalysisSubjectDependencies {
 }
 
 /**
+ * Find the linked account a match is archived for: the first step of {@link analysisSubjectOf},
+ * and the whole gate of a view that needs the archive of a match and no projection.
+ *
+ * @param deps - The linked account and the detail states (see {@link AnalysisSubjectDependencies}).
+ * @param matchId - The match.
+ * @returns The linked account, or `null` without one or when the detail of the match is not
+ *   archived for it (the match is not stored, or its detail is not `ready`).
+ * @throws AppError of kind `storage` when the database fails.
+ */
+export async function archivedAccountOf(
+  deps: Pick<AnalysisSubjectDependencies, 'accountSource' | 'details'>,
+  matchId: MatchId,
+): Promise<AccountId | null> {
+  const accountId = await deps.accountSource.currentAccountId();
+  if (accountId === null) {
+    return null;
+  }
+  const detail = await deps.details.getDetail(accountId, matchId);
+  return detail?.status === 'ready' ? accountId : null;
+}
+
+/**
  * Find where a match stands before anything heavy is read for it: the one gate that
  * `AnalysisService.getMatchAnalysis`, `AnalysisService.analyseMatch` and
  * `AnalysisService.refreshCommunity` share, so that a match is projected, or downloaded community
@@ -82,12 +107,8 @@ export async function analysisSubjectOf(
   matchId: MatchId,
   required: RequiredProjection,
 ): Promise<AnalysisSubject> {
-  const accountId = await deps.accountSource.currentAccountId();
+  const accountId = await archivedAccountOf(deps, matchId);
   if (accountId === null) {
-    return { kind: 'not_analysed' };
-  }
-  const detail = await deps.details.getDetail(accountId, matchId);
-  if (detail?.status !== 'ready') {
     return { kind: 'not_analysed' };
   }
   const projection = await deps.metrics.getProjection(accountId, matchId);

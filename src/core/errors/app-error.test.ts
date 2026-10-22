@@ -4,7 +4,14 @@
  * @packageDocumentation
  */
 import { describe, expect, it } from 'vitest';
-import { APP_ERROR_KINDS, AppError, errorLogContext, isAppError, toAppError } from './app-error';
+import {
+  APP_ERROR_KINDS,
+  AppError,
+  errorLogContext,
+  isAppError,
+  issueOf,
+  toAppError,
+} from './app-error';
 
 describe('AppError', () => {
   it('keeps its kind, message, cause and context', () => {
@@ -124,6 +131,28 @@ describe('errorLogContext', () => {
 
   it('keeps a null cause, which is a value thrown like any other', () => {
     expect(errorLogContext(toAppError(null))).toMatchObject({ kind: 'unexpected', cause: 'null' });
+  });
+});
+
+describe('issueOf', () => {
+  it('gives the issue of the context', () => {
+    const error = new AppError('invalid_payload', 'The archive is not what is expected', {
+      context: { issue: 'tracked_player.items.0.upgrade_id: invalid_type', matchId: 100000001 },
+    });
+
+    expect(issueOf(error)).toBe('tracked_player.items.0.upgrade_id: invalid_type');
+  });
+
+  it.each([
+    ['no issue', {}],
+    ['an issue that is not a text', { issue: 7 }],
+    ['a null issue', { issue: null }],
+  ])('says unknown for an error with %s', (_name, context) => {
+    const error = new AppError('invalid_payload', 'The archive is not what is expected', {
+      context,
+    });
+
+    expect(issueOf(error)).toBe('unknown');
   });
 });
 

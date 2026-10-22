@@ -136,7 +136,8 @@ export interface CatalogueItem {
   readonly className: string;
   /**
    * English display name, or `null` when the catalogue has none: its `name` is empty or repeats the
-   * class name (220 of the 781 entries). The caller then falls back to a readable class name.
+   * class name (220 of the 781 entries on 2026-10-21). The caller then falls back to a readable
+   * class name.
    */
   readonly name: string | null;
   /** Kind of the entry. */
@@ -244,8 +245,9 @@ export function parseItemCatalogue(body: unknown): CatalogueItem[] {
 /**
  * One tier of the rank catalogue, as deadlock-api returns it (only the fields the app uses).
  *
- * `images` holds forty keys per tier; the app reads the tier badge only. The sub-rank images are
- * served by `api.deadlock-api.com`, which the release Content Security Policy does not allow.
+ * `images` holds several images per tier (the sub-rank badges of the ranked tiers among them); the
+ * app reads the tier badge only. The sub-rank images are served by `api.deadlock-api.com`, which
+ * the release Content Security Policy does not allow.
  */
 const rankEntrySchema = z.object({
   tier: z.int().nonnegative(),

@@ -69,7 +69,7 @@ import type { MetricKey } from '../core/analysis/metric';
 import { projectMetrics, PROJECTION_VERSION } from '../core/analysis/registry';
 import type { AccountId } from '../core/domain/account';
 import type { MatchId } from '../core/domain/match';
-import { isAppError, toAppError, type AppError } from '../core/errors/app-error';
+import { isAppError, issueOf, toAppError, type AppError } from '../core/errors/app-error';
 import type { ArchiveEnvelope } from '../core/match-detail/archive-envelope';
 import type { LogContext, Logger } from '../ports/logger.port';
 import type { ArchiveReaderService } from './archive-reader.service';
@@ -139,18 +139,6 @@ interface RunState {
   readonly toldKeys: Set<MetricKey>;
   /** Whether this run told that a damage matrix could not be read. */
   hasToldDamageNotRead: boolean;
-}
-
-/**
- * The place and the code of the problem an `invalid_payload` error reports, as `<path>: <code>`:
- * never a value of the payload, so it can be logged.
- *
- * @param error - The error of an archive that is not what is expected.
- * @returns The issue, or `unknown` when the error carries none.
- */
-function issueOf(error: AppError): string {
-  const { issue } = error.context;
-  return typeof issue === 'string' ? issue : 'unknown';
 }
 
 /**

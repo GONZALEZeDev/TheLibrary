@@ -1,14 +1,15 @@
 /**
- * Storage of the metrics of the match analysis, in the `match_projections` and `match_metrics`
- * tables.
+ * Storage of the values of the match analysis, the metrics and the damage by source, in the
+ * `match_projections` and `match_metrics` tables.
  *
  * Analysing a match starts from its archived detail, a large file. The projection reads that file
  * once and keeps its numbers here: one row per projected match (`match_projections`: which version
  * of the metrics produced it, the badge the player had, whether a player left, whether the match
- * could not be analysed at all) and one row per metric of that match (`match_metrics`: a key such as
- * `kda` or `souls_per_min_mid.community_window`, and a number or `null`). Neither table is a source
- * of truth: the archive can rebuild both, and the rows of an account are deleted with the rest of
- * its data.
+ * could not be analysed at all) and one row per stored value of that match (`match_metrics`: a
+ * metric, with a key such as `kda` or `souls_per_min_mid.community_window`, or a damage value, with
+ * a key such as `damage_source.<class name>`; and a number or `null`). Neither table is a source of
+ * truth: the archive can rebuild both, and the rows of an account are deleted with the rest of its
+ * data.
  *
  * The database never holds a transaction across calls (see the database port), so a projection is
  * written in an order that makes an interruption harmless instead of atomic: the projection row,
@@ -72,9 +73,9 @@ const READY: DetailStatus = 'ready';
 const METRIC_COLUMNS = ['account_id', 'match_id', 'metric_key', 'value'] as const;
 
 /**
- * Metrics written per statement. 50 rows of 4 columns make 200 parameters, far below SQLite's limit
- * (32,766), while the 36 values of a match still take one statement (the same size as the batch of
- * the match history).
+ * Rows written per statement. 50 rows of 4 columns make 200 parameters, far below SQLite's limit
+ * (32,766), while the metrics and the damage sources of a match take one or two statements (the
+ * same size as the batch of the match history).
  */
 const BATCH_SIZE = 50;
 

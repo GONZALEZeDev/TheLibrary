@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { ASSET_IMAGE_ORIGIN } from './assets.schema';
-import { parseHeroAssets, parseHeroes } from './heroes.schema';
+import { parseHeroAssets } from './heroes.schema';
 
 /**
  * A hero of the catalogue in the shape of the API, reduced to a few of its many fields.
@@ -61,51 +61,6 @@ function rawPaige(items?: unknown) {
   });
 }
 
-describe('parseHeroes', () => {
-  it('keeps the id and the name of each hero, sorted by id', () => {
-    expect(parseHeroes([rawHero(67, 'Paige'), rawHero(1, 'Infernus')])).toEqual([
-      { id: 1, name: 'Infernus' },
-      { id: 67, name: 'Paige' },
-    ]);
-  });
-
-  it('leaves out the heroes players cannot pick', () => {
-    const heroes = parseHeroes([
-      rawHero(67, 'Paige'),
-      rawHero(88, 'Baba', { in_development: true }),
-      rawHero(90, 'Old', { disabled: true }),
-      rawHero(91, 'Hidden', { player_selectable: false }),
-    ]);
-
-    expect(heroes.map((hero) => hero.name)).toEqual(['Paige']);
-  });
-
-  it('keeps a hero whose flags are missing', () => {
-    expect(parseHeroes([{ id: 67, name: 'Paige' }])).toEqual([{ id: 67, name: 'Paige' }]);
-  });
-
-  it('skips a malformed hero instead of failing the catalogue', () => {
-    const heroes = parseHeroes([rawHero(67, 'Paige'), rawHero(1, ''), { id: 'x', name: 'Bad' }]);
-
-    expect(heroes).toEqual([{ id: 67, name: 'Paige' }]);
-  });
-
-  it('rejects a body that is not an array, or with no playable hero', () => {
-    expect(() => parseHeroes({})).toThrow(expect.objectContaining({ kind: 'invalid_payload' }));
-    expect(() => parseHeroes([])).toThrow(expect.objectContaining({ kind: 'invalid_payload' }));
-    expect(() => parseHeroes([rawHero(88, 'Baba', { in_development: true })])).toThrow(
-      expect.objectContaining({ kind: 'invalid_payload' }),
-    );
-  });
-});
-
-describe('parseHeroes with assets in the catalogue', () => {
-  it('still returns the id and the name only', () => {
-    // The hero cache and its callers expect a bare Hero, whatever the entry carries.
-    expect(parseHeroes([rawPaige()])).toStrictEqual([{ id: 67, name: 'Paige' }]);
-  });
-});
-
 describe('parseHeroAssets', () => {
   it("reads Paige's image and loadout", () => {
     expect(parseHeroAssets([rawPaige()])).toStrictEqual([
@@ -131,11 +86,14 @@ describe('parseHeroAssets', () => {
   it('applies the rules of the playable heroes, sorted by id', () => {
     const heroes = parseHeroAssets([
       rawPaige(),
+      // Heroes players cannot pick.
       rawHero(88, 'Baba', { in_development: true }),
       rawHero(90, 'Old', { disabled: true }),
       rawHero(91, 'Hidden', { player_selectable: false }),
+      // Malformed heroes, skipped instead of failing the catalogue.
       rawHero(1, ''),
       { id: 'x', name: 'Bad' },
+      // A hero without any flag: an absent flag never hides a hero.
       { id: 2, name: 'Infernus' },
     ]);
 

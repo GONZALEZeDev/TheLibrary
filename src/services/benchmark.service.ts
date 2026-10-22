@@ -32,7 +32,7 @@
  * @packageDocumentation
  */
 import { z } from 'zod';
-import { badgeBounds, cohortKey, RANK_TIER_NAMES, type Cohort } from '../core/analysis/cohort';
+import { badgeBounds, cohortKey, type Cohort } from '../core/analysis/cohort';
 import { MIN_COHORT_MATCHES } from '../core/analysis/insights/thresholds';
 import { PERCENTILE_POINTS } from '../core/analysis/statistics';
 import type { CohortQuery } from '../core/deadlock-api/endpoints';
@@ -40,6 +40,7 @@ import { BENCHMARK_KEYS, type MetricBenchmark } from '../core/deadlock-api/metri
 import type { CurvePoint } from '../core/deadlock-api/performance-curve.schema';
 import type { AccountId } from '../core/domain/account';
 import { PAIGE_HERO_ID } from '../core/domain/hero';
+import { RANK_TIER_NAMES } from '../core/domain/rank';
 import { errorLogContext, toAppError, type AppError } from '../core/errors/app-error';
 import { describeFirstIssue } from '../core/errors/first-issue';
 import type { AccountSource } from '../ports/account-source.port';

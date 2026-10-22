@@ -11,7 +11,11 @@ import type { AccountId } from '../core/domain/account';
 import type { MatchId } from '../core/domain/match';
 import type { AccountSource } from '../ports/account-source.port';
 import { createTestDatabase, matchSummary, testAccountId, testMatchId } from '../test/test-data';
-import { analysisSubjectOf, type AnalysisSubjectDependencies } from './analysis-subject';
+import {
+  analysisSubjectOf,
+  archivedAccountOf,
+  type AnalysisSubjectDependencies,
+} from './analysis-subject';
 import { MatchDetailRepository } from './match-detail.repository';
 import { MatchesRepository } from './matches.repository';
 import { MetricsRepository, type ProjectionRecord } from './metrics.repository';
@@ -235,5 +239,32 @@ describe('analysisSubjectOf', () => {
         startTime: 2_000,
       },
     });
+  });
+});
+
+describe('archivedAccountOf', () => {
+  it('is the linked account when the detail of the match is archived, projected or not', async () => {
+    const { deps, metrics } = await createSeededFixture([
+      { n: 1, startTime: 1_000, archived: true },
+      { n: 2, startTime: 2_000, archived: true },
+    ]);
+    // The first match has no projection at all: the archive is all this gate asks for.
+    await metrics.saveProjection(ACCOUNT_ID, matchId(2), projection({ failed: true }), new Map());
+
+    await expect(archivedAccountOf(deps, matchId(1))).resolves.toBe(ACCOUNT_ID);
+    await expect(archivedAccountOf(deps, matchId(2))).resolves.toBe(ACCOUNT_ID);
+  });
+
+  it('is null when no account is linked', async () => {
+    const { deps } = await createSeededFixture([{ n: 1, startTime: 1_000, archived: true }], null);
+
+    await expect(archivedAccountOf(deps, matchId(1))).resolves.toBeNull();
+  });
+
+  it('is null when the detail of the match is not archived, or the match is not stored', async () => {
+    const { deps } = await createSeededFixture([{ n: 1, startTime: 1_000, archived: false }]);
+
+    await expect(archivedAccountOf(deps, matchId(1))).resolves.toBeNull();
+    await expect(archivedAccountOf(deps, matchId(9))).resolves.toBeNull();
   });
 });

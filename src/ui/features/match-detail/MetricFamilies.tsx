@@ -17,11 +17,8 @@
 import type { TFunction } from 'i18next';
 import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
-import {
-  DURATION_WINDOWS,
-  RANK_TIER_NAMES,
-  type DurationWindow,
-} from '../../../core/analysis/cohort';
+import { DURATION_WINDOWS, type DurationWindow } from '../../../core/analysis/cohort';
+import { RANK_TIER_NAMES } from '../../../core/domain/rank';
 import type { CommunityState, FamilyView, MetricRowView } from '../../../services/analysis-view';
 import {
   formatDifference,

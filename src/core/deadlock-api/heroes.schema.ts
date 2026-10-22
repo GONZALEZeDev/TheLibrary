@@ -8,7 +8,7 @@
  * @packageDocumentation
  */
 import { z } from 'zod';
-import type { Hero, HeroAsset, HeroLoadout } from '../domain/hero';
+import type { HeroAsset, HeroLoadout } from '../domain/hero';
 import { AppError } from '../errors/app-error';
 import { firstAssetImageUrl } from './assets.schema';
 
@@ -51,6 +51,12 @@ function isPlayable(hero: CatalogueHero): boolean {
 const SIGNATURE_SLOTS = ['signature1', 'signature2', 'signature3', 'signature4'] as const;
 
 /**
+ * The number of signature abilities of a hero's loadout: a loadout this module reads always has
+ * exactly this many (see {@link HeroLoadout}), so what keeps a loadout can check it.
+ */
+export const SIGNATURE_ABILITY_COUNT = SIGNATURE_SLOTS.length;
+
+/**
  * Read a class name out of a slot of the `items` map.
  *
  * @param value - What the map holds in the slot.
@@ -79,7 +85,7 @@ function readLoadout(items: CatalogueHero['items']): HeroLoadout | null {
     const className = classNameOf(items[slot]);
     return className === null ? [] : [className];
   });
-  if (weapon === null || melee === null || abilities.length !== SIGNATURE_SLOTS.length) {
+  if (weapon === null || melee === null || abilities.length !== SIGNATURE_ABILITY_COUNT) {
     return null;
   }
   return { weapon, melee, abilities };
@@ -126,18 +132,4 @@ export function parseHeroAssets(body: unknown): HeroAsset[] {
     });
   }
   return heroes.toSorted((first, second) => first.id - second.id);
-}
-
-/**
- * Validate the hero catalogue and keep the id and the English name of its playable heroes.
- *
- * It is {@link parseHeroAssets} reduced to the bare {@link Hero}: what only needs to name a hero
- * (the hero cache and its callers) never sees the portrait or the loadout.
- *
- * @param body - The parsed JSON body of the response.
- * @returns The playable heroes, sorted by id.
- * @throws AppError of kind `invalid_payload` when the body is not an array or holds no valid hero.
- */
-export function parseHeroes(body: unknown): Hero[] {
-  return parseHeroAssets(body).map(({ id, name }) => ({ id, name }));
 }

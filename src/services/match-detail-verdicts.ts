@@ -29,6 +29,7 @@ import {
   AppError,
   errorLogContext,
   isAppError,
+  issueOf,
   type AppErrorContext,
 } from '../core/errors/app-error';
 
@@ -118,8 +119,7 @@ export function unreadableAnswer(issue: string, body: string): Failed {
  * @returns Its `issue` (a field path and a code, or a name such as `tracked_player_missing`).
  */
 export function describeInvalidPayload(error: AppError): string {
-  const { issue } = error.context;
-  return `invalid_payload (${typeof issue === 'string' ? issue : 'unknown'})`;
+  return `invalid_payload (${issueOf(error)})`;
 }
 
 /**

@@ -12,6 +12,7 @@
 import { PAIGE_HERO_ID } from '../../../core/domain/hero';
 import type { AccountId } from '../../../core/domain/account';
 import { RANKED_MATCH_MODE, UNRANKED_MATCH_MODE } from '../../../core/match-detail/detail-status';
+import { between, createRandom } from './fixture-random';
 
 /**
  * The synthetic account of the fixtures. It was never looked up: any resemblance with a real
@@ -65,23 +66,6 @@ export interface MatchHistoryFixtureOptions {
 const OTHER_HERO_IDS = [1, 2, 3, 4, 6, 7, 13, 15, 20, 35];
 
 /**
- * A small deterministic pseudo-random generator (mulberry32): the history must be the same at
- * every run, which `Math.random()` cannot guarantee.
- *
- * @param seed - Any 32-bit integer.
- * @returns A function returning numbers in [0, 1).
- */
-function createRandom(seed: number): () => number {
-  let state = seed;
-  return () => {
-    state = (state + 0x6d2b79f5) | 0;
-    let value = Math.imul(state ^ (state >>> 15), 1 | state);
-    value = (value + Math.imul(value ^ (value >>> 7), 61 | value)) ^ value;
-    return ((value ^ (value >>> 14)) >>> 0) / 4_294_967_296;
-  };
-}
-
-/**
  * Generate a synthetic match history, most recent match first like the API.
  *
  * About 40 % of the matches are Paige matches, 60 % are ranked, and the player wins about half of
@@ -94,52 +78,52 @@ export function createMatchHistoryFixture(
   options: MatchHistoryFixtureOptions,
 ): RawMatchHistoryRow[] {
   const { now, accountId = FIXTURE_ACCOUNT_ID, count = 240 } = options;
+  // Seeded, so that the history is the same at every run, which `Math.random()` cannot guarantee.
   const random = createRandom(67);
-  const between = (min: number, max: number) => min + Math.floor(random() * (max - min + 1));
   const rows: RawMatchHistoryRow[] = [];
   let startTime = Math.floor(now / 1000) - 2 * 3600;
   let matchId = 108_600_000;
   for (let index = 0; index < count; index += 1) {
     const ranked = random() < 0.6;
-    const playerTeam = between(0, 1);
+    const playerTeam = between(random, 0, 1);
     const won = random() < 0.5;
-    const durationS = between(1_200, 3_000);
+    const durationS = between(random, 1_200, 3_000);
     rows.push({
       account_id: accountId,
       match_id: matchId,
       hero_id:
         random() < 0.4
           ? PAIGE_HERO_ID
-          : (OTHER_HERO_IDS[between(0, OTHER_HERO_IDS.length - 1)] ?? 1),
-      hero_level: between(20, 36),
+          : (OTHER_HERO_IDS[between(random, 0, OTHER_HERO_IDS.length - 1)] ?? 1),
+      hero_level: between(random, 20, 36),
       start_time: startTime,
       game_mode: 1,
       match_mode: ranked ? RANKED_MATCH_MODE : UNRANKED_MATCH_MODE,
       player_team: playerTeam,
-      player_kills: between(0, 15),
-      player_deaths: between(0, 12),
-      player_assists: between(2, 30),
-      denies: between(0, 40),
-      net_worth: between(15_000, 60_000),
-      last_hits: between(60, 300),
+      player_kills: between(random, 0, 15),
+      player_deaths: between(random, 0, 12),
+      player_assists: between(random, 2, 30),
+      denies: between(random, 0, 40),
+      net_worth: between(random, 15_000, 60_000),
+      last_hits: between(random, 60, 300),
       team_abandoned: null,
       abandoned_time_s: null,
       match_duration_s: durationS,
       match_result: won ? playerTeam : 1 - playerTeam,
-      objectives_mask_team0: between(0, 65_535),
-      objectives_mask_team1: between(0, 65_535),
+      objectives_mask_team0: between(random, 0, 65_535),
+      objectives_mask_team1: between(random, 0, 65_535),
       brawl_score_team0: null,
       brawl_score_team1: null,
       brawl_avg_round_time_s: null,
-      ranked_display_badge: ranked ? between(60, 80) : null,
-      ranked_delta: ranked ? (won ? between(5, 20) : -between(5, 20)) : null,
+      ranked_display_badge: ranked ? between(random, 60, 80) : null,
+      ranked_delta: ranked ? (won ? between(random, 5, 20) : -between(random, 5, 20)) : null,
       ranked_calibration_match: ranked ? false : null,
       ranked_used_demotion_protection: null,
       player_match_outcome: won ? 1 : 2,
     });
     // The previous match ended between 1 and 20 hours earlier.
-    startTime -= durationS + between(3_600, 72_000);
-    matchId -= between(500, 9_000);
+    startTime -= durationS + between(random, 3_600, 72_000);
+    matchId -= between(random, 500, 9_000);
   }
   return rows;
 }

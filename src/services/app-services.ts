@@ -10,7 +10,6 @@
 import type { Logger } from '../ports/logger.port';
 import type { AccountService } from './account.service';
 import type { AnalysisService } from './analysis.service';
-import type { GameAssetService } from './game-asset.service';
 import type { HeroCatalogService } from './hero-catalog.service';
 import type { MatchBreakdownService } from './match-breakdown.service';
 import type { MatchDetailService } from './match-detail.service';
@@ -28,8 +27,6 @@ export interface AppServices {
   readonly matches: MatchesService;
   /** Hero names. */
   readonly heroes: HeroCatalogService;
-  /** Game assets: the names and images of the items, abilities and weapons, and the rank badges. */
-  readonly assets: GameAssetService;
   /** Detail of the Paige matches: download, archive, and what the match page shows of it. */
   readonly details: MatchDetailService;
   /** Synchronisation of the match history with deadlock-api. */

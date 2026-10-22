@@ -4,11 +4,12 @@
  *
  * The community data is published per rank bracket and per duration window, so the app has to
  * decide, for one match, which rank and which window to ask for, how to name the answer in its
- * cache, and how much of each phase of the match the answer actually covers.
+ * cache, and how much of each phase of the match the answer actually covers. The review of a series
+ * of matches asks for the tier above the player's own instead, whatever the length of each match.
  *
  * @packageDocumentation
  */
-import { BADGES_PER_TIER, SUBRANKS_PER_TIER, isBadge } from '../domain/rank';
+import { BADGES_PER_TIER, MAX_BADGE, SUBRANKS_PER_TIER, isBadge } from '../domain/rank';
 import { MIN_PHASE_MINUTES } from './insights/thresholds';
 import type { PhaseSpan } from './phases';
 
@@ -54,6 +55,32 @@ export const DURATION_WINDOWS: readonly DurationWindow[] = [
 ];
 
 /**
+ * The window of a request that does not depend on the length of a match: from the shortest match
+ * of the first window to the longest of the last one, so it holds the matches of every window at
+ * once. It is the span of {@link DURATION_WINDOWS}, and a test ties the two.
+ *
+ * The review uses it for the figures it reads for a whole series of matches, such as the items the
+ * players of a tier buy, which are asked once for the tier and not once per duration window.
+ */
+export const ANY_LENGTH_WINDOW: DurationWindow = { minS: 0, maxS: 7_000 };
+
+/**
+ * The tier of a badge, whatever its sub-rank.
+ *
+ * @param badge - A badge ({@link isBadge}).
+ * @returns The badge divided by {@link BADGES_PER_TIER}, rounded down: 4 for 43 and for 47.
+ */
+function tierOf(badge: number): number {
+  return Math.floor(badge / BADGES_PER_TIER);
+}
+
+/**
+ * The highest tier: the tier of {@link MAX_BADGE} (Eternus, 11). It follows the bounds of the
+ * badges, so a tier added by the game is one change in one place.
+ */
+const TOP_TIER = tierOf(MAX_BADGE);
+
+/**
  * The time up to which a match of the shortest window is taken to have been played, in seconds
  * (12 minutes).
  *
@@ -94,8 +121,29 @@ export function cohortRankFor(matchBadge: number | null, currentBadge: number | 
   if (badge === null) {
     return { kind: 'all' };
   }
-  const tier = Math.floor(badge / BADGES_PER_TIER);
+  const tier = tierOf(badge);
   return tier === 0 ? { kind: 'all' } : { kind: 'tier', tier };
+}
+
+/**
+ * Choose the rank of the cohort the review compares the player with: the tier above their own.
+ *
+ * The review tells the player where to improve, so it compares them with the players a step ahead
+ * of them, not with their peers. Only the current badge counts: the review looks at the player as
+ * they are now, over their last matches, whatever rank each of them was played at. Like
+ * {@link cohortRankFor}, it reads `0` (no rank yet) and a number that is no badge
+ * ({@link isBadge}) as no rank, so no cohort is ever made of a tier that has no name.
+ *
+ * @param currentBadge - The badge the player has now, or `null` when it is unknown.
+ * @returns The tier above the one of the badge, whatever its sub-rank; Eternus, which has no tier
+ *   above, stays on its own tier; a badge of tier 0 (from 1 to 9, which the game does not give in
+ *   practice) gives tier 1. With no badge, every rank.
+ */
+export function reviewCohortRank(currentBadge: number | null): CohortRank {
+  if (!isBadge(currentBadge)) {
+    return { kind: 'all' };
+  }
+  return { kind: 'tier', tier: Math.min(tierOf(currentBadge) + 1, TOP_TIER) };
 }
 
 /**
@@ -109,15 +157,25 @@ export function badgeBounds(tier: number): { min: number; max: number } {
 }
 
 /**
+ * Name a cohort rank, for the cache of the community data and the logs.
+ *
+ * @param rank - The rank of the cohort.
+ * @returns `tier<N>` for a tier (`tier7`), or `all` for every rank.
+ */
+export function cohortRankKey(rank: CohortRank): string {
+  return rank.kind === 'tier' ? `tier${String(rank.tier)}` : 'all';
+}
+
+/**
  * Name a cohort, for the cache of the community data and the logs.
  *
  * @param cohort - The cohort.
  * @returns `tier<N>.<minS>-<maxS>` for a tier (`tier4.1500-1799`), or `all.<minS>-<maxS>` for every
- *   rank.
+ *   rank: the key of its rank ({@link cohortRankKey}), then its window.
  */
 export function cohortKey(cohort: Cohort): string {
-  const rank = cohort.rank.kind === 'tier' ? `tier${String(cohort.rank.tier)}` : 'all';
-  return `${rank}.${String(cohort.window.minS)}-${String(cohort.window.maxS)}`;
+  const { minS, maxS } = cohort.window;
+  return `${cohortRankKey(cohort.rank)}.${String(minS)}-${String(maxS)}`;
 }
 
 /**

@@ -88,6 +88,15 @@ const METRIC_BY_KEY: ReadonlyMap<MetricKey, MetricDefinition> = new Map(
 );
 
 /**
+ * What follows the key of a value to name the same value over the span of the match that the
+ * community's curve is read on: the key of a metric's community window, and the key of any other
+ * value that is compared with the community over that span.
+ *
+ * The key is stored with the value, so its format never changes once released.
+ */
+export const COMMUNITY_WINDOW_SUFFIX = '.community_window';
+
+/**
  * The key a metric's community window is projected under: the player's rate over the span of the
  * match that the community's curve is read on (see {@link CommunitySource}). It sits next to the
  * metric's own value, and is only projected for a metric compared with the community's curve.
@@ -98,7 +107,7 @@ const METRIC_BY_KEY: ReadonlyMap<MetricKey, MetricDefinition> = new Map(
  * @returns The key of its community window.
  */
 export function communityWindowKey(key: MetricKey): string {
-  return `${key}.community_window`;
+  return `${key}${COMMUNITY_WINDOW_SUFFIX}`;
 }
 
 /**

@@ -15,6 +15,10 @@
  * new one: it needs a bump of `PROJECTION_VERSION` (`../registry`), so that every match is projected
  * again.
  *
+ * The thresholds of the review of the player's last matches are at the end of the file. They all
+ * act when the review is shown, on the values already stored, and none of them is applied when a
+ * match is projected: changing one takes effect at once and needs no new projection.
+ *
  * @packageDocumentation
  */
 
@@ -153,3 +157,68 @@ export const CURVE_WELL_Z = 1;
  * summary readable at a glance; the full list is in the metrics below it.
  */
 export const INSIGHTS_PER_SIDE = 3;
+
+// The thresholds of the review. They act when the review is shown, not at projection (see the
+// header of this file): the stored values do not depend on any of them.
+
+/**
+ * How many of the player's most recent analysed matches the review covers, and how many it compares
+ * them with: the progress sets the last {@link REVIEW_MATCHES} against the same number before them,
+ * so the listing reads twice as many matches.
+ *
+ * Twenty matches give a figure that does not swing with one game, and are recent enough to follow
+ * the player's current form: the same reasoning as {@link PERSONAL_WINDOW}, of which it has the
+ * size. A window with fewer than {@link MIN_PERSONAL_MATCHES} values shows no figure.
+ */
+export const REVIEW_MATCHES = 20;
+
+/**
+ * The number of deaths before the first resistance item from which a match is weak for that point:
+ * three or more deaths before it is a pattern to work on. No death at all before it is clean (the
+ * strong end of the point), and one or two is neither. The count runs up to the first resistance
+ * item, whenever it is bought.
+ */
+export const DEATHS_BEFORE_RESISTANCE_WEAK = 3;
+
+/**
+ * The place among the twelve players of the match, on a figure of the scoreboard, from which the
+ * match is weak for that point: 10th to 12th, the last quarter of the players (three of twelve). It
+ * mirrors {@link PLACE_STRONG_UP_TO}.
+ */
+export const PLACE_WEAK_FROM = 10;
+
+/**
+ * The place among the twelve players of the match, on a figure of the scoreboard, up to which the
+ * match is strong for that point: 1st to 3rd, the first quarter of the players (three of twelve).
+ * It mirrors {@link PLACE_WEAK_FROM}, so that a place in the middle six is neither.
+ */
+export const PLACE_STRONG_UP_TO = 3;
+
+/**
+ * The gap in souls, at 10 minutes, between the player and their lane opponent from which the lane
+ * counts as clearly won or lost; below it, the lane counts as even. The value is set by hand: no
+ * community figure tells what an ordinary lane gap is, so the lane cannot be placed among the
+ * players of a tier like the other points, and this gap alone decides.
+ */
+export const LANE_SOULS_CLEAR_GAP = 500;
+
+/**
+ * The share of the matches that have a mark from which a point is listed in the summary of the
+ * review, as a weakness or as a strength: a quarter (5 of 20). A point flagged in fewer matches
+ * than that is more likely an accident of a few games than a habit, and it stays in its own tab.
+ * It is a share and not a count, so it holds when the review covers fewer than
+ * {@link REVIEW_MATCHES} matches.
+ */
+export const REVIEW_MIN_FLAGGED_SHARE = 0.25;
+
+/**
+ * The number of standard errors that the change of a figure, between the matches before and the
+ * last ones, must exceed to count as progress (or as the opposite); a smaller change is stable.
+ * The standard error is the one of the difference between the centres of the two windows,
+ * `√(s²_now / n_now + s²_before / n_before)`. The number is 1 like {@link STRONG_Z}, but it is not
+ * measured the same way: that one counts spreads of the matches around the player's habits, this
+ * one counts standard errors of a difference, which shrink as the windows hold more matches. At 1,
+ * a change that the spread of the matches alone does not explain is shown, and no higher bar is
+ * set since the review has few matches to tell with.
+ */
+export const PROGRESS_MIN_Z = 1;

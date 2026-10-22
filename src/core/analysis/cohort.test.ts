@@ -1,19 +1,23 @@
 /**
- * Tests of the cohorts: the duration window and the rank a match is compared with, the key of a
- * cohort, and the part of a phase that the community data covers for a cohort.
+ * Tests of the cohorts: the duration window and the rank a match is compared with, the rank above
+ * the player's that the review compares with, the key of a cohort and of a rank, and the part of a
+ * phase that the community data covers for a cohort.
  *
  * @packageDocumentation
  */
 import { describe, expect, it } from 'vitest';
 import { present } from '../../test/analysis-context';
 import {
+  ANY_LENGTH_WINDOW,
   DURATION_WINDOWS,
   badgeBounds,
   cohortKey,
   cohortRankFor,
+  cohortRankKey,
   communitySpan,
   durationWindowOf,
   guaranteedEndS,
+  reviewCohortRank,
 } from './cohort';
 import { phaseSpans } from './phases';
 import type { PhaseSpan } from './phases';
@@ -64,6 +68,14 @@ describe('durationWindowOf', () => {
   });
 });
 
+describe('ANY_LENGTH_WINDOW', () => {
+  it('spans every match length of the community data, from the first window to the last', () => {
+    expect(ANY_LENGTH_WINDOW).toEqual({ minS: 0, maxS: 7_000 });
+    expect(ANY_LENGTH_WINDOW.minS).toBe(present(DURATION_WINDOWS[0]).minS);
+    expect(ANY_LENGTH_WINDOW.maxS).toBe(present(DURATION_WINDOWS.at(-1)).maxS);
+  });
+});
+
 describe('cohortRankFor', () => {
   it('chooses the rank of the cohort', () => {
     expect(cohortRankFor(43, 61)).toEqual({ kind: 'tier', tier: 4 });
@@ -96,11 +108,60 @@ describe('cohortRankFor', () => {
   });
 });
 
+describe('reviewCohortRank', () => {
+  it('gives the tier above, Eternus on its own tier and all ranks without a rank', () => {
+    // A sub-rank does not matter: 44 is Sentinel 4 (tier 4), so the tier above is tier 5.
+    expect(reviewCohortRank(44)).toEqual({ kind: 'tier', tier: 5 });
+    // Eternus has no tier above: it stays on its own.
+    expect(reviewCohortRank(116)).toEqual({ kind: 'tier', tier: 11 });
+    // No rank at all: the placement matches (0), an unknown rank (null).
+    expect(reviewCohortRank(0)).toEqual({ kind: 'all' });
+    expect(reviewCohortRank(null)).toEqual({ kind: 'all' });
+    // A badge below the first real rank is tier 0 (Obscurus): the tier above is tier 1.
+    expect(reviewCohortRank(3)).toEqual({ kind: 'tier', tier: 1 });
+    // 47 is no sub-rank the game gives, but it passes the badge check and its tier is 4.
+    expect(reviewCohortRank(47)).toEqual({ kind: 'tier', tier: 5 });
+  });
+
+  it('goes up one tier, whatever the sub-rank, and stops at the last tier', () => {
+    // [badge, tier above]: the first and the last sub-rank of a few tiers, up to the last two.
+    const cases: readonly (readonly [number, number])[] = [
+      [11, 2],
+      [16, 2],
+      [61, 7],
+      [91, 10],
+      [96, 10],
+      [101, 11],
+      [106, 11],
+      [111, 11],
+      [116, 11],
+    ];
+    for (const [badge, tier] of cases) {
+      expect(reviewCohortRank(badge), String(badge)).toEqual({ kind: 'tier', tier });
+    }
+  });
+
+  it('reads a number that is not a badge as no rank, never as a tier without a name', () => {
+    // Past the last badge (tier 12 would have no name), negative or not a whole number.
+    for (const notABadge of [117, 121, -44, 44.5, Number.NaN]) {
+      expect(reviewCohortRank(notABadge), String(notABadge)).toEqual({ kind: 'all' });
+    }
+  });
+});
+
 describe('badgeBounds', () => {
   it('gives the bracket of the badges of a tier', () => {
     expect(badgeBounds(4)).toEqual({ min: 41, max: 46 });
     expect(badgeBounds(1)).toEqual({ min: 11, max: 16 });
     expect(badgeBounds(11)).toEqual({ min: 111, max: 116 });
+  });
+});
+
+describe('cohortRankKey', () => {
+  it('names a rank key', () => {
+    expect(cohortRankKey({ kind: 'tier', tier: 7 })).toBe('tier7');
+    expect(cohortRankKey({ kind: 'tier', tier: 11 })).toBe('tier11');
+    expect(cohortRankKey({ kind: 'all' })).toBe('all');
   });
 });
 
@@ -112,6 +173,22 @@ describe('cohortKey', () => {
     expect(
       cohortKey({ rank: { kind: 'tier', tier: 11 }, window: { minS: 2_700, maxS: 7_000 } }),
     ).toBe('tier11.2700-7000');
+  });
+
+  it('keeps the cohort keys of M4a', () => {
+    // These keys name the entries of the cache of the community data: a change would orphan them.
+    expect(
+      cohortKey({ rank: { kind: 'tier', tier: 4 }, window: { minS: 1_500, maxS: 1_799 } }),
+    ).toBe('tier4.1500-1799');
+    expect(cohortKey({ rank: { kind: 'all' }, window: { minS: 0, maxS: 1_199 } })).toBe(
+      'all.0-1199',
+    );
+  });
+
+  it('is the key of the rank, a dot and the window', () => {
+    for (const rank of [{ kind: 'tier', tier: 9 }, { kind: 'all' }] as const) {
+      expect(cohortKey({ rank, window: ANY_LENGTH_WINDOW })).toBe(`${cohortRankKey(rank)}.0-7000`);
+    }
   });
 });
 

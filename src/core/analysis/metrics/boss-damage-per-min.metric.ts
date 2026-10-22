@@ -28,6 +28,12 @@ export const bossDamagePerMinMetric: MetricDefinition = {
   personal: 'as_is',
   integer: false,
   community: { kind: 'percentiles', benchmark: 'boss_damage_per_min' },
+  /**
+   * Reads the objective damage of the tracked player, per minute of the match.
+   *
+   * @param context - The match context: the tracked player and the length of the match.
+   * @returns The objective damage per minute; `null` when no snapshot holds the counter.
+   */
   compute: (context) => {
     const damage = finalStat(context.tracked, 'boss_damage');
     return damage === null ? null : damage / matchMinutes(context);

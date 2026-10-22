@@ -27,5 +27,10 @@ export const deathsMetric: MetricDefinition = {
   personal: 'per_minute',
   integer: true,
   community: { kind: 'percentiles', benchmark: 'deaths' },
+  /**
+   * Reads the death count of the tracked player.
+   *
+   * @returns The end-of-game death count; never `null`.
+   */
   compute: ({ tracked }) => tracked.deaths,
 };

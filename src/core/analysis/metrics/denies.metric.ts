@@ -27,5 +27,10 @@ export const deniesMetric: MetricDefinition = {
   personal: 'per_minute',
   integer: true,
   community: { kind: 'percentiles', benchmark: 'denies' },
+  /**
+   * Reads the deny count of the tracked player.
+   *
+   * @returns The end-of-game deny count; never `null`.
+   */
   compute: ({ tracked }) => tracked.denies,
 };

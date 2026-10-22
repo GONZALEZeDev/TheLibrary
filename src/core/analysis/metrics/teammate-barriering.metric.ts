@@ -28,5 +28,10 @@ export const teammateBarrieringMetric: MetricDefinition = {
   personal: 'per_minute',
   integer: false,
   community: { kind: 'percentiles', benchmark: 'teammate_barriering' },
+  /**
+   * The barrier the tracked player gave to their teammates over the whole match.
+   *
+   * @returns The total barrier, or `null` when no snapshot holds the `teammate_barriering` counter.
+   */
   compute: ({ tracked }) => finalStat(tracked, 'teammate_barriering'),
 };

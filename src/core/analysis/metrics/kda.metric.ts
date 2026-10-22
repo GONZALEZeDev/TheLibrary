@@ -26,5 +26,10 @@ export const kdaMetric: MetricDefinition = {
   personal: 'as_is',
   integer: false,
   community: { kind: 'percentiles', benchmark: 'kda' },
+  /**
+   * Computes the KDA of the tracked player.
+   *
+   * @returns The `(kills + assists) / max(1, deaths)` ratio of the match; never `null`.
+   */
   compute: ({ tracked }) => (tracked.kills + tracked.assists) / Math.max(1, tracked.deaths),
 };

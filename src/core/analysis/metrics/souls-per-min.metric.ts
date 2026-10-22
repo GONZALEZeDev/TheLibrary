@@ -27,5 +27,11 @@ export const soulsPerMinMetric: MetricDefinition = {
   personal: 'as_is',
   integer: false,
   community: { kind: 'percentiles', benchmark: 'net_worth_per_min' },
+  /**
+   * The tracked player's end-of-game souls for each minute of the match.
+   *
+   * @param context - The match.
+   * @returns The souls per minute, never `null`.
+   */
   compute: (context) => context.tracked.netWorth / matchMinutes(context),
 };

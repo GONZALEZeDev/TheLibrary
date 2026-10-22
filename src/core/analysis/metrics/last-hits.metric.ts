@@ -26,5 +26,10 @@ export const lastHitsMetric: MetricDefinition = {
   personal: 'per_minute',
   integer: true,
   community: { kind: 'percentiles', benchmark: 'last_hits' },
+  /**
+   * The tracked player's last hits at the end of the match.
+   *
+   * @returns The last-hit count, never `null`.
+   */
   compute: ({ tracked }) => tracked.lastHits,
 };

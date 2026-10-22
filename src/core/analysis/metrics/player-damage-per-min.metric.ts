@@ -27,6 +27,12 @@ export const playerDamagePerMinMetric: MetricDefinition = {
   personal: 'as_is',
   integer: false,
   community: { kind: 'percentiles', benchmark: 'player_damage_per_min' },
+  /**
+   * The tracked player's damage to heroes for each minute of the match.
+   *
+   * @param context - The match.
+   * @returns The damage per minute, or `null` when no snapshot holds the `player_damage` counter.
+   */
   compute: (context) => {
     const damage = finalStat(context.tracked, 'player_damage');
     return damage === null ? null : damage / matchMinutes(context);

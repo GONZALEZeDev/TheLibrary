@@ -67,6 +67,13 @@ export const soulsAt10MinMetric: MetricDefinition = {
     kind: 'curve',
     stat: 'net_worth',
     phase: 'early',
+    /**
+     * The tracked player's souls for each minute of the first ten minutes of the match.
+     *
+     * @param context - The match.
+     * @returns The souls per minute over the early span, or `null` when the souls at 10:00 are
+     *   unknown (see {@link soulsAt10Min}).
+     */
     rate: (context) => {
       const souls = soulsAt10Min(context);
       return souls === null ? null : souls / SOULS_AT_MINUTES;

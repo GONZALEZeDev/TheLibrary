@@ -28,5 +28,10 @@ export const teammateHealingMetric: MetricDefinition = {
   personal: 'per_minute',
   integer: false,
   community: { kind: 'percentiles', benchmark: 'teammate_healing' },
+  /**
+   * The health the tracked player gave back to their teammates over the whole match.
+   *
+   * @returns The total healing, or `null` when no snapshot holds the `teammate_healing` counter.
+   */
   compute: ({ tracked }) => finalStat(tracked, 'teammate_healing'),
 };

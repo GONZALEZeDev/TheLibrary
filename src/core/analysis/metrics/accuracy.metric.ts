@@ -31,6 +31,12 @@ export const accuracyMetric: MetricDefinition = {
   personal: 'as_is',
   integer: false,
   community: { kind: 'percentiles', benchmark: 'accuracy' },
+  /**
+   * Reads the accuracy of the tracked player.
+   *
+   * @returns The share of shots that hit, from 0 to 1; `null` when a counter is unknown or no shot
+   * was fired.
+   */
   compute: ({ tracked }) => {
     const hit = finalStat(tracked, 'shots_hit');
     const missed = finalStat(tracked, 'shots_missed');

@@ -1,7 +1,7 @@
 /**
  * The community data of the match analysis: how the Paige players of a rank tier did in matches of
  * about the same length over the last 30 days (the percentiles of the metrics, the average course of
- * a match, and how many matches that is), kept for a day.
+ * a match, deaths included, and how many matches that is), kept for a day.
  *
  * A match is compared with a {@link Cohort}. Its data is downloaded when a page of the analysis
  * opens ({@link BenchmarkService.refresh}), kept in the database (`api_cache`, as JSON), and read back
@@ -14,6 +14,10 @@
  *   size); when that is too small as well, there is nothing to compare with and the entry says so
  *   (`used: null`) without any further request;
  * - the benchmark and the performance curve of the cohort that is used.
+ *
+ * The choice of the cohort ({@link chooseCohort}), the request of a cohort ({@link cohortQuery}), the
+ * age at which an entry is stale ({@link isStale}) and the schema of a rank ({@link cohortRankSchema})
+ * are shared with the item statistics of the review, which keeps its own entries the same way.
  *
  * The data belongs to no player, but it is only stored while the account that asked for it is the
  * linked one: a download that ends after the account was unlinked or switched is thrown away, so that
@@ -58,11 +62,21 @@ export const COHORT_MAX_AGE_MS = 24 * 60 * 60_000;
  */
 export const ANALYTICS_PURGE_AGE_MS = 7 * 24 * 60 * 60_000;
 
-/** The start of the cache keys of every entry of the analytics: what the purge deletes from. */
-const ANALYTICS_KEY_PREFIX = 'analytics.';
+/**
+ * The start of the cache keys of every entry of the analytics: what the purge deletes from. The
+ * entries of the other services of the community data (the item statistics) are kept under it, so
+ * that the same purge covers them.
+ */
+export const ANALYTICS_KEY_PREFIX = 'analytics.';
 
-/** The start of the cache keys of the community data of a cohort. */
-const COHORT_KEY_PREFIX = `${ANALYTICS_KEY_PREFIX}cohort.`;
+/**
+ * The start of the cache keys of the community data of a cohort.
+ *
+ * The version is part of it: the entries stored before the curve held the deaths sit under the
+ * prefix without a version, which is never read again, so that no stored entry has to be told apart
+ * by its content. They are deleted by the purge once a week old, like any entry of the analytics.
+ */
+const COHORT_KEY_PREFIX = `${ANALYTICS_KEY_PREFIX}cohort.v2.`;
 
 /** The period the community is made of: the matches played in the last 30 days. */
 const COMMUNITY_PERIOD_DAYS = 30;
@@ -73,8 +87,8 @@ const MS_PER_DAY = 86_400_000;
 /** Seconds in a day. */
 const SECONDS_PER_DAY = 86_400;
 
-/** Scope of the log lines of this service. */
-const LOG_SCOPE = 'community';
+/** Scope of the log lines of the community data: this service's, and the item statistics'. */
+export const COMMUNITY_LOG_SCOPE = 'community';
 
 /** The message of the line about a cohort that could not be fetched. */
 const UNAVAILABLE = 'Community data unavailable';
@@ -141,26 +155,29 @@ const benchmarkKeySchema = z.enum(BENCHMARK_KEYS);
 /** Schema of a table of percentiles: one number per percentile point, never fewer. */
 const percentileTableSchema = z.array(z.number()).length(PERCENTILE_POINTS.length);
 
-/** Schema of a cohort. The tier is one of the tiers the app knows. */
+/** Schema of the rank of a cohort. The tier is one of the tiers the app knows. */
+export const cohortRankSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('tier'),
+    tier: z
+      .int()
+      .min(0)
+      .max(RANK_TIER_NAMES.length - 1),
+  }),
+  z.object({ kind: z.literal('all') }),
+]);
+
+/** Schema of a cohort: a rank and a duration window. */
 const cohortSchema = z.object({
-  rank: z.discriminatedUnion('kind', [
-    z.object({
-      kind: z.literal('tier'),
-      tier: z
-        .int()
-        .min(0)
-        .max(RANK_TIER_NAMES.length - 1),
-    }),
-    z.object({ kind: z.literal('all') }),
-  ]),
+  rank: cohortRankSchema,
   window: z.object({ minS: z.int().nonnegative(), maxS: z.int().nonnegative() }),
 });
 
 /**
- * Schema of the four counters of a point of the curve: a measure of each.
+ * Schema of the five counters of a point of the curve: a measure of each.
  *
  * @param measure - The schema of one value.
- * @returns The schema of the four values.
+ * @returns The schema of the five values.
  */
 function curveCounters(measure: z.ZodNumber) {
   return z.object({
@@ -168,6 +185,7 @@ function curveCounters(measure: z.ZodNumber) {
     player_damage: measure,
     boss_damage: measure,
     kills: measure,
+    deaths: measure,
   });
 }
 
@@ -245,7 +263,7 @@ function decodeData(payloadJson: string): DecodedData {
  * @param now - The current time (Unix ms).
  * @returns `true` when the data is a day old or more (a day exactly is old), or dated in the future.
  */
-function isStale(fetchedAt: number, now: number): boolean {
+export function isStale(fetchedAt: number, now: number): boolean {
   const age = now - fetchedAt;
   return age < 0 || age >= COHORT_MAX_AGE_MS;
 }
@@ -254,12 +272,13 @@ function isStale(fetchedAt: number, now: number): boolean {
  * The start of the period the community is made of: 30 days before today's UTC midnight.
  *
  * deadlock-api rounds the date down to the hour, and a UTC midnight keeps the requests of a day the
- * same, so that the answers can be reused until the next day.
+ * same, so that the answers can be reused until the next day. Every community request of the app
+ * asks for this period, so that they all describe the same matches.
  *
  * @param now - The current time (Unix ms).
  * @returns The start of the period (Unix s).
  */
-function periodStartS(now: number): number {
+export function communityPeriodStartS(now: number): number {
   return (Math.floor(now / MS_PER_DAY) - COMMUNITY_PERIOD_DAYS) * SECONDS_PER_DAY;
 }
 
@@ -271,13 +290,70 @@ function periodStartS(now: number): number {
  * @param sinceUnixS - The start of the period (Unix s).
  * @returns The query.
  */
-function cohortQuery(cohort: Cohort, sinceUnixS: number): CohortQuery {
+export function cohortQuery(cohort: Cohort, sinceUnixS: number): CohortQuery {
   return {
     heroId: PAIGE_HERO_ID,
     sinceUnixS,
     minDurationS: cohort.window.minS,
     maxDurationS: cohort.window.maxS,
     badge: cohort.rank.kind === 'tier' ? badgeBounds(cohort.rank.tier) : null,
+  };
+}
+
+/** Which cohort a download is made of, once the sizes of the cohorts are known. */
+export interface CohortChoice {
+  /**
+   * The cohort the data is of: the wanted one, or every rank of the same window when the wanted
+   * one is a tier too small to compare with. `null` when even that is too small.
+   */
+  readonly used: Cohort | null;
+  /**
+   * How many matches of the hero the cohort used holds. When `used` is `null`, the size of the
+   * last cohort that was tried (every rank for a tier, the cohort itself for every rank).
+   */
+  readonly sampleMatches: number;
+}
+
+/**
+ * Decide which cohort the community data is downloaded for, by the size of the cohorts: the wanted
+ * one if it holds {@link MIN_COHORT_MATCHES} matches, else (for a tier) every rank of the same window
+ * if that does, else none. The sizes are requested one after the other, so that a pause asked for by
+ * an answer stops the next request.
+ *
+ * @param api - Downloads the sizes, within the budgets of deadlock-api.
+ * @param wanted - The cohort the data is wanted for.
+ * @param sinceUnixS - The start of the period (Unix s).
+ * @returns The cohort used (`null` for none) and its size (the size of the last cohort tried when
+ *   there is none), or why a request was not sent.
+ * @throws AppError when a request fails or its answer is invalid.
+ */
+export async function chooseCohort(
+  api: DeadlockApiService,
+  wanted: Cohort,
+  sinceUnixS: number,
+): Promise<AnalyticsFetch<CohortChoice>> {
+  const wantedSize = await api.fetchHeroSample(cohortQuery(wanted, sinceUnixS));
+  if (wantedSize.kind !== 'fetched') {
+    return wantedSize;
+  }
+  if (wantedSize.value >= MIN_COHORT_MATCHES) {
+    return { kind: 'fetched', value: { used: wanted, sampleMatches: wantedSize.value } };
+  }
+  if (wanted.rank.kind === 'all') {
+    // There is no wider cohort to fall back to.
+    return { kind: 'fetched', value: { used: null, sampleMatches: wantedSize.value } };
+  }
+  const allRanks: Cohort = { rank: { kind: 'all' }, window: wanted.window };
+  const allRanksSize = await api.fetchHeroSample(cohortQuery(allRanks, sinceUnixS));
+  if (allRanksSize.kind !== 'fetched') {
+    return allRanksSize;
+  }
+  return {
+    kind: 'fetched',
+    value: {
+      used: allRanksSize.value >= MIN_COHORT_MATCHES ? allRanks : null,
+      sampleMatches: allRanksSize.value,
+    },
   };
 }
 
@@ -289,7 +365,7 @@ function cohortQuery(cohort: Cohort, sinceUnixS: number): CohortQuery {
  * @param error - The error.
  * @returns The context of the line.
  */
-function unavailableContext(error: AppError): LogContext {
+export function unavailableContext(error: AppError): LogContext {
   const { endpoint } = error.context;
   return typeof endpoint === 'string' ? { kind: error.kind, endpoint } : { kind: error.kind };
 }
@@ -386,7 +462,12 @@ export class BenchmarkService {
     try {
       return await this.#refresh(accountId, cohort);
     } catch (error) {
-      this.#logger.log('warn', LOG_SCOPE, UNAVAILABLE, unavailableContext(toAppError(error)));
+      this.#logger.log(
+        'warn',
+        COMMUNITY_LOG_SCOPE,
+        UNAVAILABLE,
+        unavailableContext(toAppError(error)),
+      );
       return 'unavailable';
     }
   }
@@ -406,17 +487,21 @@ export class BenchmarkService {
     if (cached !== null && !isStale(cached.fetchedAt, now)) {
       return 'fresh';
     }
-    const download = await this.#download(wanted, periodStartS(now));
+    const download = await this.#download(wanted, communityPeriodStartS(now));
     if (download.kind !== 'fetched') {
       // deadlock-api is paused or the budget of the minute is spent: expected, and tried again
       // later, so it is not a warning (the rank service does the same).
-      this.#logger.log('debug', LOG_SCOPE, UNAVAILABLE, { kind: download.kind });
+      this.#logger.log('debug', COMMUNITY_LOG_SCOPE, UNAVAILABLE, { kind: download.kind });
       return 'unavailable';
     }
     // The downloads took time: the account may have been unlinked or switched meanwhile, and the
     // erasure of its data must not be followed by a write.
     if ((await this.#accountSource.currentAccountId()) !== accountId) {
-      this.#logger.log('debug', LOG_SCOPE, 'Community data not stored, the account changed');
+      this.#logger.log(
+        'debug',
+        COMMUNITY_LOG_SCOPE,
+        'Community data not stored, the account changed',
+      );
       return 'unavailable';
     }
     const key = cacheKey(wanted);
@@ -448,7 +533,7 @@ export class BenchmarkService {
     if (decoded.kind === 'unreadable') {
       if (!this.#reportedKeys.has(key)) {
         this.#reportedKeys.add(key);
-        this.#logger.log('warn', LOG_SCOPE, 'Cached community data is unreadable', {
+        this.#logger.log('warn', COMMUNITY_LOG_SCOPE, 'Cached community data is unreadable', {
           issue: decoded.issue,
         });
       }
@@ -469,7 +554,7 @@ export class BenchmarkService {
    * @throws AppError when a request fails or its answer is invalid.
    */
   async #download(wanted: Cohort, sinceUnixS: number): Promise<AnalyticsFetch<DownloadedData>> {
-    const choice = await this.#chooseCohort(wanted, sinceUnixS);
+    const choice = await chooseCohort(this.#api, wanted, sinceUnixS);
     if (choice.kind !== 'fetched') {
       return choice;
     }
@@ -496,46 +581,6 @@ export class BenchmarkService {
   }
 
   /**
-   * Decide which cohort the match is compared with, by the size of the cohorts: the wanted one if it
-   * holds {@link MIN_COHORT_MATCHES} matches, else (for a tier) every rank of the same window if that
-   * does, else none.
-   *
-   * @param wanted - The cohort the match is compared with.
-   * @param sinceUnixS - The start of the period (Unix s).
-   * @returns The cohort used (`null` for none) and its size (the size of the last cohort tried when
-   *   there is none), or why a request was not sent.
-   * @throws AppError when a request fails or its answer is invalid.
-   */
-  async #chooseCohort(
-    wanted: Cohort,
-    sinceUnixS: number,
-  ): Promise<AnalyticsFetch<{ used: Cohort | null; sampleMatches: number }>> {
-    const wantedSize = await this.#api.fetchHeroSample(cohortQuery(wanted, sinceUnixS));
-    if (wantedSize.kind !== 'fetched') {
-      return wantedSize;
-    }
-    if (wantedSize.value >= MIN_COHORT_MATCHES) {
-      return { kind: 'fetched', value: { used: wanted, sampleMatches: wantedSize.value } };
-    }
-    if (wanted.rank.kind === 'all') {
-      // There is no wider cohort to fall back to.
-      return { kind: 'fetched', value: { used: null, sampleMatches: wantedSize.value } };
-    }
-    const allRanks: Cohort = { rank: { kind: 'all' }, window: wanted.window };
-    const allRanksSize = await this.#api.fetchHeroSample(cohortQuery(allRanks, sinceUnixS));
-    if (allRanksSize.kind !== 'fetched') {
-      return allRanksSize;
-    }
-    return {
-      kind: 'fetched',
-      value: {
-        used: allRanksSize.value >= MIN_COHORT_MATCHES ? allRanks : null,
-        sampleMatches: allRanksSize.value,
-      },
-    };
-  }
-
-  /**
    * Log what a download brought: counts and a flag, to tell afterwards whether the API still answers
    * what the app reads (a change of its answers would otherwise only show as missing comparisons).
    * A cohort in use whose benchmark or curve is empty is a warning.
@@ -545,14 +590,14 @@ export class BenchmarkService {
   #logDownload(data: DownloadedData): void {
     const benchmarkKeys = data.benchmark.size;
     const curvePoints = data.curve.length;
-    this.#logger.log('info', LOG_SCOPE, 'Community data downloaded', {
+    this.#logger.log('info', COMMUNITY_LOG_SCOPE, 'Community data downloaded', {
       benchmarkKeys,
       curvePoints,
       sampleMatches: data.sampleMatches,
       fallback: data.used !== null && cohortKey(data.used) !== cohortKey(data.wanted),
     });
     if (data.used !== null && (benchmarkKeys === 0 || curvePoints === 0)) {
-      this.#logger.log('warn', LOG_SCOPE, 'Community data incomplete', {
+      this.#logger.log('warn', COMMUNITY_LOG_SCOPE, 'Community data incomplete', {
         benchmarkKeys,
         curvePoints,
       });
@@ -571,7 +616,7 @@ export class BenchmarkService {
     } catch (error) {
       this.#logger.log(
         'warn',
-        LOG_SCOPE,
+        COMMUNITY_LOG_SCOPE,
         'Could not purge the old community data',
         errorLogContext(toAppError(error)),
       );

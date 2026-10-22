@@ -5,36 +5,37 @@
  * @packageDocumentation
  */
 import { describe, expect, it } from 'vitest';
-import {
-  createFixtureApi,
-  FixtureHttpClient,
-  jsonResponse,
-  type FixtureHandler,
-} from '../adapters/dev/fixture-http-client.adapter';
+import { createFixtureApi, jsonResponse } from '../adapters/dev/fixture-http-client.adapter';
 import {
   createMetricBenchmarkFixture,
   createPerformanceCurveFixture,
 } from '../adapters/dev/fixtures/analytics.fixture';
-import { MemoryLogger, type LogEntry } from '../adapters/dev/memory-logger.adapter';
 import type { Cohort } from '../core/analysis/cohort';
+import { ANALYTICS_RATE_LIMIT } from '../core/deadlock-api/budgets';
 import { parseMetricBenchmark } from '../core/deadlock-api/metric-benchmark.schema';
 import { parsePerformanceCurve } from '../core/deadlock-api/performance-curve.schema';
-import type { AccountId } from '../core/domain/account';
 import { PAIGE_HERO_ID } from '../core/domain/hero';
 import { AppError } from '../core/errors/app-error';
-import type { AccountSource } from '../ports/account-source.port';
-import type { Database } from '../ports/database.port';
-import { createTestDatabase, testAccountId } from '../test/test-data';
-import { ApiCacheRepository } from './api-cache.repository';
+import {
+  communityLines,
+  failingAt,
+  HERO_STATS_PATH,
+  overriding,
+  queryOf,
+  requestedPaths,
+  setUpCommunity,
+  withSampleSizes,
+  type CommunityOptions,
+} from '../test/community-test-kit';
+import { testAccountId } from '../test/test-data';
 import {
   ANALYTICS_PURGE_AGE_MS,
   BenchmarkService,
   COHORT_MAX_AGE_MS,
+  communityPeriodStartS,
   type CohortData,
   type CohortRead,
 } from './benchmark.service';
-import { DeadlockApiService } from './deadlock-api.service';
-import { SyncStateRepository } from './sync-state.repository';
 
 const START = Date.UTC(2026, 9, 20, 15, 30, 0);
 const MINUTE = 60_000;
@@ -53,10 +54,12 @@ const TIER_4: Cohort = { rank: { kind: 'tier', tier: 4 }, window: { minS: 1_500,
 const ALL_RANKS: Cohort = { rank: { kind: 'all' }, window: TIER_4.window };
 
 /** The cache key of {@link TIER_4}. */
-const TIER_4_KEY = 'analytics.cohort.tier4.1500-1799';
+const TIER_4_KEY = 'analytics.cohort.v2.tier4.1500-1799';
 
-/** The paths of the three community requests of a cohort. */
-const HERO_STATS_PATH = '/v1/analytics/hero-stats';
+/** The cache key {@link TIER_4} had before the curve held the deaths of the community. */
+const TIER_4_EARLIER_KEY = 'analytics.cohort.tier4.1500-1799';
+
+/** The paths of the other two community requests of a cohort, after the one for its size. */
 const BENCHMARK_PATH = '/v1/analytics/player-stats/metrics';
 const CURVE_PATH = '/v1/analytics/player-performance-curve';
 
@@ -80,113 +83,43 @@ const WINDOW_FILTERS = {
 const TIER_4_FILTERS = { ...WINDOW_FILTERS, min_average_badge: '41', max_average_badge: '46' };
 
 /**
- * A database whose statements fail when `fails` says so, as a locked file would.
+ * Build the service on the environment of the community tests.
  *
- * @param database - The database to wrap.
- * @param fails - Tells from the SQL of a statement whether it fails.
- * @returns The database.
+ * @param options - See {@link CommunityOptions}.
+ * @returns The service, and everything {@link setUpCommunity} builds under it: the deadlock-api
+ *   service, the cache, the HTTP client, the logger, the clock, a way to change the handler, the
+ *   synchronisation state (where the pause is kept) and the linked account.
  */
-function failingWhen(database: Database, fails: (sql: string) => boolean): Database {
-  const fail = (): Promise<never> => Promise.reject(new Error('database is locked'));
-  return {
-    execute: (sql, params) => (fails(sql) ? fail() : database.execute(sql, params)),
-    select: (sql, params) => (fails(sql) ? fail() : database.select(sql, params)),
-  };
-}
-
-/** What {@link setUp} accepts. */
-interface SetUpOptions {
-  /** Answers the requests of deadlock-api; the fixture API by default. */
-  readonly handler?: FixtureHandler;
-  /** Makes the statements of the cache that match fail (the synchronisation state is not touched). */
-  readonly cacheFails?: (sql: string) => boolean;
-}
-
-/**
- * Build the service, with a controllable clock, handler and linked account. The account is linked
- * unless a test unlinks it.
- *
- * @param options - See {@link SetUpOptions}.
- * @returns The service, the deadlock-api service under it, the cache, the HTTP client, the logger,
- *   the clock, a way to change the handler, the synchronisation state (where the pause is kept) and
- *   the linked account: set `link.accountId` to change it, or `link.failure` to make it unreadable.
- */
-function setUp(options: SetUpOptions = {}) {
-  const clock = { now: START };
-  const now = (): number => clock.now;
-  const answer: { handler: FixtureHandler } = {
-    handler: options.handler ?? createFixtureApi({ now: START, matchCount: 1 }),
-  };
-  const link: { accountId: AccountId | null; failure: AppError | null } = {
-    accountId: ACCOUNT_ID,
-    failure: null,
-  };
-  const accountSource: AccountSource = {
-    currentAccountId: () =>
-      link.failure === null ? Promise.resolve(link.accountId) : Promise.reject(link.failure),
-  };
-  const http = new FixtureHttpClient((request) => answer.handler(request));
-  const logger = new MemoryLogger();
-  const database = createTestDatabase();
-  const syncState = new SyncStateRepository(database, logger, now);
-  const api = new DeadlockApiService(http, syncState, logger, { appVersion: '0.1.0', now });
-  const cacheFails = options.cacheFails;
-  const cache = new ApiCacheRepository(
-    cacheFails === undefined ? database : failingWhen(database, cacheFails),
-  );
+function setUp(options: CommunityOptions = {}) {
+  const community = setUpCommunity(START, ACCOUNT_ID, options);
+  const { api, cache, accountSource, logger, now } = community;
   const service = new BenchmarkService({ api, cache, accountSource, logger, now });
-  return { service, api, cache, http, logger, clock, answer, syncState, link };
+  return { ...community, service };
 }
 
 /**
- * Build a handler that answers the requests for one path with its own answer, and the other
- * requests like the fixture API.
+ * The JSON that was stored for {@link TIER_4} before the curve held deaths: the very data the
+ * fixture API gives, with four counters in each point of the curve.
  *
- * @param path - The path of the requests to answer.
- * @param answer - Answers them, or throws.
- * @returns The handler.
+ * @returns The JSON of the entry.
  */
-function overriding(path: string, answer: FixtureHandler): FixtureHandler {
-  const fixtureApi = createFixtureApi({ now: START, matchCount: 1 });
-  return (request) =>
-    new URL(request.url).pathname === path ? answer(request) : fixtureApi(request);
-}
-
-/**
- * Build a handler that answers the hero statistics with a given number of matches of Paige: one
- * number for the requests with a badge range (a tier), another for the ones without (every rank).
- * The other requests are answered like the fixture API.
- *
- * @param sizes - The number of matches of a tier cohort, and of an all-ranks cohort.
- * @returns The handler.
- */
-function withSampleSizes(sizes: { readonly tier: number; readonly all: number }): FixtureHandler {
-  return overriding(HERO_STATS_PATH, (request) => {
-    const ranked = new URL(request.url).searchParams.has('min_average_badge');
-    return jsonResponse([{ hero_id: PAIGE_HERO_ID, matches: ranked ? sizes.tier : sizes.all }]);
+function earlierFormatJson(): string {
+  const withoutDeaths = (counters: object) =>
+    Object.fromEntries(Object.entries(counters).filter(([counter]) => counter !== 'deaths'));
+  const curve = parsePerformanceCurve(createPerformanceCurveFixture(TIER_4.window.maxS)).map(
+    (point) => ({
+      timeS: point.timeS,
+      avg: withoutDeaths(point.avg),
+      std: withoutDeaths(point.std),
+    }),
+  );
+  return JSON.stringify({
+    wanted: TIER_4,
+    used: TIER_4,
+    sampleMatches: 2_422,
+    benchmark: [...parseMetricBenchmark(createMetricBenchmarkFixture())],
+    curve,
   });
-}
-
-/** A handler for which the request to the given path fails like a network that dropped. */
-function failingAt(path: string): FixtureHandler {
-  return overriding(path, () => {
-    throw new AppError('network', 'The request failed');
-  });
-}
-
-/** The paths of the requests received, in order. */
-function requestedPaths(http: FixtureHttpClient): string[] {
-  return http.requests.map((request) => new URL(request.url).pathname);
-}
-
-/** The query of a request, as an object. */
-function queryOf(url: string): Record<string, string> {
-  return Object.fromEntries(new URL(url).searchParams);
-}
-
-/** The lines the service wrote; the deadlock-api service writes its own lines in the same logger. */
-function communityLines(logger: MemoryLogger): readonly LogEntry[] {
-  return logger.entries.filter((entry) => entry.scope === SCOPE);
 }
 
 /** The data of a cohort that is cached, or a failure of the test. */
@@ -196,6 +129,28 @@ function cachedData(read: CohortRead): CohortData {
   }
   return read.data;
 }
+
+describe('communityPeriodStartS', () => {
+  it.each([
+    { label: 'the first second of a day', time: Date.UTC(2026, 9, 20), sinceDays: 0 },
+    { label: 'the last second of a day', time: Date.UTC(2026, 9, 20, 23, 59, 59), sinceDays: 0 },
+    { label: 'the first second of the next day', time: Date.UTC(2026, 9, 21), sinceDays: 1 },
+  ])('is 30 days before the UTC midnight at $label', ({ time, sinceDays }) => {
+    expect(communityPeriodStartS(time)).toBe(SINCE_UNIX_S + sinceDays * 86_400);
+  });
+
+  it('is the period the service asks for', async () => {
+    const { service, http } = setUp();
+
+    await service.refresh(ACCOUNT_ID, TIER_4);
+
+    for (const request of http.requests) {
+      expect(new URL(request.url).searchParams.get('min_unix_timestamp')).toBe(
+        String(communityPeriodStartS(START)),
+      );
+    }
+  });
+});
 
 describe('the ages of the community data', () => {
   it('keeps a cohort for a day and purges analytics entries after a week', () => {
@@ -227,6 +182,29 @@ describe('BenchmarkService.refresh', () => {
         fetchedAt: START,
       },
     });
+  });
+
+  it('stores and reads a cohort with its deaths', async () => {
+    const { service, cache } = setUp();
+
+    await service.refresh(ACCOUNT_ID, TIER_4);
+
+    const { curve } = cachedData(await service.read(TIER_4));
+    const raw = createPerformanceCurveFixture(TIER_4.window.maxS);
+    expect(curve.length).toBeGreaterThan(0);
+    expect(curve.map((point) => point.avg.deaths)).toEqual(raw.map((point) => point.deaths_avg));
+    expect(curve.map((point) => point.std.deaths)).toEqual(raw.map((point) => point.deaths_std));
+    // The entry is under the key of the format that holds them, and holds them in each point.
+    const stored = await cache.get(TIER_4_KEY);
+    const payload = JSON.parse(stored?.payloadJson ?? 'null') as {
+      curve: { avg: { deaths: number }; std: { deaths: number } }[];
+    };
+    expect(payload.curve.map((point) => point.avg.deaths)).toEqual(
+      raw.map((point) => point.deaths_avg),
+    );
+    expect(payload.curve.map((point) => point.std.deaths)).toEqual(
+      raw.map((point) => point.deaths_std),
+    );
   });
 
   it('asks for the badge range of the tier, the window, the period and the hero, and nothing else', async () => {
@@ -374,13 +352,13 @@ describe('BenchmarkService.refresh', () => {
         return fixtureApi(request);
       };
       const old = { payloadJson: '{}', fetchedAt: START - 8 * DAY, expiresAt: START - 7 * DAY };
-      await cache.put('analytics.cohort.tier1.0-1199', old);
+      await cache.put('analytics.cohort.v2.tier1.0-1199', old);
 
       await expect(service.refresh(ACCOUNT_ID, TIER_4)).resolves.toBe('unavailable');
 
       await expect(cache.get(TIER_4_KEY)).resolves.toBeNull();
       // Nothing was written, so nothing was purged either.
-      await expect(cache.get('analytics.cohort.tier1.0-1199')).resolves.toEqual(old);
+      await expect(cache.get('analytics.cohort.v2.tier1.0-1199')).resolves.toEqual(old);
       // A download dropped on purpose is no failure: a `debug` line says so, and nothing else.
       expect(communityLines(logger)).toEqual([
         { level: 'debug', scope: SCOPE, message: ACCOUNT_CHANGED, context: {} },
@@ -400,6 +378,9 @@ describe('BenchmarkService.refresh', () => {
     // Exactly 7 days old is not older than 7 days.
     await cache.put('analytics.cohort.tier2.0-1199', entryFetchedAt(START - 7 * DAY));
     await cache.put('analytics.cohort.tier3.0-1199', entryFetchedAt(START - DAY));
+    // The entries of the current format are purged by the same rule.
+    await cache.put('analytics.cohort.v2.tier1.0-1199', entryFetchedAt(START - 7 * DAY - 1));
+    await cache.put('analytics.cohort.v2.tier2.0-1199', entryFetchedAt(START - 7 * DAY));
     // Not an analytics entry: kept, however old.
     await cache.put('heroes.english', entryFetchedAt(START - 90 * DAY));
 
@@ -411,6 +392,8 @@ describe('BenchmarkService.refresh', () => {
       'analytics.something.else',
       'analytics.cohort.tier2.0-1199',
       'analytics.cohort.tier3.0-1199',
+      'analytics.cohort.v2.tier1.0-1199',
+      'analytics.cohort.v2.tier2.0-1199',
       'heroes.english',
       TIER_4_KEY,
     ]) {
@@ -421,6 +404,7 @@ describe('BenchmarkService.refresh', () => {
     expect(kept).toEqual([
       'analytics.cohort.tier2.0-1199',
       'analytics.cohort.tier3.0-1199',
+      'analytics.cohort.v2.tier2.0-1199',
       'heroes.english',
       TIER_4_KEY,
     ]);
@@ -474,8 +458,8 @@ describe('BenchmarkService.refresh', () => {
 
     it('answers unavailable when the budget of the minute is spent', async () => {
       const { service, api, http, logger, cache } = setUp();
-      // The 20 requests of the minute are spent before the service asks for its own.
-      for (let index = 0; index < 20; index += 1) {
+      // The requests of the minute are spent before the service asks for its own.
+      for (let index = 0; index < ANALYTICS_RATE_LIMIT.limit; index += 1) {
         await api.fetchHeroSample({
           heroId: PAIGE_HERO_ID,
           sinceUnixS: SINCE_UNIX_S,
@@ -488,7 +472,7 @@ describe('BenchmarkService.refresh', () => {
       await expect(service.refresh(ACCOUNT_ID, TIER_4)).resolves.toBe('unavailable');
 
       // A request over the budget is not even sent.
-      expect(http.requests).toHaveLength(20);
+      expect(http.requests).toHaveLength(ANALYTICS_RATE_LIMIT.limit);
       await expect(cache.get(TIER_4_KEY)).resolves.toBeNull();
       expect(communityLines(logger)).toEqual([
         {
@@ -671,6 +655,25 @@ describe('BenchmarkService.read', () => {
     expect(http.requests).toHaveLength(6);
   });
 
+  it('never reads a cohort cached in the format without deaths', async () => {
+    const { service, cache, http, logger } = setUp();
+    const earlier = {
+      payloadJson: earlierFormatJson(),
+      fetchedAt: START,
+      expiresAt: START + DAY,
+    };
+    await cache.put(TIER_4_EARLIER_KEY, earlier);
+
+    await expect(service.read(TIER_4)).resolves.toEqual({ kind: 'missing' });
+
+    // The entry is under another key: it is not looked at, so it is not reported as unreadable.
+    expect(logger.entries).toEqual([]);
+    // It does not count as fresh data either: the cohort is downloaded, and the entry is left alone.
+    await expect(service.refresh(ACCOUNT_ID, TIER_4)).resolves.toBe('updated');
+    expect(http.requests).toHaveLength(3);
+    await expect(cache.get(TIER_4_EARLIER_KEY)).resolves.toEqual(earlier);
+  });
+
   it('rejects with a storage error when the cache cannot be read', async () => {
     const { service } = setUp({ cacheFails: (sql) => sql.startsWith('SELECT') });
 
@@ -690,6 +693,22 @@ describe('BenchmarkService.read', () => {
         damage: (stored: string): string => {
           const payload = JSON.parse(stored) as { benchmark: [string, number[]][] };
           payload.benchmark[0]?.[1].pop();
+          return JSON.stringify(payload);
+        },
+      },
+      {
+        label: 'a point of the curve without the average deaths',
+        damage: (stored: string): string => {
+          const payload = JSON.parse(stored) as { curve: { avg: object }[] };
+          Reflect.deleteProperty(payload.curve[0]?.avg ?? {}, 'deaths');
+          return JSON.stringify(payload);
+        },
+      },
+      {
+        label: 'a point of the curve without the deviation of the deaths',
+        damage: (stored: string): string => {
+          const payload = JSON.parse(stored) as { curve: { std: object }[] };
+          Reflect.deleteProperty(payload.curve[0]?.std ?? {}, 'deaths');
           return JSON.stringify(payload);
         },
       },

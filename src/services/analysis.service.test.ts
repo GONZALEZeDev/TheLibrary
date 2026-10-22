@@ -20,11 +20,7 @@
  * @packageDocumentation
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  createFixtureApi,
-  jsonResponse,
-  type FixtureHandler,
-} from '../adapters/dev/fixture-http-client.adapter';
+import { createFixtureApi, type FixtureHandler } from '../adapters/dev/fixture-http-client.adapter';
 import {
   createPerformanceCurveFixture,
   createPlayerRankFixture,
@@ -44,10 +40,10 @@ import { curveRate, placeOnCurve } from '../core/analysis/references';
 import { MATCH_METRICS, metricByKey, PROJECTION_VERSION } from '../core/analysis/registry';
 import { median } from '../core/analysis/statistics';
 import { parsePerformanceCurve } from '../core/deadlock-api/performance-curve.schema';
-import { PAIGE_HERO_ID } from '../core/domain/hero';
 import { matchIdSchema, type MatchId } from '../core/domain/match';
 import { AppError } from '../core/errors/app-error';
 import { accountFolderName, archivePath } from '../core/match-detail/archive-layout';
+import { withSampleSizes } from '../test/community-test-kit';
 import { createTestServices, projectArchivedMatches } from '../test/create-test-services';
 import { matchSummary, testAccountId, testLinkedAccount, testMatchId } from '../test/test-data';
 import type { MatchAnalysis, MatchAnalysisView, MetricRowView } from './analysis-view';
@@ -117,26 +113,6 @@ const FAMILIES = ['combat', 'survival', 'farm', 'support', 'objectives', 'laning
 interface EditableEnvelope {
   payload: {
     match_info: { duration_s: number; players: { account_id: number; net_worth?: number }[] };
-  };
-}
-
-/**
- * Answer the hero statistics with a given number of matches of Paige: one number for the requests
- * with a badge range (a tier), another for the ones without (every rank). The other requests are
- * answered like the fixture API.
- *
- * @param sizes - The number of matches of a tier cohort, and of an all-ranks cohort.
- * @returns The handler.
- */
-function withSampleSizes(sizes: { readonly tier: number; readonly all: number }): FixtureHandler {
-  const fixtureApi = createFixtureApi({ now: START, matchCount: 30 });
-  return (request) => {
-    const url = new URL(request.url);
-    if (url.pathname !== HERO_STATS_PATH) {
-      return fixtureApi(request);
-    }
-    const ranked = url.searchParams.has('min_average_badge');
-    return jsonResponse([{ hero_id: PAIGE_HERO_ID, matches: ranked ? sizes.tier : sizes.all }]);
   };
 }
 
@@ -293,7 +269,8 @@ function ready(view: MatchAnalysisView): MatchAnalysis {
 /**
  * Analyse a match with the community data in the cache that it is compared with: download it first.
  * Every download gets its own minute on the clock of the test, so that the budget of the community
- * requests (20 a minute) never runs out across the several matches a test goes through.
+ * requests (`ANALYTICS_RATE_LIMIT` a minute) never runs out across the several matches a test goes
+ * through.
  *
  * @param context - What {@link setUp} built.
  * @param matchId - The match.
@@ -895,7 +872,12 @@ describe('AnalysisService.getMatchAnalysis', () => {
 
   it('reports the all-ranks fallback', async () => {
     // The tier is too small to compare with, every rank is not.
-    const context = await setUp({ handler: withSampleSizes({ tier: 50, all: 2_422 }) });
+    const context = await setUp({
+      handler: withSampleSizes(
+        { tier: 50, all: 2_422 },
+        createFixtureApi({ now: START, matchCount: 30 }),
+      ),
+    });
     const matchId = pick(context, (candidate) => ownBadgeOf(candidate) !== null, 'a ranked match');
     const skippedBefore = context.skippedMs();
 
@@ -916,7 +898,12 @@ describe('AnalysisService.getMatchAnalysis', () => {
   });
 
   it('reports a community that is too small even over every rank as unavailable', async () => {
-    const context = await setUp({ handler: withSampleSizes({ tier: 50, all: 80 }) });
+    const context = await setUp({
+      handler: withSampleSizes(
+        { tier: 50, all: 80 },
+        createFixtureApi({ now: START, matchCount: 30 }),
+      ),
+    });
     const matchId = context.archived[0] ?? expect.unreachable();
 
     const analysis = await analyseWithCommunity(context, matchId);

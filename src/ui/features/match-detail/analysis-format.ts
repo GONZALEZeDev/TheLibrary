@@ -1,8 +1,9 @@
 /**
  * How the analysis of a match is written: the value of a metric, its difference with the habits of
  * the player and the usual value those habits make, the place among the community, the total of a
- * phase, a time of the game and the name of a metric, in the language of the interface, and the marks
- * that tell a strength from a weakness.
+ * phase, a time of the game and the name of a metric, the share of a damage source and its gap with
+ * the usual one, in the language of the interface, and the marks that tell a strength from a
+ * weakness.
  *
  * Everything here is pure: the same input gives the same text. A number is written with the
  * conventions of the language (the decimal separator, the space of the thousands and the one before
@@ -178,6 +179,56 @@ export function formatDifference(
  */
 export function formatMedian(value: number, unit: MetricUnit, language: string): string {
   return writeNumber(value, unit === 'percent' ? 'percent' : SHAPE_OF_GAP[unit], language);
+}
+
+/** The lowest share written as a number (1 %): a share that is less than a percent is "< 1%". */
+const LOWEST_SHARE = 0.01;
+
+/** The highest share written as a number (99 %): a share that is more, and not all, is "> 99%". */
+const HIGHEST_SHARE = 0.99;
+
+/** Under half a percent, a share rounds to 0 %: it is written "< 1%" instead (when it is over 0). */
+const ROUNDS_TO_ZERO_BELOW = 0.005;
+
+/** From 99.5 %, a share rounds to 100 %: it is written "> 99%" instead (when it is under 1). */
+const ROUNDS_TO_ALL_FROM = 0.995;
+
+/**
+ * Write a share of the damage a source dealt, or the usual share of the player: a percentage with no
+ * decimal, written like every percentage of the page (`41%` in English, `41 %` in French).
+ *
+ * A share is never rounded into a lie about what it is made of, like `percentileText` does for a
+ * place: a source that dealt damage never reads `0%` and one that is not all the damage never reads
+ * `100%`. A share under half a percent (and over 0) is written `< 1%`, and one of 99.5 % or more (and
+ * under 1) is written `> 99%`. Exactly 0 and exactly 1 are exact.
+ *
+ * @param share - The share, from 0 to 1.
+ * @param language - The language of the interface.
+ * @returns The text. A share has no sign: a negative one that rounds to zero (which the data does not
+ *   give) reads `0%`, never `−0%`.
+ */
+export function formatShare(share: number, language: string): string {
+  if (share > 0 && share < ROUNDS_TO_ZERO_BELOW) {
+    return `< ${formatMetricValue(LOWEST_SHARE, 'percent', language)}`;
+  }
+  if (share >= ROUNDS_TO_ALL_FROM && share < 1) {
+    return `> ${formatMetricValue(HIGHEST_SHARE, 'percent', language)}`;
+  }
+  return formatMetricValue(share, 'percent', language);
+}
+
+/**
+ * Write how a share differs from the usual one, in points: `+4 pts`, `−10 pts`. A percentage of a
+ * percentage means little, so the gap is never a relative one; it is written like the gap between two
+ * accuracies ({@link formatDifference}).
+ *
+ * @param gap - The share minus the usual share, as a share (0.1 is 10 points).
+ * @param language - The language of the interface.
+ * @param t - Translation function, for the points.
+ * @returns The text, with a real minus sign. A gap that rounds to zero is written without sign.
+ */
+export function formatShareGap(gap: number, language: string, t: TFunction): string {
+  return formatDifference({ kind: 'absolute', amount: gap }, 'percent', language, t);
 }
 
 /** The lowest place the community data can give: below it, a value is under the first percentile. */

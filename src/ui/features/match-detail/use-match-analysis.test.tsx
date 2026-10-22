@@ -39,6 +39,7 @@ import {
   useCommunityRefresh,
   useMatchAnalysis,
 } from './use-match-analysis';
+import { BREAKDOWN_QUERY_KEY_OF } from './use-match-breakdown';
 
 /** The clock of the services (Unix ms): fixed, so that the fixtures are the same on every run. */
 const START = Date.UTC(2026, 9, 14, 12, 0, 0);
@@ -142,7 +143,7 @@ describe('useMatchAnalysis', () => {
 });
 
 describe('useAnalyseMatch', () => {
-  it('analyses the match, writes the view into the analysis query and refreshes the counts', async () => {
+  it('analyses the match, writes the view into the analysis query and refreshes the counts and the tabs', async () => {
     const test = await setUp({ projected: false });
     const { services, matchId } = test;
     const queryClient = createTestQueryClient(test.logger);
@@ -169,10 +170,11 @@ describe('useAnalyseMatch', () => {
     expect(result.current.analyse.data).toMatchObject({ kind: 'ready' });
     expect(result.current.analysis.data).toEqual(result.current.analyse.data);
     expect(result.current.analysis.data).toEqual(await services.analysis.getMatchAnalysis(matchId));
-    // Only the counts of the banner are read again: the success does not make the analysis query
-    // read itself again, which would never end for a view that stays `pending`.
+    // The counts of the banner and the tabs of the match are read again: the success does not make
+    // the analysis query read itself again, which would never end for a view that stays `pending`.
     expect(invalidate.mock.calls.map(([filters]) => filters)).toEqual([
       { queryKey: DETAILS_SUMMARY_QUERY_KEY },
+      { queryKey: BREAKDOWN_QUERY_KEY_OF(matchId) },
     ]);
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));

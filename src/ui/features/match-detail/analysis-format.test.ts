@@ -17,6 +17,8 @@ import {
   formatMedian,
   formatMetricValue,
   formatPhaseTotal,
+  formatShare,
+  formatShareGap,
   INSIGHT_STYLE,
   metricLabel,
   NO_VALUE,
@@ -213,6 +215,60 @@ describe('formatMedian', () => {
   }[])('writes a median of $value ($unit), which rounds to zero, without a minus', (input) => {
     expect(plain(formatMedian(input.value, input.unit, 'en'))).toBe(input.en);
     expect(plain(formatMedian(input.value, input.unit, 'fr'))).toBe(input.fr);
+  });
+});
+
+describe('formatShare', () => {
+  it.each([
+    { share: 0.41, en: '41%', fr: '41 %' },
+    // A share is written without decimal: the half rounds up.
+    { share: 0.095, en: '10%', fr: '10 %' },
+    { share: 0.006, en: '1%', fr: '1 %' },
+    { share: 0.994, en: '99%', fr: '99 %' },
+    // A source that dealt nothing is a share of 0, and one that dealt all the damage is a share of 1:
+    // these two are exact.
+    { share: 0, en: '0%', fr: '0 %' },
+    { share: 1, en: '100%', fr: '100 %' },
+    // A source that dealt damage never reads "0%", whatever little it dealt.
+    { share: 0.004, en: '< 1%', fr: '< 1 %' },
+    { share: 0.0001, en: '< 1%', fr: '< 1 %' },
+    // A source that is not all the damage never reads "100%".
+    { share: 0.996, en: '> 99%', fr: '> 99 %' },
+    { share: 0.9999, en: '> 99%', fr: '> 99 %' },
+    // A share is never negative; one that comes is written without a sign, never "−0%".
+    { share: -0.004, en: '0%', fr: '0 %' },
+  ])('writes a share by language: $share gives $en, $fr', ({ share, en, fr }) => {
+    expect(plain(formatShare(share, 'en'))).toBe(en);
+    expect(plain(formatShare(share, 'fr'))).toBe(fr);
+  });
+
+  it('writes a share as the analysis writes a percentage, whatever the language', () => {
+    // One owner of the percent convention (the space before the sign in French): the share reads as
+    // the percentages of the rest of the page.
+    expect(formatShare(0.41, 'fr')).toBe(formatMetricValue(0.41, 'percent', 'fr'));
+    expect(formatShare(0.41, 'en')).toBe(formatMetricValue(0.41, 'percent', 'en'));
+  });
+});
+
+describe('formatShareGap', () => {
+  it.each([
+    { gap: -0.04, en: `${MINUS}4 pts`, fr: `${MINUS}4 pts` },
+    { gap: 0.036, en: '+4 pts', fr: '+4 pts' },
+    { gap: 0.1, en: '+10 pts', fr: '+10 pts' },
+    // Under half a point is no gap: no sign, since there is no direction to tell.
+    { gap: 0.001, en: '0 pts', fr: '0 pts' },
+    { gap: -0.001, en: '0 pts', fr: '0 pts' },
+    // A gap is a difference, not a share: "0 pts" for a gap this small is true, unlike "0%" for a
+    // source that dealt damage.
+    { gap: 0.004, en: '0 pts', fr: '0 pts' },
+    { gap: -0.004, en: '0 pts', fr: '0 pts' },
+  ])('writes a gap in points with a real minus sign: $gap gives $en', async ({ gap, en, fr }) => {
+    expect(plain(formatShareGap(gap, 'en', await translatorOf('en')))).toBe(en);
+    expect(plain(formatShareGap(gap, 'fr', await translatorOf('fr')))).toBe(fr);
+  });
+
+  it('never writes the hyphen of the number formats', async () => {
+    expect(formatShareGap(-0.12, 'en', await translatorOf('en'))).not.toContain('-');
   });
 });
 

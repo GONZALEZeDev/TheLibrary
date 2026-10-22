@@ -12,7 +12,8 @@
  * The table is a light grid, so that the eye follows each phase down its column and each figure along
  * its row: a thin rule between every two cells, the cells of the header row included (above every
  * row, at the left of every phase column), and no background but the tint of a cell that stood out.
- * Each phase heads its column with its name over the time it covers.
+ * The classes of the grid are shared with the other tables of the page (see `table-styles`). Each
+ * phase heads its column with its name over the time it covers.
  *
  * A cell that is compared holds the evidence behind its figures ({@link Evidence}): the panel opens
  * under the cell when the pointer is over it or the keyboard focus is on it.
@@ -34,39 +35,18 @@ import {
   PHASE_STAT_UNIT,
 } from './analysis-format';
 import { Evidence } from './Evidence';
+import {
+  GRID_CELL,
+  GRID_COLUMN_HEADER,
+  GRID_CORNER_CELL,
+  GRID_ROW_START_CELL,
+} from './table-styles';
 
 /** Props of {@link PhaseTable}. */
 export interface PhaseTableProps {
   /** The phases the match reached, in the order of the match. */
   readonly phases: readonly PhaseColumnView[];
 }
-
-/*
- * The grid. Every rule is 1 px wide and has the colour of the border of the theme, and every cell
- * carries its own: the rule above it, and, for a cell of a phase column, the rule at its left. The
- * table collapses nothing (`border-separate`), so two cells never double a rule. The rule above the
- * header row sets the grid apart from the title, and the border of the box closes it at the left, at
- * the right and at the bottom.
- */
-
-/** The name of a figure, at the start of its row: the rule above the row, and the room around it. */
-const ROW_HEADER =
-  'border-t border-border px-3 py-2.5 align-top text-left font-normal text-fg-muted';
-
-/** The cell of a phase in the body: the rule above its row, and the rule at its left. */
-const PHASE_CELL = 'border-t border-l border-border px-3 py-2.5 align-top';
-
-/**
- * The header of a phase column: the rule above the header row, the rule at its left, and the room for
- * its two lines.
- */
-const PHASE_HEADER = 'border-t border-l border-border px-3 py-2.5 text-left font-normal';
-
-/**
- * The empty cell at the start of the header row, above the names of the figures: it carries the rule
- * above the header row, so that the rule runs along the whole row.
- */
-const CORNER_CELL = 'border-t border-border';
 
 /**
  * Hidden between the name of a phase and its range. The two are lines of their own on screen; the dot
@@ -85,7 +65,7 @@ const NAME_RANGE_SEPARATOR = ' · ';
 function renderColumnHeader(column: PhaseColumnView, t: TFunction) {
   const { span } = column;
   return (
-    <th key={span.phase} scope="col" className={PHASE_HEADER}>
+    <th key={span.phase} scope="col" className={GRID_COLUMN_HEADER}>
       <span className="block text-sm font-medium text-fg">{t(`analysis.phase.${span.phase}`)}</span>
       <span className="sr-only">{NAME_RANGE_SEPARATOR}</span>
       <span className="block text-xs font-normal text-fg-muted tabular-nums">
@@ -177,10 +157,7 @@ function renderCell(stat: PhaseStat, column: PhaseColumnView, t: TFunction, lang
     </>
   );
   return (
-    <td
-      key={column.span.phase}
-      className={mark === null ? PHASE_CELL : `${PHASE_CELL} ${mark.tint}`}
-    >
+    <td key={column.span.phase} className={mark === null ? GRID_CELL : `${GRID_CELL} ${mark.tint}`}>
       {row === null ? (
         figures
       ) : (
@@ -223,14 +200,14 @@ export function PhaseTable({ phases }: PhaseTableProps) {
         </colgroup>
         <thead>
           <tr>
-            <td className={CORNER_CELL} />
+            <td className={GRID_CORNER_CELL} />
             {phases.map((column) => renderColumnHeader(column, t))}
           </tr>
         </thead>
         <tbody className="[&>tr:last-child>td:last-child]:rounded-br-xl">
           {PHASE_STATS.map((stat) => (
             <tr key={stat}>
-              <th scope="row" className={ROW_HEADER}>
+              <th scope="row" className={GRID_ROW_START_CELL}>
                 {t(`analysis.phaseStat.${stat}`)}
               </th>
               {phases.map((column) => renderCell(stat, column, t, i18n.language))}

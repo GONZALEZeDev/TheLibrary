@@ -5,9 +5,10 @@
  *
  * All three go through `AnalysisService`. Reading the analysis never projects or downloads anything:
  * a page asks for the projection of its match with {@link useAnalyseMatch} when the analysis says it
- * is `pending`, and for the community data with {@link useCommunityRefresh} when it opens; the
- * analysis is read again once the data is in the cache. Query keys never contain an account id: the
- * service resolves the account itself, and keys are logged when a query or a mutation fails.
+ * is `pending`, and for the community data with {@link useCommunityRefresh} when its analysis tab
+ * opens; the analysis is read again once the data is in the cache. Query keys never contain an
+ * account id: the service resolves the account itself, and keys are logged when a query or a mutation
+ * fails.
  *
  * @packageDocumentation
  */
@@ -17,6 +18,7 @@ import type { MatchAnalysisView } from '../../../services/analysis-view';
 import { isSuspensionRefusal } from '../../../services/sync.service';
 import { useServices } from '../../app/ServicesContext';
 import { DETAILS_QUERY_KEY, DETAILS_SUMMARY_QUERY_KEY } from '../matches/use-matches';
+import { BREAKDOWN_QUERY_KEY_OF } from './use-match-breakdown';
 
 /**
  * Prefix of every query that downloads the community data of a match (one per match, see
@@ -26,7 +28,8 @@ import { DETAILS_QUERY_KEY, DETAILS_SUMMARY_QUERY_KEY } from '../matches/use-mat
  * these queries (see `resetAccountData`), or a page would keep the answer given for the previous
  * account. They are deliberately not refreshed by `useRefreshOnSync`: the detail queue reports every
  * match it records, up to once a second, and the community data does not change with them. It is
- * downloaded when a page opens and kept for a day by the service, which says `fresh` until then.
+ * downloaded when the analysis tab of a match opens and kept for a day by the service, which says
+ * `fresh` until then.
  */
 export const ANALYSIS_COMMUNITY_QUERY_KEY = ['analysis-community'] as const;
 
@@ -66,15 +69,16 @@ export function useMatchAnalysis(matchId: MatchId) {
 /**
  * Analyse a match whose analysis is not complete yet: the page of a match whose analysis is `pending`
  * (the match itself, or some of the earlier matches its habits are made of, has no projection yet)
- * asks for it when it opens (see `AnalysisSection`). The service projects what is missing, which
- * takes a moment the first time, and answers the analysis.
+ * asks for it when it opens (see `AnalysisRun`), whatever tab is open. The service projects what is
+ * missing, which takes a moment the first time, and answers the analysis.
  *
  * On success the view is written into the analysis query, which then shows it without reading it
  * again: nothing here invalidates the analysis, so the success cannot start a loop of reads. The
  * details summary is read again, since the projection puts a match whose archive cannot be read
  * back to `pending`, which the counts of the banner show. A read of the analysis that began before
  * the success and ends after it is cancelled first: its answer, from before the projection, would
- * take the analysis away from the page.
+ * take the analysis away from the page. The tabs of the match are read again too: the damage tab
+ * says `pending` until the projection is stored, and has its damage to show now.
  *
  * It does not retry: a failure is not going away by itself, and the next opening of the page asks
  * again. A failure stays a mutation error, logged once by the query client (the name of the
@@ -113,6 +117,13 @@ export function useAnalyseMatch(matchId: MatchId) {
       await queryClient.cancelQueries({ queryKey: analysisKey(matchId) });
       queryClient.setQueryData(analysisKey(matchId), view);
       await queryClient.invalidateQueries({ queryKey: DETAILS_SUMMARY_QUERY_KEY });
+      // Not awaited, unlike the counts: the mutation stays pending until this callback ends, and the
+      // dialog that says the match is being analysed with it. The analysis is done, and the dialog
+      // must not wait for the read of the open tab, which may download a catalogue (the damage tab
+      // downloads one that is a week old): the tab fills in after the dialog is gone. The promise
+      // never rejects (no `throwOnError`): a read that fails is logged once by the query cache, and
+      // the tab shows its error.
+      void queryClient.invalidateQueries({ queryKey: BREAKDOWN_QUERY_KEY_OF(matchId) });
     },
   });
 }
@@ -130,10 +141,11 @@ export function useAnalyseMatch(matchId: MatchId) {
  * query asks again for neither, since its key does not change, it does not retry and the window focus
  * does not refetch it. Only `unavailable` leaves the analysis alone: nothing new is in the cache.
  *
- * The query has no `staleTime` of its own: every time a page opens it asks again, which costs
+ * The query has no `staleTime` of its own: every time the analysis tab opens it asks again (the
+ * tabs unmount the panels they do not show, so coming back to the tab opens it again), which costs
  * nothing while the data is fresh (the service answers `fresh` without a request), and is how an
  * `unavailable` answer is tried again at the next opening. For the same reason it does not retry a
- * failure by itself: the failure of a page that is open is not going away, and the next opening asks
+ * failure by itself: the failure of a tab that is open is not going away, and the next opening asks
  * again.
  *
  * A rejection (the database could not store the data) stays a query error: the page shows it as "no

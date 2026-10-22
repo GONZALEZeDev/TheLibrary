@@ -1,19 +1,34 @@
 /**
- * Match detail screen: the facts of the archived detail of a match, or why there is none.
+ * Match detail screen: the match in a header, then its tabs, or why there is no detail.
  *
- * An archived match shows what its archive holds about the tracked player. Any other match says
- * why it has no archive: the app does not archive it, it waits for its first or its next attempt,
- * deadlock-api could not give its detail, the detail cannot be read, or the archive file is gone
- * (the match is then downloaded again, or, past the 90 days, never). A match that failed for good
- * has a "Retry" button. A failure to read the archive file or to decompress it is not an
- * explanation of the match but an error of the page, shown like any other.
+ * Every match the history holds has a header under the title (`MatchHeader`: the hero, the date, the
+ * type, the result, the duration, the K/D/A and the souls), read from its row of the history, so it
+ * is the same whatever the state of the detail. It is part of the title block of the page, close
+ * under the title it describes. A match with no row has no header.
  *
- * Under the facts of an archived match comes its analysis (`AnalysisSection`): the strengths and
- * weaknesses, the phase table and the metrics by family. Every archived match is analysed after each
- * synchronisation, so the page usually finds the analysis made. A match still not analysed (opened
- * before the end of the synchronisation that archived it, or after a new version of the metrics) is
- * analysed when its page opens, as a fallback, behind a dialog that says so. The timeline,
- * scoreboard and build order arrive in later milestones.
+ * An archived match then shows three tabs, and only the open one is built:
+ * - the analysis (`AnalysisSection`): the strengths and weaknesses, the phase table and the metrics
+ *   by family, then one line about the archive of the match;
+ * - the damage and build (`DamageTab`): the damage by source compared with the player's habits, and
+ *   the final build;
+ * - the players (`PlayersTab`): the twelve players of the match and the player's places among them.
+ *
+ * The open tab is kept in the address of the page (`?tab=`): the analysis when the address names no
+ * tab, or one the page does not have. Opening another tab replaces the address instead of adding one
+ * to the history, so that going back leaves the match rather than walking back through its tabs.
+ *
+ * Any other match says why it has no archive, and has no tabs: the app does not archive it, it waits
+ * for its first or its next attempt, deadlock-api could not give its detail, the detail cannot be
+ * read, or the archive file is gone (the match is then downloaded again, or, past the 90 days,
+ * never). A match that failed for good has a "Retry" button. A failure to read the archive file or to
+ * decompress it is not an explanation of the match but an error of the page, shown like any other.
+ *
+ * Every archived match is analysed after each synchronisation, so the page usually finds the analysis
+ * made. A match still not analysed (opened before the end of the synchronisation that archived it, or
+ * after a new version of the metrics) is analysed when its page opens, as a fallback, whatever tab is
+ * open: the run (`AnalysisRun`) sits above the tabs, with the sentence and the dialog that say how it
+ * goes, and the damage tab, which has nothing to show until the analysis is stored, is read again
+ * when it is.
  *
  * Above the title of every state of the page is a link back to the match list.
  *
@@ -22,29 +37,70 @@
 import { getRouteApi, Link } from '@tanstack/react-router';
 import type { TFunction } from 'i18next';
 import { ArrowLeft, RotateCw, UserRound } from 'lucide-react';
-import { Fragment, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { MatchId } from '../../../core/domain/match';
 import { toAppError } from '../../../core/errors/app-error';
 import type { ArchiveFacts } from '../../../core/match-detail/archive-facts';
 import type { MatchDetailView } from '../../../services/match-detail.service';
+import type { MatchTab } from '../../app/router';
 import { EmptyState } from '../../components/EmptyState';
 import { PageHeader } from '../../components/PageHeader';
+import { Tabs } from '../../components/Tabs';
 import { LinkAccountButton } from '../account/LinkAccountButton';
-import { formatDuration } from '../matches/MatchesTable';
-import { useRefreshOnSync, useSyncRunning } from '../matches/use-matches';
+import {
+  useHeroAssets,
+  useMatchSummary,
+  useRefreshOnSync,
+  useSyncRunning,
+} from '../matches/use-matches';
+import { AnalysisRun } from './AnalysisRun';
 import { AnalysisSection } from './AnalysisSection';
+import { DamageTab } from './DamageTab';
+import { MatchHeader } from './MatchHeader';
+import { PlayersTab } from './PlayersTab';
 import { useMatchDetail, useRetryDetail } from './use-match-detail';
 
-/** Typed access to the parameters of the `/matches/$matchId` route (see `ui/app/router.ts`). */
+/**
+ * Typed access to the parameters and the search parameters of the `/matches/$matchId` route (see
+ * `ui/app/router.ts`).
+ */
 const matchDetailRoute = getRouteApi('/matches/$matchId');
 
-/** How the page writes dates, counts and sizes, in the language of the interface. */
+/** The view of an archived match, the one that has tabs. */
+type ReadyView = Extract<MatchDetailView, { kind: 'ready' }>;
+
+/**
+ * Translation key of the name of each tab of an archived match, in display order: the analysis, the
+ * damage and build, the players. The `satisfies` clause makes the compiler reject this table as soon
+ * as a tab is added to {@link MatchTab} without a name here, or a name is given to a tab that does
+ * not exist. (The router validates the `tab` of the address against the same ids; this page does not
+ * read them from `router.ts`, which imports the page.)
+ */
+const TAB_LABEL_KEYS = {
+  analysis: 'matchDetail.tabs.analysis',
+  damage: 'matchDetail.tabs.damage',
+  players: 'matchDetail.tabs.players',
+} as const satisfies Readonly<Record<MatchTab, string>>;
+
+/**
+ * The tabs of an archived match, in display order: the keys of {@link TAB_LABEL_KEYS}, which are
+ * exactly the tabs (its `satisfies` clause), in the order they are written there.
+ */
+const TAB_IDS = Object.keys(TAB_LABEL_KEYS) as readonly MatchTab[];
+
+/** The tabs of an archived match: the one open, and how to open another. */
+interface TabsControl {
+  /** The tab open, from the address of the page. */
+  readonly selected: MatchTab;
+  /** Opens a tab, by writing it in the address of the page. */
+  readonly onSelect: (tab: MatchTab) => void;
+}
+
+/** How the page writes dates and sizes, in the language of the interface. */
 interface Formatters {
   /** Short date and short time, like the match list and the banner. */
   readonly dateTime: Intl.DateTimeFormat;
-  /** Whole numbers, with the separators of the language. */
-  readonly integer: Intl.NumberFormat;
   /** Sizes in kilobytes, with one decimal at most. */
   readonly kilobytes: Intl.NumberFormat;
 }
@@ -120,62 +176,76 @@ function renderExplanation(sentences: readonly string[], action?: ReactNode) {
 }
 
 /**
- * The facts of an archived match, as a list of terms and definitions.
+ * The line about the archive of a match: how many stat snapshots and items bought it holds, how
+ * big the file is and when it was downloaded.
  *
  * @param facts - What the archive holds about the tracked player.
  * @param archivedBytes - Size of the archive file.
  * @param t - Translation function.
- * @param format - How to write dates, counts and sizes.
- * @returns The list.
+ * @param format - How to write dates and sizes.
+ * @returns The line.
  */
-function renderFacts(facts: ArchiveFacts, archivedBytes: number, t: TFunction, format: Formatters) {
-  // Each line is a term and its definition, in reading order. The result is also conveyed by its
-  // word, never by its colour alone.
-  const lines: readonly (readonly [label: string, value: ReactNode])[] = [
-    [
-      t('matchDetail.facts.result'),
-      <span key="result" className={facts.won ? 'text-win' : 'text-loss'}>
-        {facts.won ? t('matches.table.win') : t('matches.table.loss')}
-      </span>,
-    ],
-    [t('matchDetail.facts.duration'), formatDuration(facts.durationS)],
-    // Written like the K / D / A column of the match list.
-    [
-      t('matchDetail.facts.kda'),
-      `${String(facts.kills)} / ${String(facts.deaths)} / ${String(facts.assists)}`,
-    ],
-    [t('matchDetail.facts.netWorth'), format.integer.format(facts.netWorth)],
-    [t('matchDetail.facts.snapshots'), String(facts.snapshots)],
-    [t('matchDetail.facts.items'), String(facts.itemsBought)],
-    [
-      t('matchDetail.facts.archive'),
-      t('matchDetail.facts.archiveValue', {
+function renderArchiveLine(
+  facts: ArchiveFacts,
+  archivedBytes: number,
+  t: TFunction,
+  format: Formatters,
+) {
+  return (
+    <p className="text-sm text-fg-muted">
+      {t('matchDetail.archiveLine', {
+        snapshots: facts.snapshots,
+        items: facts.itemsBought,
         size: format.kilobytes.format(archivedBytes / 1024),
         date: format.dateTime.format(facts.fetchedAt),
-      }),
-    ],
-  ];
-  return (
-    <dl className="grid grid-cols-[max-content_1fr] gap-x-8 gap-y-3 rounded-xl border border-border bg-surface p-4 text-sm">
-      {lines.map(([label, value]) => (
-        <Fragment key={label}>
-          <dt className="text-fg-muted">{label}</dt>
-          <dd className="tabular-nums">{value}</dd>
-        </Fragment>
-      ))}
-    </dl>
+      })}
+    </p>
   );
 }
 
 /**
- * What the page shows of a match, depending on what the services say of it.
+ * The panel of the open tab of an archived match.
+ *
+ * @param tab - The open tab.
+ * @param view - What the services say of the archived match.
+ * @param matchId - The match.
+ * @param t - Translation function.
+ * @param format - How to write dates and sizes.
+ * @returns The analysis then the archive line, the damage and build, or the players.
+ */
+function renderTabPanel(
+  tab: MatchTab,
+  view: ReadyView,
+  matchId: MatchId,
+  t: TFunction,
+  format: Formatters,
+) {
+  switch (tab) {
+    case 'analysis':
+      return (
+        <div className="space-y-6">
+          <AnalysisSection matchId={matchId} />
+          {renderArchiveLine(view.facts, view.archivedBytes, t, format)}
+        </div>
+      );
+    case 'damage':
+      return <DamageTab matchId={matchId} />;
+    case 'players':
+      return <PlayersTab matchId={matchId} />;
+  }
+}
+
+/**
+ * What the page shows of a match under its header, depending on what the services say of it.
  *
  * @param view - What the services say of the match.
- * @param matchId - The match, whose analysis comes under its facts.
+ * @param matchId - The match.
  * @param t - Translation function.
- * @param format - How to write dates, counts and sizes.
+ * @param format - How to write dates and sizes.
  * @param retry - The "Retry" button, shown for the matches that failed.
- * @returns The facts and the analysis, or the explanation of why there are none.
+ * @param tabs - The tabs of an archived match: the open one, and how to open another.
+ * @returns The tabs of an archived match under the run of its analysis, or the explanation of why
+ *   there is no detail.
  */
 function renderView(
   view: MatchDetailView,
@@ -183,17 +253,25 @@ function renderView(
   t: TFunction,
   format: Formatters,
   retry: RetryAction,
+  tabs: TabsControl,
 ) {
   switch (view.kind) {
     case 'ready':
-      // The analysis is only for an archived match: the others have nothing to analyse. It is keyed
-      // by the match, so that moving from one match to another does not carry the state of the first
-      // one's analysis over to the second.
+      // The tabs, and the analysis that runs above them, are only for an archived match: the others
+      // have nothing to analyse nor to break down. The run is keyed by the match, so that moving from
+      // one match to another does not carry the state of the first one's analysis (a failure, a
+      // dialog the player closed, the analysis the analysis tab keeps) over to the second.
       return (
-        <div className="space-y-6">
-          {renderFacts(view.facts, view.archivedBytes, t, format)}
-          <AnalysisSection key={matchId} matchId={matchId} />
-        </div>
+        <AnalysisRun key={matchId} matchId={matchId}>
+          <Tabs
+            label={t('matchDetail.tabs.label')}
+            tabs={TAB_IDS.map((id) => ({ id, label: t(TAB_LABEL_KEYS[id]) }))}
+            selected={tabs.selected}
+            onSelect={tabs.onSelect}
+          >
+            {renderTabPanel(tabs.selected, view, matchId, t, format)}
+          </Tabs>
+        </AnalysisRun>
       );
     case 'no_account':
       // Said like the matches page says it: there is no match without an account. The player can
@@ -239,6 +317,9 @@ function renderView(
 export function MatchDetailPage() {
   const { t, i18n } = useTranslation();
   const { matchId } = matchDetailRoute.useParams();
+  // The search parameters are validated by the route: `tab` is always one of the tabs.
+  const { tab } = matchDetailRoute.useSearch();
+  const navigate = matchDetailRoute.useNavigate();
   const detail = useMatchDetail(matchId);
   const retry = useRetryDetail(matchId);
   const syncRunning = useSyncRunning();
@@ -247,20 +328,47 @@ export function MatchDetailPage() {
   useRefreshOnSync();
   const format: Formatters = {
     dateTime: new Intl.DateTimeFormat(i18n.language, { dateStyle: 'short', timeStyle: 'short' }),
-    integer: new Intl.NumberFormat(i18n.language),
     kilobytes: new Intl.NumberFormat(i18n.language, { maximumFractionDigits: 1 }),
   };
+  // The row of the match in the history: `null` is an answer (the account has no such match, or no
+  // account is linked), `undefined` means the row is still being read. The header needs the row
+  // alone, so it does not wait for the detail; and it does not wait for the hero catalogue either
+  // (the hero is named by its id until the catalogue is there). The catalogue is only asked for
+  // when there is a match to show a hero for: without a row, the page contacts nobody.
+  const match = useMatchSummary(matchId).data ?? null;
+  const heroes = useHeroAssets(match !== null);
+  const hero =
+    match === null ? undefined : heroes.data?.find((candidate) => candidate.id === match.heroId);
 
   let body: ReactNode = null;
   if (detail.data !== undefined) {
     // A failed refresh keeps the view already shown: the error only replaces an empty screen.
-    body = renderView(detail.data, matchId, t, format, {
-      // The queue is alone to download details, so a retry waits for the run in progress to end.
-      disabled: syncRunning || retry.isPending,
-      onRetry: () => {
-        retry.mutate();
+    body = renderView(
+      detail.data,
+      matchId,
+      t,
+      format,
+      {
+        // The queue is alone to download details, so a retry waits for the run in progress to end.
+        disabled: syncRunning || retry.isPending,
+        onRetry: () => {
+          retry.mutate();
+        },
       },
-    });
+      {
+        selected: tab,
+        onSelect: (next) => {
+          // `replace`: the tabs of a match are one entry of the history (see the header of this
+          // file). The tabs never ask for the tab already open, so no navigation is for nothing.
+          void navigate({
+            to: '/matches/$matchId',
+            params: { matchId },
+            search: { tab: next },
+            replace: true,
+          });
+        },
+      },
+    );
   } else if (detail.isError) {
     body = (
       <p role="alert" className="text-sm text-loss">
@@ -273,7 +381,11 @@ export function MatchDetailPage() {
   return (
     <>
       {renderBackLink(t)}
-      <PageHeader title={t('matchDetail.title', { matchId })} />
+      {/* The facts of the match are the content of the title block: close under the title they
+          describe, with the space of the block below them. */}
+      <PageHeader title={t('matchDetail.title', { matchId })}>
+        {match === null ? undefined : <MatchHeader match={match} hero={hero} />}
+      </PageHeader>
       {body}
     </>
   );

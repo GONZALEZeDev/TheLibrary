@@ -36,7 +36,7 @@
     "@tauri-apps/plugin-http": "2.8.2",
     "@tauri-apps/plugin-log": "2.10.0",
     "@tauri-apps/plugin-opener": "2.7.0",
-    "@tauri-apps/plugin-sql": "2.5.0",
+    "@tauri-apps/plugin-sql": "2.6.0",
     "@tauri-apps/plugin-store": "2.5.0",
     "i18next": "26.4.3",
     "lucide-react": "1.55.0",

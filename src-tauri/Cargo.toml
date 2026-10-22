@@ -58,8 +58,9 @@ tauri-plugin-oauth = "2.1.0"
 # Opens Steam's sign-in page in the system browser; scoped to that page in the capability. 2.7.0
 # matches `@tauri-apps/plugin-opener` (the Tauri CLI compares both): keep `Cargo.lock` on it.
 tauri-plugin-opener = "2.7.0"
-# SQLite database of the app; the only database driver compiled in.
-tauri-plugin-sql = { version = "2.5.0", features = ["sqlite"] }
+# SQLite database of the app; the only database driver compiled in. 2.6.0 matches
+# `@tauri-apps/plugin-sql` (the Tauri CLI compares both): keep `Cargo.lock` on it.
+tauri-plugin-sql = { version = "2.6.0", features = ["sqlite"] }
 log = "0.4"
 # Needed by `tauri::generate_context!()` as soon as tauri.conf.json has a `plugins` section (each
 # plugin configuration is embedded as a JSON value); the tests of lib.rs read that file with it too.

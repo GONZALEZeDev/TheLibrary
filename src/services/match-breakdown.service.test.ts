@@ -32,9 +32,10 @@ import {
 import { FIXTURE_ACCOUNT_ID } from '../adapters/dev/fixtures/match-history.fixture';
 import type { RawItemEntry } from '../adapters/dev/fixtures/match-damage.fixture';
 import type { DamageBreakdown, SourceKind } from '../core/analysis/damage-breakdown';
-import { DAMAGE_KEY_PREFIXES, damageSourceKey } from '../core/analysis/damage-sources';
+import { damageSourceKey } from '../core/analysis/damage-sources';
 import { PERSONAL_WINDOW } from '../core/analysis/insights/thresholds';
-import { PROJECTION_VERSION } from '../core/analysis/registry';
+import { communityWindowKey, METRICS, PROJECTION_VERSION } from '../core/analysis/registry';
+import { REVIEW_KEY_PREFIXES, VALVE_RANK_KEY } from '../core/analysis/review/review-values';
 import {
   parseItemCatalogue,
   parseRankCatalogue,
@@ -80,6 +81,28 @@ const ASSETS_PATH = '/v1/assets/';
 
 /** The prefix of the keys of the damage a source dealt in the stored values of a match. */
 const DAMAGE_SOURCE_PREFIX = damageSourceKey('');
+
+/** The keys of the metrics in the stored values of a match, each community window included. */
+const METRIC_KEYS: ReadonlySet<string> = new Set(
+  METRICS.flatMap(({ key, community }) =>
+    community.kind === 'curve' ? [key, communityWindowKey(key)] : [key],
+  ),
+);
+
+/**
+ * Whether a stored key is one of the metrics or of the review values: every key of a match that
+ * has no damage matrix.
+ *
+ * @param key - A key of the stored values of a match.
+ * @returns `true` for a metric key or a review key.
+ */
+function isMetricOrReviewKey(key: string): boolean {
+  return (
+    METRIC_KEYS.has(key) ||
+    key === VALVE_RANK_KEY ||
+    REVIEW_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))
+  );
+}
 
 /** An item the catalogue does not know, and an ability it does not know either. */
 const UNKNOWN_ITEM_ID = 9_999_001;
@@ -660,11 +683,7 @@ describe('MatchBreakdownService', () => {
       );
       await projectArchivedMatches(context, { now: () => context.clock.now });
       const values = await context.metrics.getValues(ACCOUNT, context.newest);
-      expect(
-        [...values.keys()].filter((key) =>
-          DAMAGE_KEY_PREFIXES.some((prefix) => key.startsWith(prefix)),
-        ),
-      ).toEqual([]);
+      expect([...values.keys()].filter((key) => !isMetricOrReviewKey(key))).toEqual([]);
 
       const view = ready(await context.breakdown.getDamageTab(context.newest));
 

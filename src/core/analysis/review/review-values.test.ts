@@ -24,6 +24,7 @@ import {
   REVIEW_KEY_PREFIXES,
   VALVE_RANK_KEY,
   deathsBeforeItemKey,
+  hasShopPurchases,
   itemBoughtAtKey,
   phaseDeathsKey,
   phaseDeathsWindowKey,
@@ -441,5 +442,48 @@ describe('projectReviewValues', () => {
       ).toBe(false);
       expect(key, key).not.toBe(VALVE_RANK_KEY);
     }
+  });
+});
+
+describe('hasShopPurchases', () => {
+  it('is true for a match that bought a shop item, whichever it is', () => {
+    const values = projectReviewValues(
+      input({ items: [shopItem(FIRST_ITEM_ID, 300), abilityEntry(ABILITY_ID, 60)] }),
+    );
+
+    expect(hasShopPurchases(values)).toBe(true);
+    expect(hasShopPurchases(new Map([[itemBoughtAtKey(1), 0]]))).toBe(true);
+  });
+
+  it('is false for a match whose items are unknown, whatever else is known of it', () => {
+    // The items of the archive are unreadable, but the deaths and the places are known.
+    const values = projectReviewValues(
+      input({
+        deathTimesS: [100, 700],
+        items: null,
+        scoreboard: scoreboardOf({ [TRACKED_SLOT]: { mvpRank: 1 } }),
+      }),
+    );
+
+    expect(values.size).toBeGreaterThan(0);
+    expect(hasShopPurchases(values)).toBe(false);
+    expect(hasShopPurchases(new Map())).toBe(false);
+  });
+
+  it('is false for a match whose item list holds no shop purchase', () => {
+    // A full match without a single shop purchase does not happen: such a list is an unreadable one.
+    const values = projectReviewValues(input({ items: [abilityEntry(ABILITY_ID, 60)] }));
+
+    expect(hasShopPurchases(values)).toBe(false);
+  });
+
+  it('reads the purchases only, not the deaths before them or a key that merely looks like one', () => {
+    expect(hasShopPurchases(new Map([[deathsBeforeItemKey(1), 2]]))).toBe(false);
+    expect(hasShopPurchases(new Map([['item_bought_at_1', 300]]))).toBe(false);
+    expect(hasShopPurchases(new Map([[`x.${itemBoughtAtKey(1)}`, 300]]))).toBe(false);
+  });
+
+  it('does not count a purchase whose time is not known', () => {
+    expect(hasShopPurchases(new Map([[itemBoughtAtKey(1), null]]))).toBe(false);
   });
 });

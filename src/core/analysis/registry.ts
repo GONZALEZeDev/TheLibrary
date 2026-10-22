@@ -32,7 +32,9 @@ import { teammateHealingMetric } from './metrics/teammate-healing.metric';
  * The version of the projection: the set of values stored for a match, and the way they are
  * computed. A projection holds the values of the metrics of this registry and, next to them, the
  * damage-source values of the match (`./damage-sources`): the damage of each source, the damage
- * dealt while each shop item was owned, and the time each ability was unlocked.
+ * dealt while each shop item was owned, and the time each ability was unlocked; and its review
+ * values (`./review/review-values`): the deaths of each phase, the time each shop item was first
+ * bought and the deaths before, the places on the scoreboard and Valve's top three.
  *
  * Every projection is stored with the version that wrote it. Bumping the version makes every archive
  * be projected again at the next synchronisation, which projects the archived matches that lack a
@@ -40,15 +42,15 @@ import { teammateHealingMetric } from './metrics/teammate-healing.metric';
  * match it shows, as a fallback). The archives are already on the disk, so this needs no network.
  *
  * Bump it when a metric is added, removed or changed (its formula, its unit, the way its community
- * window is read), or when the damage-source values are (a family of keys added or removed, the way
- * a value is worked out): the values stored for the same archive would no longer be the ones the
- * code computes. Do not bump it for a change that leaves the projected values as they are (a text,
- * the layout of the page).
+ * window is read), or when the damage-source or review values are (a family of keys added or
+ * removed, the way a value is worked out): the values stored for the same archive would no longer
+ * be the ones the code computes. Do not bump it for a change that leaves the projected values as
+ * they are (a text, the layout of the page).
  *
- * The versions so far: 1 stored the values of the metrics; 2 also stores the damage-source values
- * of each match.
+ * The versions so far: 1 stored the values of the metrics; 2 also stored the damage-source values
+ * of each match; 3 also stores the review values of each match.
  */
-export const PROJECTION_VERSION = 2;
+export const PROJECTION_VERSION = 3;
 
 /**
  * The thirteen metrics of the whole match, in the order they are shown: grouped by family (combat,

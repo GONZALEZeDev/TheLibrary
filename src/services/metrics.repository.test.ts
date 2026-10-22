@@ -914,6 +914,210 @@ describe('MetricsRepository', () => {
     });
   });
 
+  describe('listRecent', () => {
+    /**
+     * Seed the matches and the projections the tests of the recent matches read. The ones left out
+     * are named in a comment; #7 and #6 started at the same second.
+     *
+     * @param database - The database.
+     */
+    async function seedRecent(database: Database): Promise<void> {
+      await seedMatches(database, [
+        { n: 1, startTime: 1_000, durationS: 1_100 },
+        { n: 2, startTime: 2_000, durationS: 1_200 },
+        { n: 3, startTime: 3_000, durationS: 1_300 }, // failed: left out
+        { n: 4, startTime: 3_500, durationS: 1_400 }, // old version: left out
+        { n: 5, startTime: 4_000, durationS: 1_500 }, // not projected: left out
+        { n: 6, startTime: 5_000, durationS: 1_600 },
+        { n: 7, startTime: 5_000, durationS: 1_700 }, // same start time as #6: the higher id first
+        { n: 8, startTime: 4_500, durationS: 1_800 },
+        { n: 9, startTime: 2_500, durationS: 1_900 }, // projected, without any value
+        { n: 10, startTime: 6_000, durationS: 2_000, detailStatus: 'retry' }, // detail not archived
+        // Another account's match with the same id, the most recent of all: left out.
+        { n: 1, accountId: OTHER_ACCOUNT_ID, startTime: 7_000, durationS: 1_000 },
+      ]);
+      const repository = new MetricsRepository(database);
+      const save = (n: number, record: ProjectionRecord, entries: Record<string, number | null>) =>
+        repository.saveProjection(ACCOUNT_ID, matchId(n), record, metricValues(entries));
+      await save(1, projection(), { kda: 1, ratio: null });
+      await save(2, projection(), { kda: 2 });
+      await save(3, projection({ failed: true }), { kda: 3 });
+      await save(4, projection({ version: 0 }), { kda: 4 });
+      await save(6, projection(), { kda: 6 });
+      await save(7, projection(), { kda: 7 });
+      await save(8, projection(), { kda: 8, ratio: 0.5 });
+      await save(9, projection(), {});
+      await save(10, projection(), { kda: 10 });
+      await repository.saveProjection(
+        OTHER_ACCOUNT_ID,
+        matchId(1),
+        projection(),
+        metricValues({ kda: 99 }),
+      );
+    }
+
+    it('lists the most recent projected matches with their values', async () => {
+      const database = createTestDatabase();
+      await seedRecent(database);
+      const repository = new MetricsRepository(database);
+
+      const recent = await repository.listRecent(ACCOUNT_ID, VERSION, 10);
+
+      // Most recent first, the highest id first when two matches started at the same second.
+      expect(recent).toEqual([
+        {
+          matchId: matchId(7),
+          startTime: 5_000,
+          durationS: 1_700,
+          values: metricValues({ kda: 7 }),
+        },
+        {
+          matchId: matchId(6),
+          startTime: 5_000,
+          durationS: 1_600,
+          values: metricValues({ kda: 6 }),
+        },
+        {
+          matchId: matchId(8),
+          startTime: 4_500,
+          durationS: 1_800,
+          values: metricValues({ kda: 8, ratio: 0.5 }),
+        },
+        { matchId: matchId(9), startTime: 2_500, durationS: 1_900, values: new Map() },
+        {
+          matchId: matchId(2),
+          startTime: 2_000,
+          durationS: 1_200,
+          values: metricValues({ kda: 2 }),
+        },
+        {
+          matchId: matchId(1),
+          startTime: 1_000,
+          durationS: 1_100,
+          values: metricValues({ kda: 1, ratio: null }),
+        },
+      ]);
+    });
+
+    it('lists at most the limit, the most recent ones', async () => {
+      const database = createTestDatabase();
+      await seedRecent(database);
+      const repository = new MetricsRepository(database);
+
+      const ids = async (limit: number): Promise<MatchId[]> =>
+        (await repository.listRecent(ACCOUNT_ID, VERSION, limit)).map((match) => match.matchId);
+
+      await expect(ids(1)).resolves.toEqual([matchId(7)]);
+      await expect(ids(3)).resolves.toEqual([matchId(7), matchId(6), matchId(8)]);
+      // A limit that is a mistake lists nothing; a negative one means "no limit" to SQLite, and
+      // must not list the whole history.
+      for (const limit of [0, -1, 1.5, Number.NaN]) {
+        await expect(ids(limit)).resolves.toEqual([]);
+      }
+    });
+
+    it('lists only matches of the current version', async () => {
+      const database = createTestDatabase();
+      await seedRecent(database);
+      const repository = new MetricsRepository(database);
+
+      const current = await repository.listRecent(ACCOUNT_ID, VERSION, 10);
+      const old = await repository.listRecent(ACCOUNT_ID, 0, 10);
+
+      // #4 alone has the old version; it is not among the matches of the current one.
+      expect(current.map((match) => match.matchId)).not.toContain(matchId(4));
+      expect(old).toEqual([
+        {
+          matchId: matchId(4),
+          startTime: 3_500,
+          durationS: 1_400,
+          values: metricValues({ kda: 4 }),
+        },
+      ]);
+      await expect(repository.listRecent(ACCOUNT_ID, VERSION + 1, 10)).resolves.toEqual([]);
+    });
+
+    it('leaves failed projections out', async () => {
+      const database = createTestDatabase();
+      await seedRecent(database);
+      const repository = new MetricsRepository(database);
+
+      const recent = await repository.listRecent(ACCOUNT_ID, VERSION, 10);
+
+      // #3 has the current version and stored values, but its projection failed.
+      expect(recent.map((match) => match.matchId)).not.toContain(matchId(3));
+      expect(recent.some((match) => match.values.get('kda') === 3)).toBe(false);
+    });
+
+    it('leaves out the matches whose detail is not archived', async () => {
+      const database = createTestDatabase();
+      await seedMatches(database, [
+        { n: 0, startTime: 1_000 },
+        { n: 1, startTime: 2_000, detailStatus: 'pending' },
+        { n: 2, startTime: 3_000, detailStatus: 'retry' },
+        { n: 3, startTime: 4_000, detailStatus: 'unavailable' },
+        { n: 4, startTime: 5_000, detailStatus: 'invalid' },
+      ]);
+      const repository = new MetricsRepository(database);
+      for (let n = 0; n <= 4; n += 1) {
+        await repository.saveProjection(
+          ACCOUNT_ID,
+          matchId(n),
+          projection(),
+          metricValues({ kda: n }),
+        );
+      }
+
+      const recent = await repository.listRecent(ACCOUNT_ID, VERSION, 10);
+
+      expect(recent.map((match) => match.matchId)).toEqual([matchId(0)]);
+    });
+
+    it('reads nothing for another account', async () => {
+      const database = createTestDatabase();
+      await seedRecent(database);
+      const repository = new MetricsRepository(database);
+
+      // An account with no match gets nothing; the other account gets its own match with its own
+      // values, although the first account has a match with the same id.
+      await expect(repository.listRecent(THIRD_ACCOUNT_ID, VERSION, 10)).resolves.toEqual([]);
+      await expect(repository.listRecent(OTHER_ACCOUNT_ID, VERSION, 10)).resolves.toEqual([
+        {
+          matchId: matchId(1),
+          startTime: 7_000,
+          durationS: 1_000,
+          values: metricValues({ kda: 99 }),
+        },
+      ]);
+    });
+
+    it('asks the database for the values of the matches in one statement', async () => {
+      const database = createTestDatabase();
+      await seedRecent(database);
+      const recorder = recordStatements(database);
+
+      await new MetricsRepository(recorder.database).listRecent(ACCOUNT_ID, VERSION, 10);
+
+      // One query for the matches, one for all their values: not one query per match.
+      expect(recorder.statements).toHaveLength(2);
+    });
+
+    it('reads no values when there is no match to read them for', async () => {
+      const database = createTestDatabase();
+      await seedRecent(database);
+      const recorder = recordStatements(database);
+      const repository = new MetricsRepository(recorder.database);
+
+      // An account with no match: the matches are asked for, their values are not.
+      await repository.listRecent(THIRD_ACCOUNT_ID, VERSION, 10);
+      expect(recorder.statements).toHaveLength(1);
+
+      // A limit that is a mistake: the matches are not even asked for, so the count stays at one.
+      await repository.listRecent(ACCOUNT_ID, VERSION, 0);
+      expect(recorder.statements).toHaveLength(1);
+    });
+  });
+
   describe('accounts', () => {
     it('deletes, counts and lists accounts across both tables', async () => {
       const database = createTestDatabase();
@@ -1057,6 +1261,106 @@ describe('MetricsRepository', () => {
       ).rejects.toMatchObject({ kind: 'storage', context: { field: 'match_id' } });
     });
 
+    it('reports a damaged row of the recent matches as a storage error without the value', async () => {
+      const damagedId = new MetricsRepository(
+        answering([{ match_id: -5, start_time: 1_000, duration_s: 1_800 }]),
+      );
+      const damagedStart = new MetricsRepository(
+        answering([{ match_id: matchId(1), start_time: 'secret-text', duration_s: 1_800 }]),
+      );
+
+      await expect(damagedId.listRecent(ACCOUNT_ID, VERSION, 5)).rejects.toMatchObject({
+        kind: 'storage',
+        context: { field: 'match_id' },
+      });
+      const error = await damagedStart
+        .listRecent(ACCOUNT_ID, VERSION, 5)
+        .catch((caught: unknown) => caught);
+      expect(error).toMatchObject({
+        kind: 'storage',
+        context: { field: 'start_time', code: 'invalid_type' },
+      });
+      expect(isAppError(error) ? shownBy(error) : '').not.toContain('secret-text');
+    });
+
+    describe('values of the previous and the recent matches', () => {
+      /**
+       * A database whose first query lists one match, and whose second one (the values of the
+       * matches) answers as given.
+       *
+       * @param second - What the second query answers.
+       * @returns The database.
+       */
+      function listingOneMatch(second: () => Promise<readonly SqlRow[]>): Database {
+        let calls = 0;
+        return {
+          execute: () => Promise.resolve(0),
+          select: () => {
+            calls += 1;
+            return calls === 1
+              ? Promise.resolve([{ match_id: matchId(1), start_time: 1_000, duration_s: 1_800 }])
+              : second();
+          },
+        };
+      }
+
+      /**
+       * Both methods read the values of their matches through the same statement: the name of the
+       * matches, the call, and what a failure of that statement is called.
+       */
+      const readers: readonly [
+        string,
+        (repository: MetricsRepository) => Promise<readonly unknown[]>,
+        string,
+      ][] = [
+        [
+          'previous',
+          (repository) => repository.listPrevious(ACCOUNT_ID, matchId(0), VERSION, 5),
+          'Could not read the metrics of the previous matches',
+        ],
+        [
+          'recent',
+          (repository) => repository.listRecent(ACCOUNT_ID, VERSION, 5),
+          'Could not read the metrics of the recent matches',
+        ],
+      ];
+
+      it.each(readers)(
+        'reports a damaged value of the %s matches as a storage error without the value',
+        async (_name, read) => {
+          const repository = new MetricsRepository(
+            listingOneMatch(() =>
+              Promise.resolve([{ match_id: matchId(1), metric_key: 'kda', value: 'secret-text' }]),
+            ),
+          );
+
+          const error = await read(repository).catch((caught: unknown) => caught);
+
+          expect(error).toMatchObject({
+            kind: 'storage',
+            message: 'A stored metric is invalid',
+            context: { field: 'value', code: 'invalid_type' },
+          });
+          expect(isAppError(error) ? shownBy(error) : '').not.toContain('secret-text');
+        },
+      );
+
+      it.each(readers)(
+        'reports a failure of the query of the values of the %s matches as a storage error',
+        async (_name, read, failureMessage) => {
+          const repository = new MetricsRepository(
+            listingOneMatch(() => Promise.reject(new Error('disk I/O error'))),
+          );
+
+          await expect(read(repository)).rejects.toMatchObject({
+            kind: 'storage',
+            message: failureMessage,
+            cause: new Error('disk I/O error'),
+          });
+        },
+      );
+    });
+
     it('reports a damaged match id of the match to project as a storage error', async () => {
       const repository = new MetricsRepository(answering([{ match_id: -5 }]));
 
@@ -1122,6 +1426,7 @@ describe('MetricsRepository', () => {
         () => repository.getProjection(ACCOUNT_ID, matchId(0)),
         () => repository.getValues(ACCOUNT_ID, matchId(0)),
         () => repository.listPrevious(ACCOUNT_ID, matchId(0), VERSION, 5),
+        () => repository.listRecent(ACCOUNT_ID, VERSION, 5),
         () => repository.deleteAccount(ACCOUNT_ID),
         () => repository.countAccount(ACCOUNT_ID),
         () => repository.listAccountIds(),

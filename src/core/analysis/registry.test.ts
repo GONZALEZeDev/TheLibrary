@@ -245,8 +245,8 @@ describe('METRICS', () => {
 });
 
 describe('PROJECTION_VERSION', () => {
-  it('is 2: the projection also stores the damage sources of each match', () => {
-    expect(PROJECTION_VERSION).toBe(2);
+  it('is 3: the projection also stores the review values of each match', () => {
+    expect(PROJECTION_VERSION).toBe(3);
   });
 });
 

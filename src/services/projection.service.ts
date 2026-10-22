@@ -27,10 +27,16 @@
  *   left, and the version (`projected`). A metric the archive does not hold what it needs for is an
  *   unknown value (`null`), which is no failure; a metric that throws is the same, and it is told
  *   in the log, once for each metric in a run. The values are the metrics and, next to them, the
- *   damage sources of the match (`../core/analysis/damage-sources`). A match with no damage matrix
- *   has no damage source, which is no news; a match whose damage matrix is not what is expected
- *   has none either, and it is told in the log, once in a run. Neither costs the match its metrics,
- *   nor makes it fail: it is projected, and not projected again before the version changes;
+ *   damage sources of the match (`../core/analysis/damage-sources`) and its review values
+ *   (`../core/analysis/review/review-values`: the deaths of each phase, the first purchase of each
+ *   shop item, the places on the scoreboard). A match with no damage matrix has no damage source,
+ *   which is no news; a match whose damage matrix is not what is expected has none either, and it
+ *   is told in the log, once in a run. The review values come from three parts of the archive, the
+ *   death details, the items and the scoreboard, each read on its own: death details that miss a
+ *   death give no value and no news, and a part that is not what is expected gives none either,
+ *   and it is told in the log, once in a run, whichever part it was. None of this costs the match
+ *   its metrics, nor makes it fail: it is projected, and not projected again before the version
+ *   changes;
  * - the analysis cannot read the match, since the archive does not hold what it expects of a match
  *   (`failed`): the match is stored as failed, with no values. That is a verdict on the match, which
  *   is not tried again before the version changes: downloading it again would give the same detail;
@@ -67,10 +73,14 @@ import { PERSONAL_WINDOW } from '../core/analysis/insights/thresholds';
 import { buildMatchContext, type MatchContext } from '../core/analysis/match-context';
 import type { MetricKey } from '../core/analysis/metric';
 import { projectMetrics, PROJECTION_VERSION } from '../core/analysis/registry';
+import { projectReviewValues } from '../core/analysis/review/review-values';
 import type { AccountId } from '../core/domain/account';
 import type { MatchId } from '../core/domain/match';
 import { isAppError, issueOf, toAppError, type AppError } from '../core/errors/app-error';
 import type { ArchiveEnvelope } from '../core/match-detail/archive-envelope';
+import { readScoreboard } from '../core/match-detail/scoreboard';
+import { readTrackedDeathTimes } from '../core/match-detail/tracked-deaths';
+import { readTrackedItems } from '../core/match-detail/tracked-items';
 import type { LogContext, Logger } from '../ports/logger.port';
 import type { ArchiveReaderService } from './archive-reader.service';
 import type { MatchDetailRepository } from './match-detail.repository';
@@ -139,6 +149,42 @@ interface RunState {
   readonly toldKeys: Set<MetricKey>;
   /** Whether this run told that a damage matrix could not be read. */
   hasToldDamageNotRead: boolean;
+  /** Whether this run told that a part of an archive the review values need could not be read. */
+  hasToldReviewNotRead: boolean;
+}
+
+/**
+ * A line the run tells once, about content of an archive that is not what is expected: the flag of
+ * {@link RunState} that remembers it was told, and its message.
+ */
+interface TellOnceLine {
+  readonly flag: 'hasToldDamageNotRead' | 'hasToldReviewNotRead';
+  readonly message: 'Damage sources not read' | 'Review values not read';
+}
+
+/** The line about a damage matrix that could not be read. */
+const DAMAGE_NOT_READ: TellOnceLine = {
+  flag: 'hasToldDamageNotRead',
+  message: 'Damage sources not read',
+};
+
+/** The line about a part of an archive, whichever, that the review values could not be read from. */
+const REVIEW_NOT_READ: TellOnceLine = {
+  flag: 'hasToldReviewNotRead',
+  message: 'Review values not read',
+};
+
+/**
+ * Whether an error is a verdict on the content of an archive: the payload lacks what is expected of
+ * it (`invalid_payload`). Any other error says nothing about the content (the file, the compressor,
+ * the database, or a bug on this archive), and must be seen as what it is instead of being taken
+ * for a verdict.
+ *
+ * @param error - What was caught.
+ * @returns `true` for the `invalid_payload` error of an `AppError`.
+ */
+function isPayloadVerdict(error: unknown): error is AppError {
+  return isAppError(error) && error.kind === 'invalid_payload';
 }
 
 /**
@@ -328,6 +374,7 @@ export class ProjectionService {
       skipped: 0,
       toldKeys: new Set(),
       hasToldDamageNotRead: false,
+      hasToldReviewNotRead: false,
     };
     let stoppedBy: ProjectionReport['stoppedBy'] = null;
     // The matches that failed one after the other, up to the one being projected.
@@ -415,7 +462,7 @@ export class ProjectionService {
     } catch (error) {
       // Only a payload that lacks what the analysis expects is a verdict on the match. Any other
       // error is a bug, which must be seen as one instead of marking the match.
-      if (!isAppError(error) || error.kind !== 'invalid_payload') {
+      if (!isPayloadVerdict(error)) {
         throw error;
       }
       await this.#metrics.saveProjection(
@@ -439,13 +486,21 @@ export class ProjectionService {
       return;
     }
 
-    // The metrics, then the damage sources next to them: their keys never meet (a damage key starts
-    // with the prefix of its family), so nothing is overwritten.
+    // The metrics, then the damage sources and the review values next to them: their keys never
+    // meet (a damage or review key starts with the prefix of its family, or is the key of Valve's
+    // top three), so nothing is overwritten.
     const metricValues = projectMetrics(context, (key, error) => {
       this.#logMetricFailure(run, tags, matchId, key, error);
     });
     const damageValues = this.#projectDamageSources(run, tags, matchId, read.envelope);
-    const values: MetricValues = new Map([...metricValues, ...damageValues]);
+    const reviewValues = this.#projectReviewValues(
+      run,
+      tags,
+      matchId,
+      read.envelope,
+      context.durationS,
+    );
+    const values: MetricValues = new Map([...metricValues, ...damageValues, ...reviewValues]);
     await this.#metrics.saveProjection(
       accountId,
       matchId,
@@ -525,10 +580,10 @@ export class ProjectionService {
     } catch (error) {
       // Only a matrix that is not what is expected is a verdict on the damage sources. Any other
       // error is a bug, which must be seen as one instead of silently dropping the damage.
-      if (!isAppError(error) || error.kind !== 'invalid_payload') {
+      if (!isPayloadVerdict(error)) {
         throw error;
       }
-      this.#logDamageNotRead(run, tags, matchId, error);
+      this.#tellOnce(run, DAMAGE_NOT_READ, tags, matchId, error);
       return new Map();
     }
     // No matrix: some matches come without one, which is no news.
@@ -536,31 +591,104 @@ export class ProjectionService {
   }
 
   /**
-   * Tell that the damage sources of a match could not be read, the first time it happens in a run.
-   * A change of the payload hits most matches, so the log would otherwise hold a line for each
-   * match. The line holds the place and the code of the problem, never a value of the archive.
+   * Tell that content of an archive is not what is expected (the damage matrix, a part the review
+   * values need), the first time it happens in a run for the line given. A change of the payload
+   * hits most matches, so the log would otherwise hold a line for each match. The line holds the
+   * place and the code of the problem, never a value of the archive.
    *
-   * It never throws, like the line about a metric that failed: telling about the damage sources is
-   * not worth losing the metrics of a match, which are computed already.
+   * It never throws, like the line about a metric that failed: telling about the damage sources or
+   * the review values is not worth losing the metrics of a match, which are computed already.
    *
    * @param run - What the run counts, and what it told about.
+   * @param line - The line to tell: its message, and the flag of the run that remembers it.
    * @param tags - What every line about a match holds besides its own fields: the run it belongs to.
    * @param matchId - The match being projected.
-   * @param error - The `invalid_payload` error of the damage matrix.
+   * @param error - The `invalid_payload` error of the content.
    */
-  #logDamageNotRead(run: RunState, tags: LogContext, matchId: MatchId, error: AppError): void {
+  #tellOnce(
+    run: RunState,
+    line: TellOnceLine,
+    tags: LogContext,
+    matchId: MatchId,
+    error: AppError,
+  ): void {
     try {
-      if (run.hasToldDamageNotRead) {
+      if (run[line.flag]) {
         return;
       }
-      run.hasToldDamageNotRead = true;
-      this.#logger.log('info', LOG_SCOPE, 'Damage sources not read', {
+      run[line.flag] = true;
+      this.#logger.log('info', LOG_SCOPE, line.message, {
         ...tags,
         matchId,
         issue: issueOf(error),
       });
     } catch {
-      // The logger promises not to throw; if it does, the match has no damage sources all the same.
+      // The logger promises not to throw; if it does, the match lacks those values all the same.
+    }
+  }
+
+  /**
+   * Work out the review values of a match from its archive: the deaths of each phase, the first
+   * purchase of each shop item and the deaths before it, the places on the scoreboard. They come
+   * from three parts of the archive, each read on its own, so that a part that cannot be read costs
+   * the match its own values and no other: a scoreboard that cannot be read still leaves the deaths
+   * and the items, and so on. The metrics of the match do not depend on any of them, so the match is
+   * projected all the same, and the problem is told, once in a run.
+   *
+   * @param run - What the run counts, and what it told about.
+   * @param tags - What every line about a match holds besides its own fields: the run it belongs to.
+   * @param matchId - The match being projected.
+   * @param envelope - The decoded archive of the match.
+   * @param durationS - The length of the match, in seconds.
+   * @returns The values by key; none for a part that is incomplete or cannot be read.
+   * @throws The error that is not about the content of a part (a bug): the match is not
+   *   projected, as for any failure that says nothing about the match.
+   */
+  #projectReviewValues(
+    run: RunState,
+    tags: LogContext,
+    matchId: MatchId,
+    envelope: ArchiveEnvelope,
+    durationS: number,
+  ): ReadonlyMap<string, number> {
+    return projectReviewValues({
+      durationS,
+      // Death details that miss a death are `null` already: unknown, which is no news.
+      deathTimesS: this.#readReviewPart(run, tags, matchId, () => readTrackedDeathTimes(envelope)),
+      items: this.#readReviewPart(run, tags, matchId, () => readTrackedItems(envelope)),
+      scoreboard: this.#readReviewPart(run, tags, matchId, () => readScoreboard(envelope)),
+    });
+  }
+
+  /**
+   * Read one part of an archive the review values need, and leave it unknown when it is not what is
+   * expected.
+   *
+   * @param run - What the run counts, and what it told about.
+   * @param tags - What every line about a match holds besides its own fields: the run it belongs to.
+   * @param matchId - The match being projected.
+   * @param read - Reads the part from the archive.
+   * @returns What the reader gives, `null` when it is `null` (the part is incomplete) or when the
+   *   part is not what is expected (the payload changed, say).
+   * @throws The error that is not about the content of the part (a bug): only a part that is not
+   *   what is expected is a verdict on the review values, and any other error must be seen as what
+   *   it is instead of silently dropping them.
+   */
+  #readReviewPart<Part>(
+    run: RunState,
+    tags: LogContext,
+    matchId: MatchId,
+    read: () => Part,
+  ): Part | null {
+    try {
+      return read();
+    } catch (error) {
+      if (!isPayloadVerdict(error)) {
+        throw error;
+      }
+      // Whichever part it is, the run tells about the first one that fails.
+      this.#tellOnce(run, REVIEW_NOT_READ, tags, matchId, error);
+      return null;
     }
   }
 

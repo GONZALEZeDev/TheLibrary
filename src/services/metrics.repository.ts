@@ -66,6 +66,20 @@ export interface PreviousMatch {
   readonly values: MetricValues;
 }
 
+/**
+ * One of the most recent matches of a player, with every value stored for it: what the review of
+ * the player's play is made of.
+ */
+export interface RecentMatch {
+  readonly matchId: MatchId;
+  /** Start of the match, in Unix seconds (as {@link StoredProjection.startTime}). */
+  readonly startTime: number;
+  /** Duration of the match, in seconds. */
+  readonly durationS: number;
+  /** The values of the match, metrics and damage sources alike; empty when it has none. */
+  readonly values: MetricValues;
+}
+
 /** The status of a match whose detail is archived: the only matches that can be projected. */
 const READY: DetailStatus = 'ready';
 
@@ -111,7 +125,9 @@ const metricRowSchema = z.object({
   value: z.number().nullable(),
 });
 
-/** Schema of a row of the metrics of several matches, as `listPrevious` reads them. */
+/**
+ * Schema of a row of the metrics of several matches, as `listPrevious` and `listRecent` read them.
+ */
 const matchMetricRowSchema = metricRowSchema.extend({ match_id: matchIdSchema });
 
 /** Schema of the row of a match id, which the same shared rule as the match history validates. */
@@ -119,6 +135,9 @@ const matchIdRowSchema = z.object({ match_id: matchIdSchema });
 
 /** Schema of a match id and its duration, as `listPrevious` reads them. */
 const previousMatchRowSchema = z.object({ match_id: matchIdSchema, duration_s: z.int() });
+
+/** Schema of a match id, its duration and its start, as `listRecent` reads them. */
+const recentMatchRowSchema = previousMatchRowSchema.extend({ start_time: z.int() });
 
 /** Schema of the row `countAccount` reads. */
 const totalRowSchema = z.object({ total: z.int().nonnegative() });
@@ -162,6 +181,18 @@ function parseMatchIds(rows: readonly SqlRow[]): MatchId[] {
   return rows.map(
     (row) => parseRow(matchIdRowSchema, row, 'A stored match id is invalid').match_id,
   );
+}
+
+/**
+ * Whether a limit can be handed to a `LIMIT` clause: a whole number, 1 or more. SQLite reads a
+ * negative `LIMIT` as "no limit", so a limit that is a mistake must be refused before the query,
+ * or the whole history would come back.
+ *
+ * @param limit - The limit asked for.
+ * @returns `true` when the query may run with it.
+ */
+function isUsableLimit(limit: number): boolean {
+  return Number.isInteger(limit) && limit >= 1;
 }
 
 /** Reads and writes the `match_projections` and `match_metrics` tables. */
@@ -373,9 +404,7 @@ export class MetricsRepository {
       'Could not list the match to project',
     );
     const matchIds = parseMatchIds(matchRows);
-    // SQLite reads a negative `LIMIT` as "no limit": the whole history must not come back from a
-    // limit that is a mistake.
-    if (!Number.isInteger(limit) || limit < 1) {
+    if (!isUsableLimit(limit)) {
       return matchIds;
     }
 
@@ -498,9 +527,7 @@ export class MetricsRepository {
     version: number,
     limit: number,
   ): Promise<readonly PreviousMatch[]> {
-    // SQLite reads a negative `LIMIT` as "no limit": the whole history must not come back from a
-    // limit that is a mistake.
-    if (!Number.isInteger(limit) || limit < 1) {
+    if (!isUsableLimit(limit)) {
       return [];
     }
     const matchRows = await this.#run(
@@ -521,31 +548,67 @@ export class MetricsRepository {
     const matches = matchRows.map((row) =>
       parseRow(previousMatchRowSchema, row, 'A stored previous match is invalid'),
     );
-    if (matches.length === 0) {
-      return [];
-    }
-
-    // The values of all the matches in one statement, grouped by match here.
-    const placeholders = matches.map((_, index) => `$${String(index + 2)}`);
-    const metricRows = await this.#run(
-      () =>
-        this.#database.select(
-          `SELECT match_id, metric_key, value FROM match_metrics
-           WHERE account_id = $1 AND match_id IN (${placeholders.join(', ')})
-           ORDER BY match_id, metric_key`,
-          [accountId, ...matches.map((match) => match.match_id)],
-        ),
+    const valuesByMatch = await this.#readValues(
+      accountId,
+      matches.map((match) => match.match_id),
       'Could not read the metrics of the previous matches',
     );
-    const valuesByMatch = new Map<MatchId, Map<string, number | null>>();
-    for (const row of metricRows) {
-      const metric = parseRow(matchMetricRowSchema, row, 'A stored metric is invalid');
-      const values = valuesByMatch.get(metric.match_id) ?? new Map<string, number | null>();
-      values.set(metric.metric_key, metric.value);
-      valuesByMatch.set(metric.match_id, values);
-    }
     return matches.map((match) => ({
       matchId: match.match_id,
+      durationS: match.duration_s,
+      values: valuesByMatch.get(match.match_id) ?? new Map<string, number | null>(),
+    }));
+  }
+
+  /**
+   * The most recent matches of a player, with every value stored for them: what the review reads.
+   * Only the matches whose detail is archived (`ready`) and that were projected with `version`
+   * without failing count.
+   *
+   * It takes two statements, as {@link MetricsRepository.listPrevious}: the matches, then the values
+   * of all of them (a list of `limit` match ids, far below the number of parameters SQLite
+   * accepts). The second is not sent when no match is listed.
+   *
+   * @param accountId - The player.
+   * @param version - The version of the projection the matches must have.
+   * @param limit - Maximum number of matches; fewer than 1 (or not a whole number) gives none.
+   * @returns The matches, most recent first (the highest id first when two matches started at the
+   *   same second); empty when the player has none.
+   * @throws AppError of kind `storage` when the database fails or returns an invalid row.
+   */
+  async listRecent(
+    accountId: AccountId,
+    version: number,
+    limit: number,
+  ): Promise<readonly RecentMatch[]> {
+    if (!isUsableLimit(limit)) {
+      return [];
+    }
+    const matchRows = await this.#run(
+      () =>
+        this.#database.select(
+          `SELECT m.match_id, m.start_time, m.duration_s
+           FROM matches AS m
+           JOIN match_projections AS p ON p.account_id = m.account_id AND p.match_id = m.match_id
+           WHERE m.account_id = $1 AND m.detail_status = $2
+             AND p.projection_version = $3 AND p.failed = 0
+           ORDER BY m.start_time DESC, m.match_id DESC
+           LIMIT $4`,
+          [accountId, READY, version, limit],
+        ),
+      'Could not list the recent matches',
+    );
+    const matches = matchRows.map((row) =>
+      parseRow(recentMatchRowSchema, row, 'A stored recent match is invalid'),
+    );
+    const valuesByMatch = await this.#readValues(
+      accountId,
+      matches.map((match) => match.match_id),
+      'Could not read the metrics of the recent matches',
+    );
+    return matches.map((match) => ({
+      matchId: match.match_id,
+      startTime: match.start_time,
       durationS: match.duration_s,
       values: valuesByMatch.get(match.match_id) ?? new Map<string, number | null>(),
     }));
@@ -624,6 +687,46 @@ export class MetricsRepository {
       }
     }
     return accountIds;
+  }
+
+  /**
+   * The stored values of several matches, read in one statement (a list of match ids, as long as a
+   * window of matches and far below the number of parameters SQLite accepts) and grouped by match
+   * here.
+   *
+   * @param accountId - The player.
+   * @param matchIds - The matches; with none, nothing is asked of the database.
+   * @param message - What a failure of the query is called, for the logs.
+   * @returns The values of each match, by match id; a match that has none has no entry.
+   * @throws AppError of kind `storage` when the database fails or returns an invalid row.
+   */
+  async #readValues(
+    accountId: AccountId,
+    matchIds: readonly MatchId[],
+    message: string,
+  ): Promise<ReadonlyMap<MatchId, MetricValues>> {
+    const valuesByMatch = new Map<MatchId, Map<string, number | null>>();
+    if (matchIds.length === 0) {
+      return valuesByMatch;
+    }
+    const placeholders = matchIds.map((_, index) => `$${String(index + 2)}`);
+    const metricRows = await this.#run(
+      () =>
+        this.#database.select(
+          `SELECT match_id, metric_key, value FROM match_metrics
+           WHERE account_id = $1 AND match_id IN (${placeholders.join(', ')})
+           ORDER BY match_id, metric_key`,
+          [accountId, ...matchIds],
+        ),
+      message,
+    );
+    for (const row of metricRows) {
+      const metric = parseRow(matchMetricRowSchema, row, 'A stored metric is invalid');
+      const values = valuesByMatch.get(metric.match_id) ?? new Map<string, number | null>();
+      values.set(metric.metric_key, metric.value);
+      valuesByMatch.set(metric.match_id, values);
+    }
+    return valuesByMatch;
   }
 
   /**

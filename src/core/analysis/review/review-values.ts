@@ -107,6 +107,26 @@ export function deathsBeforeItemKey(itemId: number): string {
 }
 
 /**
+ * Tell whether the stored values of a match say anything about its items: whether at least one shop
+ * purchase was stored (see {@link itemBoughtAtKey}).
+ *
+ * The values hold the items of a match that the archive listed, and nothing when it did not (the
+ * list is unreadable or empty). A full match without a single shop purchase does not happen, so a
+ * match with no purchase key at all has unknown items, not an empty shopping list. The caller who
+ * reads "this item was not bought" from the absence of its key asks this first: an item is only
+ * known not to have been bought in a match whose items are known.
+ *
+ * @param values - The values stored for a match, by key; a value that is `null` is not known and
+ *   does not count.
+ * @returns `true` when a shop purchase is stored.
+ */
+export function hasShopPurchases(values: ReadonlyMap<string, number | null>): boolean {
+  return [...values].some(
+    ([key, value]) => key.startsWith(ITEM_BOUGHT_AT_PREFIX) && value !== null,
+  );
+}
+
+/**
  * The key of the place of the player on a figure of the scoreboard.
  *
  * @param stat - The figure.

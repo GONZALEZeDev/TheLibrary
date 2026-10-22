@@ -43,6 +43,20 @@ export const matchesSearchSchema = z.object({
   result: z.enum(['all', 'win', 'loss']).default('all').catch('all'),
 });
 
+/**
+ * The tabs the match route accepts: the `tab` of the URL is one of these ids. The page decides their
+ * order and their names (`MatchDetailPage`).
+ */
+export const MATCH_TABS = ['analysis', 'damage', 'players'] as const;
+
+/** The id of a tab of the match page. */
+export type MatchTab = (typeof MATCH_TABS)[number];
+
+/** Search parameters of `/matches/$matchId`, e.g. `/matches/100000001?tab=damage`. */
+export const matchDetailSearchSchema = z.object({
+  tab: z.enum(MATCH_TABS).default('analysis').catch('analysis'),
+});
+
 // Root layout: the application shell renders the matched child route in its <Outlet />.
 const rootRoute = createRootRoute({ component: AppShell });
 
@@ -84,6 +98,8 @@ const matchDetailRoute = createRoute({
     },
     stringify: ({ matchId }) => ({ matchId: String(matchId) }),
   },
+  // The open tab lives in the URL; links that do not name one open the analysis.
+  validateSearch: matchDetailSearchSchema,
   component: MatchDetailPage,
 });
 

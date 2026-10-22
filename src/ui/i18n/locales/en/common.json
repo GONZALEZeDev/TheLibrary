@@ -41,6 +41,7 @@
     "table": {
       "caption": "Most recent matches",
       "date": "Date",
+      "type": "Type",
       "hero": "Hero",
       "result": "Result",
       "kda": "K / D / A",
@@ -86,16 +87,93 @@
     "missing": "The archive of this match is missing: it will be downloaded again.",
     "lost": "The archive of this match is gone: matches older than 90 days are not downloaded again.",
     "retry": "Retry",
-    "facts": {
-      "result": "Result",
+    "tabs": {
+      "label": "Match sections",
+      "analysis": "Analysis",
+      "damage": "Damage and build",
+      "players": "Players"
+    },
+    "archiveLine": "Archive: {{snapshots}} snapshots, {{items}} items bought, {{size}} KB, downloaded {{date}}",
+    "header": {
       "duration": "Duration",
-      "kda": "K/D/A",
-      "netWorth": "Net worth",
-      "snapshots": "Stat snapshots",
-      "items": "Items bought",
-      "archive": "Archive",
-      "archiveValue": "{{size}} KB, {{date}}"
+      "kda": "K / D / A",
+      "souls": "Souls"
     }
+  },
+  "matchType": {
+    "normal": "Normal",
+    "ranked": "Ranked",
+    "street_brawl": "Street Brawl",
+    "custom": "Custom"
+  },
+  "damage": {
+    "title": "Your damage to heroes, by source",
+    "total": "{{value}} in all",
+    "amount": "{{value}} damage",
+    "columns": {
+      "source": "Source",
+      "share": "Share",
+      "habit": "Usually",
+      "gap": "Gap"
+    },
+    "whileOwned": "while you owned it",
+    "notUnlocked": "Not unlocked",
+    "notEnough": "Not enough matches yet",
+    "flag": {
+      "above": "More than usual",
+      "below": "Less than usual"
+    },
+    "kind": {
+      "weapon": "Weapon",
+      "melee": "Melee",
+      "item": "Item"
+    },
+    "noDetail": "No damage detail for this match.",
+    "catalogueUnavailable": "Ability and item names are not available for now.",
+    "unreadable": "The archive of this match could not be read."
+  },
+  "build": {
+    "title": "Your final build",
+    "slot": {
+      "weapon": "Weapon",
+      "vitality": "Vitality",
+      "spirit": "Spirit",
+      "other": "Other"
+    },
+    "boughtAt": "bought at {{time}}",
+    "imbued": "imbued into {{ability}}",
+    "empty": "No item at the end of the match."
+  },
+  "players": {
+    "title": "The 12 players",
+    "team": {
+      "yours": "Your team",
+      "enemy": "Enemy team"
+    },
+    "columns": {
+      "top": "Valve's top three",
+      "rank": "Rank",
+      "hero": "Hero",
+      "kda": "K / D / A",
+      "souls": "Souls",
+      "heroDamage": "Hero damage",
+      "objectiveDamage": "Objective damage",
+      "support": "Healing and barriers",
+      "lastHits": "LH / D",
+      "lastHitsFull": "Last hits / denies"
+    },
+    "you": "(you)",
+    "top": {
+      "1": "MVP",
+      "2": "2nd",
+      "3": "3rd"
+    },
+    "noTopThree": "No Valve top three for this match.",
+    "placesLabel": "Your places among the players",
+    "place": "{{stat}}: {{place}}/{{of}}",
+    "gap": "{{value}} vs the average",
+    "unrankedNote": "Unranked match: no rank.",
+    "unreadable": "The archive of this match could not be read."
   },
   "analysis": {
     "title": "Analysis",

@@ -6,17 +6,21 @@
  * @packageDocumentation
  */
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createFixtureApi, jsonResponse } from '../../../adapters/dev/fixture-http-client.adapter';
-import { createMatchHistoryFixture } from '../../../adapters/dev/fixtures/match-history.fixture';
+import {
+  createMatchHistoryFixture,
+  FIXTURE_ACCOUNT_ID,
+} from '../../../adapters/dev/fixtures/match-history.fixture';
 import { isMetadataMissing } from '../../../adapters/dev/fixtures/match-metadata.fixture';
 import { PAIGE_HERO_ID } from '../../../core/domain/hero';
-import { parseMatchId } from '../../../core/domain/match';
+import { parseMatchId, type MatchSummary } from '../../../core/domain/match';
 import { AppError } from '../../../core/errors/app-error';
 import type { DetailStatus } from '../../../core/match-detail/detail-status';
 import type { Language } from '../../../core/settings/language';
+import { MatchesRepository } from '../../../services/matches.repository';
 import { MatchesService, type RecentMatches } from '../../../services/matches.service';
 import {
   createTestQueryClient,
@@ -106,6 +110,34 @@ function expectedDetailRows(matchCount: number, now: number, labels: DetailLabel
   return rows;
 }
 
+/** One match of the table, and the text of each of its cells. */
+interface TableRow {
+  readonly matchId: number;
+  /** The text of the cells, in the order of the columns. */
+  readonly cells: readonly string[];
+}
+
+/**
+ * Read the rows of the table.
+ *
+ * @param table - The table of the matches.
+ * @returns A row per match, in the order of the table, with the match its date links to.
+ */
+function readRows(table: HTMLElement): TableRow[] {
+  // The first row holds the headers.
+  return within(table)
+    .getAllByRole('row')
+    .slice(1)
+    .map((row): TableRow => {
+      const href = within(row).getByRole('link').getAttribute('href') ?? '';
+      const matchId = Number(/\/matches\/(\d+)$/.exec(href)?.[1]);
+      const cells = within(row)
+        .getAllByRole('cell')
+        .map((cell) => cell.textContent);
+      return { matchId, cells };
+    });
+}
+
 /**
  * Read the Detail column of the table.
  *
@@ -113,17 +145,84 @@ function expectedDetailRows(matchCount: number, now: number, labels: DetailLabel
  * @returns A row per match, in the order of the table.
  */
 function readDetailRows(table: HTMLElement): DetailRow[] {
-  // The first row holds the headers.
-  return within(table)
-    .getAllByRole('row')
-    .slice(1)
-    .map((row): DetailRow => {
-      const href = within(row).getByRole('link').getAttribute('href') ?? '';
-      const matchId = Number(/\/matches\/(\d+)$/.exec(href)?.[1]);
-      const cells = within(row).getAllByRole('cell');
-      // The Detail column is the sixth.
-      return { matchId, detail: cells[5]?.textContent ?? expect.unreachable() };
-    });
+  return readRows(table).map(({ matchId, cells }): DetailRow => {
+    // The Detail column is the seventh, after the type.
+    return { matchId, detail: cells[6] ?? expect.unreachable() };
+  });
+}
+
+/** One match of the table, and the text of its cell in the Type column. */
+interface TypeRow {
+  readonly matchId: number;
+  /** The text of the cell: empty when the app does not know the type of the match. */
+  readonly type: string;
+}
+
+/**
+ * Read the Type column of the table.
+ *
+ * @param table - The table of the matches.
+ * @returns A row per match, in the order of the table.
+ */
+function readTypeRows(table: HTMLElement): TypeRow[] {
+  return readRows(table).map(({ matchId, cells }): TypeRow => {
+    // The Type column is the second, after the date.
+    return { matchId, type: cells[1] ?? expect.unreachable() };
+  });
+}
+
+/** The two mode codes that give a match its type (see `matchTypeOf`). */
+interface ModeCodes {
+  readonly gameMode: number;
+  readonly matchMode: number;
+}
+
+/** The codes of a normal match: the normal game, unranked. */
+const NORMAL_CODES: ModeCodes = { gameMode: 1, matchMode: 1 };
+
+/** The codes of a ranked match: the normal game, ranked. */
+const RANKED_CODES: ModeCodes = { gameMode: 1, matchMode: 4 };
+
+/** The codes of a Street Brawl match: its own game mode. */
+const STREET_BRAWL_CODES: ModeCodes = { gameMode: 4, matchMode: 1 };
+
+/** The codes of a custom match: the private lobby match mode. */
+const CUSTOM_CODES: ModeCodes = { gameMode: 1, matchMode: 2 };
+
+/** One pair of codes for each type a match can have. */
+const CODES_OF_EACH_TYPE: readonly ModeCodes[] = [
+  NORMAL_CODES,
+  RANKED_CODES,
+  STREET_BRAWL_CODES,
+  CUSTOM_CODES,
+];
+
+/** First synthetic match id of the rows the tests seed themselves; each next row takes one more. */
+const FIRST_SEEDED_MATCH_ID = 100_000_001;
+
+/**
+ * Start of the most recent seeded match (Unix s): a day before {@link NOW}. Each next row starts an
+ * hour earlier, so that the table lists the rows in the order they are given.
+ */
+const SEEDED_START_S = Math.floor(NOW / 1000) - 86_400;
+
+/**
+ * Build the matches of the player a test seeds in the database, one per pair of codes.
+ *
+ * @param modes - The two mode codes of each match, in the order the table must list them.
+ * @returns The matches of the player of the test services, with consecutive ids from
+ *   {@link FIRST_SEEDED_MATCH_ID}.
+ */
+function seededMatches(modes: readonly ModeCodes[]): MatchSummary[] {
+  return modes.map(({ gameMode, matchMode }, index) =>
+    matchSummary({
+      accountId: FIXTURE_ACCOUNT_ID,
+      matchId: FIRST_SEEDED_MATCH_ID + index,
+      startTime: SEEDED_START_S - index * 3_600,
+      gameMode,
+      matchMode,
+    }),
+  );
 }
 
 /**
@@ -131,10 +230,19 @@ function readDetailRows(table: HTMLElement): DetailRow[] {
  *
  * @param options - Options of the test services; the clock is fixed at {@link NOW}.
  * @param language - Language of the interface.
- * @returns The test services; failed queries are logged to their `logger`.
+ * @param matches - Matches to store before the page reads its list, see {@link seededMatches}.
+ * @returns The test services, and the router of the page; failed queries are logged to their
+ *   `logger`.
  */
-async function renderMatchesPage(options: TestServicesOptions = {}, language: Language = 'en') {
+async function renderMatchesPage(
+  options: TestServicesOptions = {},
+  language: Language = 'en',
+  matches: readonly MatchSummary[] = [],
+) {
   const testServices = createTestServices({ now: () => NOW, ...options });
+  if (matches.length > 0) {
+    await new MatchesRepository(testServices.database).upsertMany(matches);
+  }
   const i18n = await createI18n(language);
   const router = createAppRouter(createMemoryHistory({ initialEntries: ['/matches'] }));
   render(
@@ -146,11 +254,15 @@ async function renderMatchesPage(options: TestServicesOptions = {}, language: La
       <RouterProvider router={router} />
     </AppProviders>,
   );
-  return testServices;
+  return { ...testServices, router };
 }
 
 afterEach(() => {
   vi.restoreAllMocks();
+  // A test that selects text (the click that ends a selection) must not leave it to the next one,
+  // even when one of its assertions fails half way: the row click would then stop at the selection
+  // guard and fail every later test for the wrong reason.
+  window.getSelection()?.removeAllRanges();
 });
 
 describe('MatchesPage', () => {
@@ -315,6 +427,154 @@ describe('MatchesPage', () => {
     ).toBeInTheDocument();
   });
 
+  it('opens the match when the row is clicked anywhere', async () => {
+    const user = userEvent.setup();
+    // A custom match: the app does not archive it, so the page that opens has nothing to download.
+    const { router } = await renderMatchesPage({}, 'en', seededMatches([CUSTOM_CODES]));
+    const table = await screen.findByRole('table', { name: 'Most recent matches' });
+    // The K/D/A cell is no link: the click lands away from the date.
+    const cell = within(table).getByText('7 / 3 / 18');
+    expect(cell.closest('a')).toBeNull();
+
+    await user.click(cell);
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe(`/matches/${String(FIRST_SEEDED_MATCH_ID)}`);
+    });
+    expect(
+      await screen.findByRole('heading', {
+        level: 1,
+        name: `Match ${String(FIRST_SEEDED_MATCH_ID)}`,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it('opens the match once when the date link is clicked', async () => {
+    const user = userEvent.setup();
+    const { router } = await renderMatchesPage({}, 'en', seededMatches([CUSTOM_CODES]));
+    const table = await screen.findByRole('table', { name: 'Most recent matches' });
+    const navigate = vi.spyOn(router, 'navigate');
+
+    await user.click(within(table).getByRole('link'));
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe(`/matches/${String(FIRST_SEEDED_MATCH_ID)}`);
+    });
+    // The link navigates by itself: the click it sends up to the row must not navigate again.
+    expect(navigate).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not open the match when the click ends a text selection', async () => {
+    const { router } = await renderMatchesPage({}, 'en', seededMatches([CUSTOM_CODES]));
+    const table = await screen.findByRole('table', { name: 'Most recent matches' });
+    const cell = within(table).getByText('7 / 3 / 18');
+    const navigate = vi.spyOn(router, 'navigate');
+
+    // The player has selected the score to copy it: the mouse button released at the end of the
+    // selection is a click on the row, which must leave the page alone. The click is fired directly
+    // because user-event moves the selection with the pointer, which would end it.
+    window.getSelection()?.selectAllChildren(cell);
+    expect(window.getSelection()?.toString()).toBe('7 / 3 / 18');
+    fireEvent.click(cell);
+    expect(navigate).not.toHaveBeenCalled();
+
+    // Once the selection is gone, the same click opens the match.
+    window.getSelection()?.removeAllRanges();
+    fireEvent.click(cell);
+    expect(navigate).toHaveBeenCalledTimes(1);
+    // The navigation ends before the test does.
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe(`/matches/${String(FIRST_SEEDED_MATCH_ID)}`);
+    });
+  });
+
+  it('keeps one link per row', async () => {
+    await renderMatchesPage({}, 'en', seededMatches(CODES_OF_EACH_TYPE));
+    const table = await screen.findByRole('table', { name: 'Most recent matches' });
+
+    const rows = within(table).getAllByRole('row').slice(1);
+    expect(rows).toHaveLength(CODES_OF_EACH_TYPE.length);
+    for (const row of rows) {
+      // The date link is the only way in for the keyboard: the row is neither a link nor a stop of
+      // its own, so the click on the row is a shortcut for the mouse and nothing more.
+      expect(within(row).getAllByRole('link')).toHaveLength(1);
+      expect(row).not.toHaveAttribute('tabindex');
+    }
+  });
+
+  it('shows the rows as clickable', async () => {
+    await renderMatchesPage({}, 'en', seededMatches(CODES_OF_EACH_TYPE));
+    const table = await screen.findByRole('table', { name: 'Most recent matches' });
+
+    for (const row of within(table).getAllByRole('row').slice(1)) {
+      // The row has the same highlight for the keyboard (the focus is on its date link) as for the
+      // mouse (the pointer is on it).
+      expect(row).toHaveClass(
+        'cursor-pointer',
+        'hover:bg-surface-raised',
+        'focus-within:bg-surface-raised',
+      );
+    }
+  });
+
+  it('labels Street Brawl, custom, normal and ranked matches', async () => {
+    await renderMatchesPage(
+      {},
+      'en',
+      seededMatches([STREET_BRAWL_CODES, CUSTOM_CODES, NORMAL_CODES, RANKED_CODES]),
+    );
+    const table = await screen.findByRole('table', { name: 'Most recent matches' });
+
+    expect(readTypeRows(table).map((row) => row.type)).toEqual([
+      'Street Brawl',
+      'Custom',
+      'Normal',
+      'Ranked',
+    ]);
+    expect(readTypeRows(table).map((row) => row.matchId)).toEqual([
+      FIRST_SEEDED_MATCH_ID,
+      FIRST_SEEDED_MATCH_ID + 1,
+      FIRST_SEEDED_MATCH_ID + 2,
+      FIRST_SEEDED_MATCH_ID + 3,
+    ]);
+  });
+
+  it('labels the types of the matches in French', async () => {
+    await renderMatchesPage(
+      {},
+      'fr',
+      seededMatches([STREET_BRAWL_CODES, CUSTOM_CODES, NORMAL_CODES, RANKED_CODES]),
+    );
+    const table = await screen.findByRole('table', { name: 'Parties les plus récentes' });
+
+    expect(within(table).getByRole('columnheader', { name: 'Type' })).toBeInTheDocument();
+    expect(readTypeRows(table).map((row) => row.type)).toEqual([
+      'Street Brawl',
+      'Personnalisée',
+      'Normale',
+      'Classée',
+    ]);
+  });
+
+  it('shows no label for unknown codes', async () => {
+    // A game mode that came with a later version of the game, and a match mode of the normal game
+    // that the app does not know.
+    await renderMatchesPage(
+      {},
+      'en',
+      seededMatches([
+        { gameMode: 9, matchMode: 1 },
+        { gameMode: 1, matchMode: 6 },
+      ]),
+    );
+    const table = await screen.findByRole('table', { name: 'Most recent matches' });
+
+    expect(readTypeRows(table)).toEqual([
+      { matchId: FIRST_SEEDED_MATCH_ID, type: '' },
+      { matchId: FIRST_SEEDED_MATCH_ID + 1, type: '' },
+    ]);
+  });
+
   it('shows heroes by their id when the catalogue is unavailable', async () => {
     const user = userEvent.setup();
     const fixtures = createFixtureApi({ now: NOW, matchCount: MATCH_COUNT });
@@ -354,12 +614,13 @@ describe('MatchesPage', () => {
     await clickSyncNow(user);
 
     const table = await screen.findByRole('table', { name: 'Most recent matches' });
-    // The Detail column is the sixth, after the duration.
+    // The Detail column is the seventh, after the duration; the type sits between the date and the
+    // hero.
     expect(
       within(table)
         .getAllByRole('columnheader')
         .map((header) => header.textContent),
-    ).toEqual(['Date', 'Hero', 'Result', 'K / D / A', 'Duration', 'Detail']);
+    ).toEqual(['Date', 'Type', 'Hero', 'Result', 'K / D / A', 'Duration', 'Detail']);
     // The table first shows every Paige match waiting for its detail; the detail queue then
     // archives those deadlock-api has, so the column is read once it shows what the fixtures say.
     await waitFor(() => {

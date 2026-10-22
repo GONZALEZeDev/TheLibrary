@@ -41,6 +41,7 @@
     "table": {
       "caption": "Parties les plus récentes",
       "date": "Date",
+      "type": "Type",
       "hero": "Héros",
       "result": "Résultat",
       "kda": "K / D / A",
@@ -86,16 +87,93 @@
     "missing": "L'archive de cette partie est introuvable : elle sera téléchargée à nouveau.",
     "lost": "L'archive de cette partie a disparu : les parties de plus de 90 jours ne sont plus téléchargées.",
     "retry": "Réessayer",
-    "facts": {
-      "result": "Résultat",
+    "tabs": {
+      "label": "Sections de la partie",
+      "analysis": "Analyse",
+      "damage": "Dégâts et build",
+      "players": "Joueurs"
+    },
+    "archiveLine": "Archive : {{snapshots}} instantanés, {{items}} objets achetés, {{size}} Ko, téléchargée le {{date}}",
+    "header": {
       "duration": "Durée",
-      "kda": "K/D/A",
-      "netWorth": "Âmes",
-      "snapshots": "Relevés de stats",
-      "items": "Objets achetés",
-      "archive": "Archive",
-      "archiveValue": "{{size}} Ko, {{date}}"
+      "kda": "K / D / A",
+      "souls": "Âmes"
     }
+  },
+  "matchType": {
+    "normal": "Normale",
+    "ranked": "Classée",
+    "street_brawl": "Street Brawl",
+    "custom": "Personnalisée"
+  },
+  "damage": {
+    "title": "Tes dégâts aux héros, par source",
+    "total": "{{value}} au total",
+    "amount": "{{value}} dégâts",
+    "columns": {
+      "source": "Source",
+      "share": "Part",
+      "habit": "D'habitude",
+      "gap": "Écart"
+    },
+    "whileOwned": "pendant que tu l'avais",
+    "notUnlocked": "Non débloquée",
+    "notEnough": "Pas encore assez de parties",
+    "flag": {
+      "above": "Plus que d'habitude",
+      "below": "Moins que d'habitude"
+    },
+    "kind": {
+      "weapon": "Arme",
+      "melee": "Mêlée",
+      "item": "Objet"
+    },
+    "noDetail": "Pas de détail des dégâts pour cette partie.",
+    "catalogueUnavailable": "Les noms des compétences et des objets ne sont pas disponibles pour l'instant.",
+    "unreadable": "L'archive de cette partie n'a pas pu être lue."
+  },
+  "build": {
+    "title": "Ton build final",
+    "slot": {
+      "weapon": "Arme",
+      "vitality": "Vitalité",
+      "spirit": "Esprit",
+      "other": "Autres"
+    },
+    "boughtAt": "acheté à {{time}}",
+    "imbued": "imprégné dans {{ability}}",
+    "empty": "Aucun objet à la fin de la partie."
+  },
+  "players": {
+    "title": "Les 12 joueurs",
+    "team": {
+      "yours": "Ton équipe",
+      "enemy": "Équipe adverse"
+    },
+    "columns": {
+      "top": "Top 3 de Valve",
+      "rank": "Rang",
+      "hero": "Héros",
+      "kda": "K / D / A",
+      "souls": "Âmes",
+      "heroDamage": "Dégâts héros",
+      "objectiveDamage": "Dégâts obj.",
+      "support": "Soins et barrières",
+      "lastHits": "LH / D",
+      "lastHitsFull": "Last hits / denies"
+    },
+    "you": "(toi)",
+    "top": {
+      "1": "MVP",
+      "2": "2e",
+      "3": "3e"
+    },
+    "noTopThree": "Pas de top 3 de Valve pour cette partie.",
+    "placesLabel": "Tes places parmi les joueurs",
+    "place": "{{stat}} : {{place}}/{{of}}",
+    "gap": "{{value}} vs la moyenne",
+    "unrankedNote": "Partie non classée : pas de rang.",
+    "unreadable": "L'archive de cette partie n'a pas pu être lue."
   },
   "analysis": {
     "title": "Analyse",

@@ -1,16 +1,18 @@
 /**
- * TanStack Query hooks of the match history screen and the dashboard: the stored matches, the
- * numbers of a period, the hero names and the state of the synchronisation.
+ * TanStack Query hooks of the match history screen, the dashboard and the header of the match page:
+ * the stored matches, one match of the history, the numbers of a period, the hero names and assets
+ * and the state of the synchronisation.
  *
- * Every query goes through a service and reads local data, except the hero names, downloaded only
- * when their weekly cache is stale: they work offline. Query keys never contain an account id: the
- * services resolve the account themselves, and keys are logged when a query fails.
+ * Every query goes through a service and reads local data, except the hero names and assets,
+ * downloaded only when their weekly cache is stale: they work offline. Query keys never contain an
+ * account id: the services resolve the account themselves, and keys are logged when a query fails.
  *
  * @packageDocumentation
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useSyncExternalStore } from 'react';
 import type { Hero, HeroId } from '../../../core/domain/hero';
+import type { MatchId } from '../../../core/domain/match';
 import type { Period } from '../../../core/domain/period';
 import { useServices } from '../../app/ServicesContext';
 
@@ -22,8 +24,10 @@ export const MATCHES_QUERY_KEY = ['matches'] as const;
 
 /**
  * Prefix of every query about the match details: their summary ({@link DETAILS_SUMMARY_QUERY_KEY}),
- * the detail of one match (read by the match detail page, under `['details', 'match', matchId]`) and
- * its analysis (under `[...DETAILS_QUERY_KEY, 'analysis', matchId]`, see `useMatchAnalysis`).
+ * the detail of one match (read by the match detail page, under `['details', 'match', matchId]`),
+ * its analysis (under `[...DETAILS_QUERY_KEY, 'analysis', matchId]`, see `useMatchAnalysis`) and the
+ * damage and players tabs (under `[...DETAILS_QUERY_KEY, 'breakdown', matchId]`, see
+ * `useDamageTab`).
  */
 export const DETAILS_QUERY_KEY = ['details'] as const;
 
@@ -34,10 +38,20 @@ export const DETAILS_SUMMARY_QUERY_KEY = [...DETAILS_QUERY_KEY, 'summary'] as co
 export const SYNC_QUERY_KEY = ['sync'] as const;
 
 /**
- * Key of the query that reads the hero catalogue. Without an account the catalogue is empty (the app
- * contacts nobody), so an account change must read it again: see `resetAccountData`.
+ * Key of the query that reads the hero catalogue, and prefix of the queries about it: the names
+ * ({@link useHeroNames}, under this very key) and the assets ({@link useHeroAssets}, under
+ * `[...HEROES_QUERY_KEY, 'assets']`). Without an account the catalogue is empty (the app contacts
+ * nobody), so an account change must read it again: see `resetAccountData`, which resets every
+ * query under this prefix.
  */
 export const HEROES_QUERY_KEY = ['heroes'] as const;
+
+/**
+ * How long a read of the hero catalogue is kept before a screen asks again: an hour. The service
+ * caches the catalogue for a week, so asking it again within the hour is pointless. Shared by the
+ * names and the assets, which read the same catalogue.
+ */
+const HERO_CATALOGUE_STALE_TIME_MS = 60 * 60_000;
 
 /**
  * Shortest time between two refreshes caused by the progress of the detail queue. The queue
@@ -57,6 +71,25 @@ export function useRecentMatches() {
   return useQuery({
     queryKey: [...MATCHES_QUERY_KEY, 'recent'],
     queryFn: () => matches.listRecent(RECENT_MATCHES_LIMIT),
+  });
+}
+
+/**
+ * One match of the linked account, as the history lists it: what the header of the match page shows
+ * (the hero, the result, the type and the date of the match) and where its detail stands.
+ *
+ * The key sits under {@link MATCHES_QUERY_KEY}, so whatever refreshes the matches (a
+ * synchronisation, the detail queue, an account change) refreshes the header too.
+ *
+ * @param matchId - The match.
+ * @returns The TanStack Query result holding the match, or `null` when no account is linked or the
+ *   account has no such match.
+ */
+export function useMatchSummary(matchId: MatchId) {
+  const { matches } = useServices();
+  return useQuery({
+    queryKey: [...MATCHES_QUERY_KEY, 'one', matchId],
+    queryFn: () => matches.getMatch(matchId),
   });
 }
 
@@ -104,8 +137,30 @@ export function useHeroNames(enabled: boolean) {
     queryFn: () => heroes.getHeroes(),
     enabled,
     select: namesById,
-    // The service caches the catalogue for a week: asking it again within the hour is pointless.
-    staleTime: 60 * 60_000,
+    staleTime: HERO_CATALOGUE_STALE_TIME_MS,
+  });
+}
+
+/**
+ * The heroes of the catalogue with their English names, their portraits and their loadouts, for the
+ * screens that show a hero's image (the header of the match page).
+ *
+ * It is a query of its own, under `[...HEROES_QUERY_KEY, 'assets']`, and not the one of
+ * {@link useHeroNames}: the two read the same catalogue but keep different shapes (the names are the
+ * bare heroes, indexed by a `select`), and two shapes must never share one cache entry. The key sits
+ * under {@link HEROES_QUERY_KEY}, so an account change resets both together.
+ *
+ * @param enabled - Whether the assets are needed now. The catalogue may have to be downloaded, so it
+ *   is only asked for when a screen shows heroes: without an account, the app contacts nobody.
+ * @returns The TanStack Query result holding the heroes with their assets.
+ */
+export function useHeroAssets(enabled: boolean) {
+  const { heroes } = useServices();
+  return useQuery({
+    queryKey: [...HEROES_QUERY_KEY, 'assets'],
+    queryFn: () => heroes.getHeroAssets(),
+    enabled,
+    staleTime: HERO_CATALOGUE_STALE_TIME_MS,
   });
 }
 

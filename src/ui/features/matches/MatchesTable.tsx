@@ -16,6 +16,7 @@ import type { MatchId } from '../../../core/domain/match';
 import { matchTypeOf } from '../../../core/domain/match-type';
 import type { DetailStatus } from '../../../core/match-detail/detail-status';
 import type { MatchListItem } from '../../../services/matches.service';
+import { formatDuration } from '../../format/duration';
 
 /** Props of {@link MatchesTable}. */
 export interface MatchesTableProps {
@@ -42,18 +43,6 @@ const DETAIL_STATUS_LABEL_KEYS = {
   unavailable: 'matches.table.detailStatus.unavailable',
   invalid: 'matches.table.detailStatus.invalid',
 } as const satisfies Record<DetailStatus, string>;
-
-/**
- * Format a duration as `minutes:seconds`, e.g. `34:30`. Shared with the match detail page, which
- * shows the duration the same way.
- *
- * @param seconds - Duration in seconds.
- * @returns The formatted duration.
- */
-export function formatDuration(seconds: number): string {
-  const minutes = Math.floor(seconds / 60);
-  return `${String(minutes)}:${String(seconds % 60).padStart(2, '0')}`;
-}
 
 /**
  * Table of matches.

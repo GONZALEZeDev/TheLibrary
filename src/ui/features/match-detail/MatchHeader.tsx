@@ -16,7 +16,7 @@ import type { HeroAsset } from '../../../core/domain/hero';
 import { matchTypeOf } from '../../../core/domain/match-type';
 import type { MatchListItem } from '../../../services/matches.service';
 import { GamePicture } from '../../components/GamePicture';
-import { formatDuration } from '../matches/MatchesTable';
+import { formatDuration } from '../../format/duration';
 import { formatMetricValue } from './analysis-format';
 
 /** Props of {@link MatchHeader}. */

@@ -20,7 +20,7 @@ import { PHASE_STATS, PHASES, type Phase, type PhaseStat } from '../../../core/a
 import type { Difference } from '../../../core/analysis/references';
 import { MATCH_METRICS } from '../../../core/analysis/registry';
 import { AppError } from '../../../core/errors/app-error';
-import { formatDuration } from '../matches/MatchesTable';
+import { formatDuration } from '../../format/duration';
 
 /** What stands in place of a value that is unknown. */
 export const NO_VALUE = '—';

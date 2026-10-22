@@ -4,9 +4,10 @@
  * `AnalysisService` (`./analysis.service`) reads what a match is compared from: its projection, its
  * archive, the habits of the player and the community data in the cache. This module is the pure
  * part that turns those into what the match page shows: for each of the 24 metrics its value, where
- * it stands among the community (`CommunityCell`) and against the player's habits
- * (`PersonalComparison`), the strengths and weaknesses of the summary, the metrics by family, and the
- * phase table. Nothing here reads a database, a file or the network, and nothing is logged.
+ * it stands among the community (`CommunityCell`, placed by `./community-placement`) and against the
+ * player's habits (`PersonalComparison`), the strengths and weaknesses of the summary, the metrics by
+ * family, and the phase table. Nothing here reads a database, a file or the network, and nothing is
+ * logged.
  *
  * Everything the community or the habits cannot tell is told in the view and never replaced by a
  * number, so that the page can say "no comparison" instead of a wrong one: a missing value, a metric
@@ -14,16 +15,14 @@
  * scored, a player with fewer than five earlier matches.
  *
  * The one function that builds an analysis is {@link buildAnalysis}; the rest is its parts, kept
- * private so that the view types are the one contract with the pages.
+ * private so that the view types are the one contract with the pages. Only the order of the
+ * families ({@link FAMILY_ORDER}) is shared, with the review of the last matches. Two of the view
+ * types, the state of the community comparison (`CommunityState`) and the placement of a metric
+ * (`CommunityCell`), are declared in `./community-placement` with the arithmetic that gives them.
  *
  * @packageDocumentation
  */
-import {
-  communitySpan,
-  durationWindowOf,
-  type Cohort,
-  type DurationWindow,
-} from '../core/analysis/cohort';
+import { durationWindowOf } from '../core/analysis/cohort';
 import {
   confidenceOf,
   selectInsights,
@@ -35,7 +34,6 @@ import {
 import { PERSONAL_WINDOW } from '../core/analysis/insights/thresholds';
 import { minutesOf, type MatchContext } from '../core/analysis/match-context';
 import type {
-  CommunitySource,
   MetricDefinition,
   MetricFamily,
   MetricKey,
@@ -47,67 +45,23 @@ import {
   PHASE_STATS,
   phaseBreakdown,
   phaseSpans,
+  spanOf,
   type Phase,
   type PhaseSpan,
   type PhaseStat,
 } from '../core/analysis/phases';
+import { comparePersonal, type PersonalComparison } from '../core/analysis/references';
+import { MATCH_METRICS, METRICS } from '../core/analysis/registry';
+import type { CohortRead } from './benchmark.service';
 import {
-  comparePersonal,
-  curveRate,
-  placeOnCurve,
-  type CurveLabel,
-  type PersonalComparison,
-} from '../core/analysis/references';
-import { communityWindowKey, MATCH_METRICS, METRICS } from '../core/analysis/registry';
-import { placeInPercentiles } from '../core/analysis/statistics';
-import type { CohortData, CohortRead } from './benchmark.service';
+  communityCellOf,
+  communityOf,
+  type CommunityCell,
+  type CommunityReference,
+  type CommunityState,
+  type PlacementBasis,
+} from './community-placement';
 import type { MetricValues, PreviousMatch, StoredProjection } from './metrics.repository';
-
-/**
- * Where the comparison with the community of a match stands.
- *
- * - `available`: the match is compared with `used`. `fallback` is set when that is every rank
- *   because the rank of the match holds too few matches; `stale` when the data is a day old or more;
- *   `sampleMatches` is how many matches of the hero the cohort holds; `fetchedAt` is when the data
- *   was downloaded.
- * - `missing`: no community data is cached for the match (never downloaded, or the entry cannot be
- *   read). The page can ask for it with `AnalysisService.refreshCommunity`.
- * - `unavailable`: the community data was downloaded and holds too few matches, even over every
- *   rank: there is no community comparison for this match.
- */
-export type CommunityState =
-  | {
-      readonly kind: 'available';
-      readonly used: Cohort;
-      readonly fallback: boolean;
-      readonly stale: boolean;
-      readonly sampleMatches: number;
-      /** When the community data was downloaded (Unix ms): the page dates stale data with it. */
-      readonly fetchedAt: number;
-    }
-  | { readonly kind: 'missing' }
-  | { readonly kind: 'unavailable' };
-
-/**
- * How a metric of a match stands among the community.
- *
- * Neither number is turned for the metrics where lower is better: a high `percentile` means a high
- * value, which is good or bad according to `MetricRowView.better`.
- *
- * - `percentile`: the value placed among the percentiles of the community's benchmark (1 to 99).
- * - `curve`: the player's rate over a stretch of the match placed on the community's average rate
- *   over the same stretch (1 to 99), with the label of the distance (`well_above`…`well_below`).
- * - `none`: the community has no reference for this metric, it is only compared with the habits.
- * - `missing`: the community has a reference for this metric but it cannot be used now: no
- *   community data (see {@link CommunityState}), or not for this metric, or the value is unknown, or
- *   (a curve) the database and the archive give the match two lengths in different duration
- *   windows, so that the stored rate and the curve would be read on different stretches.
- */
-export type CommunityCell =
-  | { readonly kind: 'percentile'; readonly percentile: number }
-  | { readonly kind: 'curve'; readonly percentile: number; readonly label: CurveLabel }
-  | { readonly kind: 'none' }
-  | { readonly kind: 'missing' };
 
 /** One metric of a match, with everything the page shows next to its value. */
 export interface MetricRowView {
@@ -219,8 +173,11 @@ export interface AnalysisInputs {
   readonly cohortRead: CohortRead;
 }
 
-/** The families in the order the page shows them. */
-const FAMILY_ORDER: readonly MetricFamily[] = [
+/**
+ * The families in the order the match page shows them; the review of the last matches shows its
+ * metrics in the same order.
+ */
+export const FAMILY_ORDER: readonly MetricFamily[] = [
   'combat',
   'survival',
   'farm',
@@ -242,25 +199,13 @@ const PHASE_OF_METRIC: ReadonlyMap<MetricKey, Phase> = new Map(
   ),
 );
 
-/** The community data of the cohort a match is compared with, once it is known to be usable. */
-type CommunityReference = Pick<CohortData, 'benchmark' | 'curve'> & {
-  /** The duration window of the cohort that is used: the curve is the one of its matches. */
-  readonly window: DurationWindow;
-};
-
-/** What the numbers of every metric of a match are compared from. */
-interface MetricBasis {
+/**
+ * What the numbers of every metric of a match are compared from: what the community placement
+ * reads of the match ({@link PlacementBasis}), and what only the analysis reads.
+ */
+interface MetricBasis extends PlacementBasis {
   /** The length of the match, in seconds. */
   readonly durationS: number;
-  /** The phases the match reached, worked out once for all the metrics. */
-  readonly spans: readonly PhaseSpan[];
-  /**
-   * The duration window of the length the archive gives the match: the one the stored
-   * `<key>.community_window` rates were computed for.
-   */
-  readonly ratesWindow: DurationWindow;
-  /** The values of the metrics of the match. */
-  readonly values: MetricValues;
   /** The matches played before it, most recent first, with their values. */
   readonly previous: readonly PreviousMatch[];
   /** The community data, or `null` when there is none to compare with. */
@@ -279,136 +224,6 @@ interface MetricEvaluation {
   readonly personal: PersonalComparison | null;
   /** What the selection of the insights reads. */
   readonly candidate: InsightCandidate;
-}
-
-/**
- * Find a phase among the ones a match reached.
- *
- * @param spans - The phases the match reached.
- * @param phase - The phase.
- * @returns Its span, or `undefined` when the match ended before the phase started.
- */
-function spanOf(spans: readonly PhaseSpan[], phase: Phase): PhaseSpan | undefined {
-  return spans.find((span) => span.phase === phase);
-}
-
-/**
- * Tell whether two duration windows are the same one. Windows are compared by their bounds: the one
- * of a cohort comes back from the cache, a copy of the constant it was made from.
- *
- * @param first - A window.
- * @param second - Another window.
- * @returns `true` when both bounds are equal.
- */
-function sameWindow(first: DurationWindow, second: DurationWindow): boolean {
-  return first.minS === second.minS && first.maxS === second.maxS;
-}
-
-/**
- * Tell where the community comparison stands from what the cache holds, and keep the data when it
- * can be compared with.
- *
- * @param cohortRead - What the cache holds for the cohort.
- * @returns The state for the page, and the data to compare the metrics with (`null` unless the
- *   state is `available`).
- */
-function communityOf(cohortRead: CohortRead): {
-  readonly state: CommunityState;
-  readonly reference: CommunityReference | null;
-} {
-  if (cohortRead.kind === 'missing') {
-    return { state: { kind: 'missing' }, reference: null };
-  }
-  const { data, stale } = cohortRead;
-  const { used } = data;
-  if (used === null) {
-    // Even every rank holds too few matches: the data says there is nothing to compare with.
-    return { state: { kind: 'unavailable' }, reference: null };
-  }
-  return {
-    state: {
-      kind: 'available',
-      used,
-      // A tier that was too small was replaced by every rank.
-      fallback: used.rank.kind !== data.wanted.rank.kind,
-      stale,
-      sampleMatches: data.sampleMatches,
-      fetchedAt: data.fetchedAt,
-    },
-    reference: { benchmark: data.benchmark, curve: data.curve, window: used.window },
-  };
-}
-
-/**
- * Place a metric among the community's average course of a match.
- *
- * The player's rate is the one projected for the stretch of the phase that the community curve
- * covers (`<key>.community_window`), not the rate over the whole phase: the curve only holds the
- * matches of the cohort up to the time every one of them reaches, and the same stretch has to be
- * compared on both sides.
- *
- * @param key - The metric.
- * @param community - Where the metric's community reference comes from: a stretch of the curve.
- * @param basis - What the metrics of the match are compared from.
- * @param reference - The community data.
- * @returns The placement, or `missing` when any step has no answer: the phase the match did not
- *   reach, a stretch shorter than the minimum, a curve that does not cover it, an unknown rate of
- *   the player, a community without spread, or a stored rate computed for another duration window
- *   than the cohort's (the stretch it covers is not the one the curve is read on).
- */
-function curveCellOf(
-  key: MetricKey,
-  community: Extract<CommunitySource, { readonly kind: 'curve' }>,
-  basis: MetricBasis,
-  reference: CommunityReference,
-): CommunityCell {
-  if (!sameWindow(basis.ratesWindow, reference.window)) {
-    return { kind: 'missing' };
-  }
-  const span = spanOf(basis.spans, community.phase);
-  const shared = span === undefined ? null : communitySpan(span, reference.window);
-  const average =
-    shared === null ? null : curveRate(reference.curve, community.stat, shared.startS, shared.endS);
-  const rate = basis.values.get(communityWindowKey(key)) ?? null;
-  const placement = average === null || rate === null ? null : placeOnCurve(rate, average);
-  return placement === null
-    ? { kind: 'missing' }
-    : { kind: 'curve', percentile: placement.percentile, label: placement.label };
-}
-
-/**
- * Compare the value of a metric with the community.
- *
- * @param definition - The metric.
- * @param value - Its value in the match.
- * @param basis - What the metrics of the match are compared from.
- * @returns How it stands: `none` for a metric the community has no reference for, whatever the
- *   data; `missing` when the data, the value or the reference of the data for this metric is not
- *   there; its placement otherwise.
- */
-function communityCellOf(
-  definition: MetricDefinition,
-  value: number | null,
-  basis: MetricBasis,
-): CommunityCell {
-  const { community } = definition;
-  if (community.kind === 'none') {
-    return { kind: 'none' };
-  }
-  const { reference } = basis;
-  if (reference === null || value === null) {
-    return { kind: 'missing' };
-  }
-  if (community.kind === 'curve') {
-    return curveCellOf(definition.key, community, basis, reference);
-  }
-  const table = reference.benchmark.get(community.benchmark);
-  return table === undefined
-    ? { kind: 'missing' }
-    : {
-        kind: 'percentile',
-        percentile: placeInPercentiles(value, table, { integer: definition.integer }),
-      };
 }
 
 /**
@@ -502,7 +317,7 @@ function personalOf(
  */
 function evaluateMetric(definition: MetricDefinition, basis: MetricBasis): MetricEvaluation {
   const value = basis.values.get(definition.key) ?? null;
-  const community = communityCellOf(definition, value, basis);
+  const community = communityCellOf(definition, value, basis, basis.reference);
   const personal = personalOf(definition, value, basis);
   return {
     definition,

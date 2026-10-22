@@ -105,6 +105,17 @@ export function phaseSpans(durationS: number): readonly PhaseSpan[] {
 }
 
 /**
+ * Find a phase among the ones a match reached.
+ *
+ * @param spans - The phases the match reached ({@link phaseSpans}).
+ * @param phase - The phase.
+ * @returns Its span, or `undefined` when the match ended before the phase started.
+ */
+export function spanOf(spans: readonly PhaseSpan[], phase: Phase): PhaseSpan | undefined {
+  return spans.find((span) => span.phase === phase);
+}
+
+/**
  * What a player did in a window of the match.
  *
  * The souls, the damage to heroes and the damage to objectives are cumulative counters: the total is

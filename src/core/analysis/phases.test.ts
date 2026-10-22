@@ -24,6 +24,7 @@ import {
   phaseBreakdown,
   phaseSpans,
   phaseTotal,
+  spanOf,
 } from './phases';
 import type { PhaseSpan } from './phases';
 
@@ -156,6 +157,28 @@ describe('phaseSpans', () => {
 
   it('has no phase for a match that has not started', () => {
     expect(phaseSpans(0)).toEqual([]);
+  });
+});
+
+describe('spanOf', () => {
+  it('finds a phase among the ones a match reached', () => {
+    const spans = phaseSpans(4_200);
+
+    expect(spanOf(spans, 'early')).toBe(spans[0]);
+    expect(spanOf(spans, 'mid')).toBe(spans[1]);
+    expect(spanOf(spans, 'late')).toEqual({
+      phase: 'late',
+      startS: 1_500,
+      endS: 4_200,
+      minutes: 45,
+      comparable: true,
+    });
+  });
+
+  it('is undefined for a phase the match ended before', () => {
+    expect(spanOf(phaseSpans(1_440), 'late')).toBeUndefined();
+    expect(spanOf(phaseSpans(600), 'mid')).toBeUndefined();
+    expect(spanOf([], 'early')).toBeUndefined();
   });
 });
 

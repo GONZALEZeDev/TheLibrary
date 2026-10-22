@@ -48,9 +48,10 @@ const HIGHEST_PERCENTILE = Math.max(...PERCENTILE_POINTS);
 const MATCH_START: readonly [timeS: number, value: number] = [0, 0];
 
 /**
- * How a value differs from the player's habits:
+ * How a value differs from the figure it is compared with (the player's habits, or the players of
+ * a tier):
  *
- * - `relative`: a share of the usual value, `ratio` (0.12 is 12 % above, -0.2 is 20 % below).
+ * - `relative`: a share of that figure, `ratio` (0.12 is 12 % above, -0.2 is 20 % below).
  * - `absolute`: an `amount` in the unit shown (2 is two more deaths than usual).
  *
  * Neither is oriented: a positive difference means a higher value, not a better one.
@@ -105,6 +106,33 @@ export interface PersonalComparison {
 }
 
 /**
+ * The difference between a value and the figure it is compared with, as a metric shows it: a share
+ * of that figure for a `relative` display, an amount in the shown unit for an `absolute` one.
+ *
+ * A share of 0 is undefined, so a figure of 0 is compared in absolute terms whatever the display.
+ * The scale converts an amount from the compared unit to the shown one; a share is a ratio of two
+ * numbers in the same unit, so the scale does not change it.
+ *
+ * @param value - The value, in the compared unit.
+ * @param reference - The figure it is compared with, in the same unit.
+ * @param display - How the difference is shown.
+ * @param scale - The factor that converts the compared unit to the shown one (see
+ *   {@link PersonalComparisonInput.scale}); 1 when both are the same.
+ * @returns The difference, not oriented: a positive one is a higher value, not a better one.
+ */
+export function differenceOf(
+  value: number,
+  reference: number,
+  display: 'relative' | 'absolute',
+  scale = 1,
+): Difference {
+  const gap = value - reference;
+  return display === 'relative' && reference !== 0
+    ? { kind: 'relative', ratio: gap / Math.abs(reference) }
+    : { kind: 'absolute', amount: gap * scale };
+}
+
+/**
  * Compare the value of a match with the player's habits.
  *
  * The usual value is the median of the earlier matches and the z-score is
@@ -131,11 +159,7 @@ export function comparePersonal(input: PersonalComparisonInput): PersonalCompari
     count: previous.length,
     median: usual * scale,
     z: spread === 0 ? null : gap / spread,
-    // A share of 0 is undefined, so a usual value of 0 is compared in absolute terms.
-    difference:
-      display === 'relative' && usual !== 0
-        ? { kind: 'relative', ratio: gap / Math.abs(usual) }
-        : { kind: 'absolute', amount: gap * scale },
+    difference: differenceOf(value, usual, display, scale),
   };
 }
 

@@ -32,7 +32,7 @@ import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { MatchId } from '../../../core/domain/match';
 import { toAppError } from '../../../core/errors/app-error';
-import type { CommunityState } from '../../../services/analysis-view';
+import type { CommunityState } from '../../../services/community-placement';
 import { useAnalysisRun } from './AnalysisRun';
 import { InsightSummary } from './InsightSummary';
 import { MetricFamilies } from './MetricFamilies';

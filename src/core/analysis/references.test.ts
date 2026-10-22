@@ -12,6 +12,7 @@ import {
   curveLabel,
   curvePoint,
   curveRate,
+  differenceOf,
   placeOnCurve,
   type CurveLabel,
 } from './references';
@@ -29,8 +30,9 @@ function closeTo(expected: number, digits: number): unknown {
 }
 
 /**
- * Build a point of the community curve: the net worth is the stat under test, the other three
- * counters get distinct fixed values so that reading the wrong stat shows up in a test.
+ * Build a point of the community curve: the net worth is the stat under test, the damage, the boss
+ * damage and the deaths get fixed values, each different from every other value of the point, so
+ * that reading the wrong stat shows up in a test.
  *
  * @param timeS - The time of the point, in seconds.
  * @param netWorth - The average and the deviation of the net worth.
@@ -44,8 +46,14 @@ function testPoint(
 ): CurvePoint {
   return {
     timeS,
-    avg: { net_worth: netWorth[0], player_damage: 111, boss_damage: 222, kills: kills[0] },
-    std: { net_worth: netWorth[1], player_damage: 11, boss_damage: 22, kills: kills[1] },
+    avg: {
+      net_worth: netWorth[0],
+      player_damage: 111,
+      boss_damage: 222,
+      kills: kills[0],
+      deaths: 7,
+    },
+    std: { net_worth: netWorth[1], player_damage: 11, boss_damage: 22, kills: kills[1], deaths: 9 },
   };
 }
 
@@ -225,6 +233,43 @@ describe('comparePersonal', () => {
     comparePersonal({ value: 18, previous, display: 'relative', scale: 1 });
 
     expect(previous).toEqual([18, 10, 16, 12, 14]);
+  });
+});
+
+describe('differenceOf', () => {
+  it('gives a share of the reference for a relative display', () => {
+    expect(differenceOf(12, 10, 'relative')).toEqual({ kind: 'relative', ratio: closeTo(0.2, 6) });
+    // -500 is 300 above a reference of -800: the share is of the size of the reference, positive.
+    expect(differenceOf(-500, -800, 'relative')).toEqual({
+      kind: 'relative',
+      ratio: closeTo(0.375, 6),
+    });
+  });
+
+  it('gives an amount for an absolute display', () => {
+    expect(differenceOf(6, 4, 'absolute')).toEqual({ kind: 'absolute', amount: 2 });
+    expect(differenceOf(4, 6, 'absolute')).toEqual({ kind: 'absolute', amount: -2 });
+  });
+
+  it('gives an amount for a relative display when the reference is 0', () => {
+    expect(differenceOf(3, 0, 'relative')).toEqual({ kind: 'absolute', amount: 3 });
+  });
+
+  it('scales an amount, and only an amount', () => {
+    // 0.2 more per minute over 30 minutes is 6 more over the match; the share is the same in both
+    // units.
+    expect(differenceOf(0.6, 0.4, 'absolute', 30)).toEqual({
+      kind: 'absolute',
+      amount: closeTo(6, 6),
+    });
+    expect(differenceOf(0.6, 0.4, 'relative', 30)).toEqual({
+      kind: 'relative',
+      ratio: closeTo(0.5, 6),
+    });
+    expect(differenceOf(0.1, 0, 'relative', 30)).toEqual({
+      kind: 'absolute',
+      amount: closeTo(3, 6),
+    });
   });
 });
 

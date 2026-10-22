@@ -19,7 +19,8 @@ import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import { DURATION_WINDOWS, type DurationWindow } from '../../../core/analysis/cohort';
 import { RANK_TIER_NAMES } from '../../../core/domain/rank';
-import type { CommunityState, FamilyView, MetricRowView } from '../../../services/analysis-view';
+import type { FamilyView, MetricRowView } from '../../../services/analysis-view';
+import type { CommunityState } from '../../../services/community-placement';
 import {
   formatDifference,
   formatMetricValue,

@@ -15,8 +15,8 @@ import { AppError } from '../../errors/app-error';
 import { communitySpan, durationWindowOf } from '../cohort';
 import type { MatchContext } from '../match-context';
 import type { CurveStat, MetricDefinition, MetricKey, PhaseMetricKey } from '../metric';
-import { phaseSpans, phaseTotal } from '../phases';
-import type { Phase, PhaseSpan, PhaseStat } from '../phases';
+import { phaseSpans, phaseTotal, spanOf } from '../phases';
+import type { Phase, PhaseStat } from '../phases';
 
 /** One phase metric: the figure it rates and the phase it rates it over. */
 interface PhaseMetricCell {
@@ -93,17 +93,6 @@ export function phaseMetricKey(stat: PhaseStat, phase: Phase): MetricKey {
 }
 
 /**
- * The span of a phase in a match.
- *
- * @param context - The match.
- * @param phase - The phase.
- * @returns The phase as played in the match, or `null` when the match ends before it starts.
- */
-function spanOf(context: MatchContext, phase: Phase): PhaseSpan | null {
-  return phaseSpans(context.durationS).find((span) => span.phase === phase) ?? null;
-}
-
-/**
  * The rate of a figure of the tracked player over a window of the match.
  *
  * @param context - The match.
@@ -150,8 +139,9 @@ function phaseMetric(cell: PhaseMetricCell): MetricDefinition {
       stat: CURVE_STAT[stat],
       phase,
       rate: (context) => {
-        const span = spanOf(context, phase);
-        if (span === null) {
+        // A phase the match did not reach (`undefined`) has no rate.
+        const span = spanOf(phaseSpans(context.durationS), phase);
+        if (span === undefined) {
           return null;
         }
         // A phase shorter than three minutes has a community span of less than three as well, so
@@ -161,7 +151,7 @@ function phaseMetric(cell: PhaseMetricCell): MetricDefinition {
       },
     },
     compute: (context) => {
-      const span = spanOf(context, phase);
+      const span = spanOf(phaseSpans(context.durationS), phase);
       // A phase the match does not reach, or one too short to compare, has no rate.
       if (span?.comparable !== true) {
         return null;

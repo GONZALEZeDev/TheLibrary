@@ -17,12 +17,8 @@ import type { Insight } from '../../../core/analysis/insights/insights';
 import type { MetricDefinition, MetricFamily, MetricKey } from '../../../core/analysis/metric';
 import { MATCH_METRICS } from '../../../core/analysis/registry';
 import type { Language } from '../../../core/settings/language';
-import type {
-  CommunityCell,
-  CommunityState,
-  FamilyView,
-  MetricRowView,
-} from '../../../services/analysis-view';
+import type { FamilyView, MetricRowView } from '../../../services/analysis-view';
+import type { CommunityCell, CommunityState } from '../../../services/community-placement';
 import { createI18n } from '../../i18n/i18n';
 import { Evidence } from './Evidence';
 import { MetricFamilies, type MetricFamiliesProps } from './MetricFamilies';

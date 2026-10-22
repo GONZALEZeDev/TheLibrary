@@ -86,8 +86,8 @@ interface GroupedInsight {
   readonly insight: Insight;
 }
 
-/** The top of the percentile scale: turning a percentile to "lower is better" is `100 − p`. */
-const PERCENTILE_SCALE = 100;
+/** The top of the percentile scale: `100 − p` turns a percentile, and a share times it is one. */
+export const PERCENTILE_SCALE = 100;
 
 /** The percentile of the median: the placement that is neither good nor bad. */
 const MEDIAN_PERCENTILE = 50;
@@ -99,18 +99,18 @@ const PERCENTILE_HALF_RANGE = 50;
 const SIGNAL_LIMIT = 1;
 
 /**
- * The community percentile of a candidate, oriented so that higher is always better.
+ * A community percentile, oriented so that higher is always better.
  *
- * @param candidate - The metric and its references.
- * @returns The percentile, turned (`100 − p`) for a lower-is-better metric, or `null` when the
- *   community gives no reference.
+ * It is what the weak and strong marks of a placement are read on, in a match's insights and in the
+ * review of the last matches alike.
+ *
+ * @param percentile - The raw percentile, from 1 to 99 (a high value is a high metric, not
+ *   necessarily a good one).
+ * @param better - Which direction is an improvement for the metric.
+ * @returns The percentile, turned (`100 − p`) for a lower-is-better metric and unchanged otherwise.
  */
-function orientedPercentile(candidate: InsightCandidate): number | null {
-  const { communityPercentile, better } = candidate;
-  if (communityPercentile === null) {
-    return null;
-  }
-  return better === 'lower' ? PERCENTILE_SCALE - communityPercentile : communityPercentile;
+export function orientedPercentile(percentile: number, better: 'higher' | 'lower'): number {
+  return better === 'lower' ? PERCENTILE_SCALE - percentile : percentile;
 }
 
 /**
@@ -210,7 +210,10 @@ function sideOf(
  *   neither side.
  */
 function evaluate(candidate: InsightCandidate, match: InsightMatch): GroupedInsight | null {
-  const percentile = orientedPercentile(candidate);
+  const percentile =
+    candidate.communityPercentile === null
+      ? null
+      : orientedPercentile(candidate.communityPercentile, candidate.better);
   const z = orientedZ(candidate);
 
   // The community signal c: the oriented placement, from −1 (the bottom) to 1 (the top).

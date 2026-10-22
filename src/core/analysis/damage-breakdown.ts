@@ -29,7 +29,7 @@ import { comparePersonal } from './references';
 export type SourceKind = 'weapon' | 'melee' | 'ability' | 'item' | 'other';
 
 /** The values stored for a match: a number under each key, or `null` when it is not known. */
-type StoredValues = ReadonlyMap<string, number | null>;
+export type StoredValues = ReadonlyMap<string, number | null>;
 
 /** What the breakdown needs to be built. */
 export interface DamageBreakdownInput {
@@ -107,7 +107,7 @@ export interface DamageBreakdown {
 }
 
 /** A damage source, described by the loadout and the catalogue. */
-interface Source {
+export interface Source {
   /** The class name of the source. */
   readonly className: string;
   /** What the source is. */
@@ -117,7 +117,7 @@ interface Source {
 }
 
 /** The values stored for a match, with the damage keys read out of them. */
-interface MatchReading {
+export interface MatchReading {
   /** The values stored for the match, whatever their key. */
   readonly values: StoredValues;
   /** The class names of the sources whose damage is known, without the prefix of their key. */
@@ -175,10 +175,13 @@ function read(values: StoredValues, key: string): number | null {
 /**
  * Read the damage keys of a match.
  *
+ * A source and its critical hits are one key already: the projection merges them before it stores
+ * the damage (see `./damage-matrix`), so there is nothing to merge here.
+ *
  * @param values - The values stored for the match.
  * @returns The reading; its `sourceNames` is empty when the match has no known damage by source.
  */
-function readMatch(values: StoredValues): MatchReading {
+export function readMatch(values: StoredValues): MatchReading {
   const sourceNames: string[] = [];
   let totalDamage = 0;
   // The prefix ends with a dot, so no other family of keys, and no look-alike, is read as damage.
@@ -198,7 +201,7 @@ function readMatch(values: StoredValues): MatchReading {
  * @param className - The class name of the source.
  * @returns The damage, or `null` when the match holds none for the source.
  */
-function damageOf(match: MatchReading, className: string): number | null {
+export function damageOf(match: MatchReading, className: string): number | null {
   return read(match.values, damageSourceKey(className));
 }
 
@@ -210,7 +213,7 @@ function damageOf(match: MatchReading, className: string): number | null {
  * @param itemsByClassName - The item catalogue by class name.
  * @returns The source.
  */
-function describeSource(
+export function describeSource(
   className: string,
   loadout: HeroLoadout,
   itemsByClassName: ReadonlyMap<string, CatalogueItem>,
@@ -227,6 +230,24 @@ function describeSource(
     kind = 'item';
   }
   return { className, kind, entry };
+}
+
+/**
+ * Name a source and give its catalogue id and image, which every view of a damage source shows.
+ *
+ * @param source - The source, see {@link describeSource}.
+ * @returns The id of the source in the catalogue (`null` when the catalogue does not know it), its
+ *   English name (the catalogue's, or its class name made readable) and its image (`null` when it
+ *   has none).
+ */
+export function sourceIdentityOf(
+  source: Source,
+): Pick<DamageSourceRow, 'itemId' | 'name' | 'imageUrl'> {
+  return {
+    itemId: source.entry?.id ?? null,
+    name: source.entry?.name ?? readableSourceName(source.className),
+    imageUrl: source.entry?.imageUrl ?? null,
+  };
 }
 
 /**
@@ -381,15 +402,27 @@ function buildRow(
   return {
     className: source.className,
     kind: source.kind,
-    itemId: source.entry?.id ?? null,
-    name: source.entry?.name ?? readableSourceName(source.className),
-    imageUrl: source.entry?.imageUrl ?? null,
+    ...sourceIdentityOf(source),
     damage,
     share: current.totalDamage > 0 ? damage / current.totalDamage : 0,
     comparedShare,
     ...compareWithHabit(source, comparedShare, previous),
     unlocked,
   };
+}
+
+/**
+ * Order two lines by class name, which is how a tie between sources is always broken.
+ *
+ * @param first - A line.
+ * @param second - Another line, of a different source (two lines never share a class name).
+ * @returns A negative number when `first` comes first.
+ */
+export function byClassName(
+  first: Pick<DamageSourceRow, 'className'>,
+  second: Pick<DamageSourceRow, 'className'>,
+): number {
+  return first.className < second.className ? -1 : 1;
 }
 
 /**
@@ -403,7 +436,7 @@ function byShareThenClassName(first: DamageSourceRow, second: DamageSourceRow): 
   if (first.share !== second.share) {
     return second.share - first.share;
   }
-  return first.className < second.className ? -1 : 1;
+  return byClassName(first, second);
 }
 
 /**

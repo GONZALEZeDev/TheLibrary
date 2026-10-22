@@ -24,11 +24,18 @@ export const PERCENTILE_POINTS = [1, 5, 10, 25, 50, 75, 90, 95, 99] as const;
  */
 export type PercentileTable = readonly number[];
 
-/** The placement of a value below the first point of a table (the lowest placement). */
-const LOWEST_PLACEMENT = 1;
+/**
+ * The placement of a value below the first point of a table (the lowest placement). A placement
+ * made by another rule that ends on the same scale, like the one of a buy minute among the
+ * purchases of a tier, is clamped to the same bounds.
+ */
+export const LOWEST_PLACEMENT = 1;
 
-/** The placement of a value above the last point of a table (the highest placement). */
-const HIGHEST_PLACEMENT = 99;
+/**
+ * The placement of a value above the last point of a table (the highest placement). See
+ * {@link LOWEST_PLACEMENT}.
+ */
+export const HIGHEST_PLACEMENT = 99;
 
 /**
  * Beyond this many standard deviations, {@link normalCdf} answers 0 or 1: the tail left out is

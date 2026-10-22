@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { present } from '../../../test/analysis-context';
 import {
   confidenceOf,
+  orientedPercentile,
   selectInsights,
   type Confidence,
   type Insight,
@@ -173,6 +174,17 @@ describe('selectInsights: scoring', () => {
 
   it('makes no insight from no candidate', () => {
     expect(selectInsights([], longMatch)).toEqual({ strengths: [], weaknesses: [] });
+  });
+});
+
+describe('orientedPercentile', () => {
+  it('turns a lower-is-better percentile and leaves a higher-is-better one', () => {
+    expect(orientedPercentile(15, 'lower')).toBe(85);
+    expect(orientedPercentile(15, 'higher')).toBe(15);
+    // The median is its own mirror, and the clamped ends of a placement swap.
+    expect(orientedPercentile(50, 'lower')).toBe(50);
+    expect(orientedPercentile(1, 'lower')).toBe(99);
+    expect(orientedPercentile(99, 'lower')).toBe(1);
   });
 });
 

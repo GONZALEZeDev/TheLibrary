@@ -36,8 +36,8 @@ describe('profile budgets', () => {
 });
 
 describe('community comparison budgets', () => {
-  it('sends at most 20 analytics requests a minute', () => {
-    expect(ANALYTICS_RATE_LIMIT).toEqual({ limit: 20, windowMs: 60_000 });
+  it('sends at most 30 analytics requests a minute', () => {
+    expect(ANALYTICS_RATE_LIMIT).toEqual({ limit: 30, windowMs: 60_000 });
   });
 
   it('sends at most 3 rank requests an hour', () => {

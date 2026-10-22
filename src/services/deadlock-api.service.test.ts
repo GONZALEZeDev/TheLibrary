@@ -13,6 +13,7 @@ import {
 import {
   FIXTURE_EXPRESS_SHOT_ID,
   FIXTURE_PAIGE_ABILITY_IDS,
+  FIXTURE_RESISTANCE_ITEM_IDS,
   FIXTURE_SHOP_ITEM_IDS,
 } from '../adapters/dev/fixtures/assets.fixture';
 import {
@@ -22,8 +23,10 @@ import {
 import { isMetadataMissing } from '../adapters/dev/fixtures/match-metadata.fixture';
 import { FIXTURE_AVATAR_HASH, FIXTURE_PERSONA_NAME } from '../adapters/dev/fixtures/steam.fixture';
 import { MemoryLogger } from '../adapters/dev/memory-logger.adapter';
+import { RESISTANCE_ITEMS } from '../core/analysis/review/resistance-items';
 import { DEFAULT_PAUSE_MS } from '../core/deadlock-api/api-response';
 import { ASSET_IMAGE_ORIGIN } from '../core/deadlock-api/assets.schema';
+import { ANALYTICS_RATE_LIMIT } from '../core/deadlock-api/budgets';
 import {
   itemsRequest,
   MAX_RESPONSE_BYTES,
@@ -508,6 +511,61 @@ describe('DeadlockApiService asset requests', () => {
     for (const item of shopItems) {
       expect(item.imageUrl?.startsWith(ASSET_IMAGE_ORIGIN)).toBe(true);
     }
+  });
+
+  it('holds the 12 resistance items under their class names', async () => {
+    const { api } = setUp();
+    const items = await api.fetchItemCatalogue();
+    // The twelve items as the game data has them (ids, English names and tiers are the real ones),
+    // in the order of `RESISTANCE_ITEMS`: all of them are vitality items.
+    const resistanceItems = [
+      {
+        className: 'upgrade_regenerating_bullet_shield',
+        id: 1235347618,
+        name: 'Battle Vest',
+        tier: 2,
+      },
+      { className: 'upgrade_weapon_shielding', id: 805079544, name: 'Weapon Shielding', tier: 2 },
+      { className: 'upgrade_magic_shield', id: 3970837787, name: "Enchanter's Emblem", tier: 2 },
+      { className: 'upgrade_spirit_bubble', id: 112198670, name: 'Spirit Shielding', tier: 2 },
+      {
+        className: 'upgrade_improved_bullet_armor',
+        id: 3140772621,
+        name: 'Bullet Resilience',
+        tier: 3,
+      },
+      { className: 'upgrade_metal_skin', id: 1378931225, name: 'Metal Skin', tier: 3 },
+      { className: 'upgrade_tech_purge', id: 2163598980, name: 'Spirit Resilience', tier: 3 },
+      {
+        className: 'upgrade_reduce_debuff_duration',
+        id: 3731635960,
+        name: 'Dispel Magic',
+        tier: 3,
+      },
+      { className: 'upgrade_spellbreaker', id: 1955841979, name: 'Spellbreaker', tier: 4 },
+      { className: 'upgrade_absorbing_armor', id: 3028234315, name: 'Witchmail', tier: 4 },
+      { className: 'upgrade_auto_cleanse', id: 951866250, name: 'Indomitable', tier: 4 },
+      { className: 'upgrade_colossus', id: 2407781327, name: 'Colossus', tier: 4 },
+    ];
+
+    expect(resistanceItems.map((item) => item.className)).toEqual(
+      RESISTANCE_ITEMS.map((item) => item.className),
+    );
+    expect(FIXTURE_RESISTANCE_ITEM_IDS).toEqual(resistanceItems.map((item) => item.id));
+    for (const expected of resistanceItems) {
+      expect(items.find((item) => item.className === expected.className)).toMatchObject({
+        ...expected,
+        kind: 'upgrade',
+        slot: 'vitality',
+      });
+    }
+    // The catalogue's other shop items are still there, and the twelve are among the shop ids a
+    // fixture match may buy.
+    expect(FIXTURE_SHOP_ITEM_IDS).toEqual(expect.arrayContaining([...FIXTURE_RESISTANCE_ITEM_IDS]));
+    // An apostrophe in a name never reaches the image link.
+    expect(items.find((item) => item.id === 3970837787)?.imageUrl).toBe(
+      `${ASSET_IMAGE_ORIGIN}assets-api-res/images/items/vitality/enchanters_emblem.webp`,
+    );
   });
 });
 
@@ -1376,6 +1434,43 @@ describe('DeadlockApiService community requests', () => {
   const FILTERS =
     'min_unix_timestamp=1789344000&min_duration_s=1500&max_duration_s=1799&min_average_badge=41&max_average_badge=46';
 
+  /** The same community over every length of match: the window the item statistics are asked for. */
+  const itemsQuery: CohortQuery = { ...query, minDurationS: 0, maxDurationS: 7000 };
+
+  /** The exact request the item statistics of `itemsQuery` are fetched with. */
+  const ITEM_STATS_URL = `${BASE_URL}/v1/analytics/item-stats?hero_ids=67&game_mode=normal&bucket=game_time_min&min_matches=1&min_unix_timestamp=1789344000&min_duration_s=0&max_duration_s=7000&min_average_badge=41&max_average_badge=46`;
+
+  /**
+   * The answer to the item statistics: synthetic rows in the shape of the API's (counters the app
+   * does not read included), out of order so that the sort of the parsing shows.
+   */
+  const ITEM_STATS_ANSWER = [
+    { item_id: 3101, bucket: 8, matches: 65, wins: 33, losses: 32, players: 65 },
+    { item_id: 2202, bucket: 12, matches: 120, wins: 61, losses: 59, players: 118 },
+    { item_id: 3101, bucket: 7, matches: 40, wins: 22, losses: 18, players: 40 },
+  ];
+
+  /** What {@link ITEM_STATS_ANSWER} means once validated. */
+  const ITEM_STATS_ROWS = [
+    { itemId: 2202, minute: 12, purchases: 120 },
+    { itemId: 3101, minute: 7, purchases: 40 },
+    { itemId: 3101, minute: 8, purchases: 65 },
+  ];
+
+  /**
+   * A handler that serves the item statistics, which the fixture API does not: it answers them and
+   * leaves every other request to the fixture API.
+   *
+   * @returns The handler.
+   */
+  function createCommunityApi(): FixtureHandler {
+    const fixtureApi = createFixtureApi({ now: START, matchCount: 5 });
+    return (request) =>
+      request.url.startsWith(`${BASE_URL}/v1/analytics/item-stats?`)
+        ? jsonResponse(ITEM_STATS_ANSWER)
+        : fixtureApi(request);
+  }
+
   /** One request of the service, with what the tests need to know of it. */
   interface CommunityCall {
     /** The method of the service, for the titles. */
@@ -1388,7 +1483,7 @@ describe('DeadlockApiService community requests', () => {
     readonly invalidBody: unknown;
   }
 
-  /** The three requests that share the analytics budget. */
+  /** The requests that share the analytics budget. */
   const ANALYTICS_CALLS: readonly CommunityCall[] = [
     {
       method: 'fetchMetricBenchmark',
@@ -1406,6 +1501,12 @@ describe('DeadlockApiService community requests', () => {
       method: 'fetchHeroSample',
       run: (api) => api.fetchHeroSample(query),
       endpoint: '/v1/analytics/hero-stats',
+      invalidBody: {},
+    },
+    {
+      method: 'fetchItemStats',
+      run: (api) => api.fetchItemStats(itemsQuery),
+      endpoint: '/v1/analytics/item-stats',
       invalidBody: {},
     },
   ];
@@ -1479,27 +1580,93 @@ describe('DeadlockApiService community requests', () => {
     expect(fetchedValue(await api.fetchHeroSample({ ...query, heroId: 999 }))).toBe(0);
   });
 
-  it('refuses the 21st analytics request of a minute without sending it', async () => {
-    const { api, http, clock } = setUp();
+  it('fetches the item stats of a cohort', async () => {
+    const { api, http } = setUp(createCommunityApi());
 
-    // The three kinds of analytics request share one window: 20 of them in any mix fill it.
-    for (let index = 0; index < 20; index += 1) {
+    const result = await api.fetchItemStats(itemsQuery);
+
+    // One request, with the URL of the cohort and the headers of every request of the app...
+    expect(http.requests).toEqual([
+      {
+        method: 'GET',
+        url: ITEM_STATS_URL,
+        headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
+        timeoutMs: 15_000,
+        maxBodyBytes: 10 * 1024 * 1024,
+      },
+    ]);
+    // ...and the purchases of each item by minute, validated and sorted.
+    expect(result).toEqual({ kind: 'fetched', value: ITEM_STATS_ROWS });
+  });
+
+  it('refuses the analytics request over the budget of a minute without sending it', async () => {
+    const { api, http, clock } = setUp(createCommunityApi());
+    const { limit } = ANALYTICS_RATE_LIMIT;
+
+    // Every kind of analytics request shares one window: `limit` of them in any mix fill it.
+    for (let index = 0; index < limit; index += 1) {
       const call = ANALYTICS_CALLS[index % ANALYTICS_CALLS.length] ?? expect.unreachable();
       await expect(call.run(api)).resolves.toEqual(FETCHED);
     }
-    expect(http.requests).toHaveLength(20);
+    expect(http.requests).toHaveLength(limit);
     for (const call of ANALYTICS_CALLS) {
       await expect(call.run(api)).resolves.toEqual({
         kind: 'budget_exhausted',
         nextAllowedAt: START + MINUTE,
       });
     }
-    expect(http.requests).toHaveLength(20);
+    expect(http.requests).toHaveLength(limit);
 
     // The refused requests were not counted: the window frees up as soon as the first one leaves.
     clock.now = START + MINUTE;
     await expect(api.fetchHeroSample(query)).resolves.toEqual(FETCHED);
-    expect(http.requests).toHaveLength(21);
+    expect(http.requests).toHaveLength(limit + 1);
+  });
+
+  it('admits thirty analytics requests a minute', async () => {
+    const { api, http } = setUp(createCommunityApi());
+
+    // The opening of a review sends its requests together: a burst of thirty all goes out...
+    const results = await Promise.all(
+      Array.from({ length: 30 }, (_, index) =>
+        (ANALYTICS_CALLS[index % ANALYTICS_CALLS.length] ?? expect.unreachable()).run(api),
+      ),
+    );
+
+    expect(results).toEqual(Array.from({ length: 30 }, () => FETCHED));
+    expect(http.requests).toHaveLength(30);
+    // ...and the thirty-first waits for the first of them to leave the window.
+    await expect(api.fetchItemStats(itemsQuery)).resolves.toEqual({
+      kind: 'budget_exhausted',
+      nextAllowedAt: START + MINUTE,
+    });
+    expect(http.requests).toHaveLength(30);
+  });
+
+  it('counts the item stats against the analytics budget', async () => {
+    const { limit } = ANALYTICS_RATE_LIMIT;
+
+    // The item stats take the last place of the window, which the other requests then find spent.
+    const itemsLast = setUp(createCommunityApi());
+    for (let index = 0; index < limit - 1; index += 1) {
+      await itemsLast.api.fetchMetricBenchmark(query);
+    }
+    await expect(itemsLast.api.fetchItemStats(itemsQuery)).resolves.toEqual(FETCHED);
+    await expect(itemsLast.api.fetchPerformanceCurve(query)).resolves.toMatchObject({
+      kind: 'budget_exhausted',
+    });
+    expect(itemsLast.http.requests).toHaveLength(limit);
+
+    // The other requests take the whole window, which the item stats then find spent.
+    const itemsRefused = setUp(createCommunityApi());
+    for (let index = 0; index < limit; index += 1) {
+      await itemsRefused.api.fetchHeroSample(query);
+    }
+    await expect(itemsRefused.api.fetchItemStats(itemsQuery)).resolves.toEqual({
+      kind: 'budget_exhausted',
+      nextAllowedAt: START + MINUTE,
+    });
+    expect(itemsRefused.http.requests).toHaveLength(limit);
   });
 
   it('allows 3 rank requests an hour', async () => {
@@ -1529,13 +1696,13 @@ describe('DeadlockApiService community requests', () => {
     await expect(rankSpent.api.fetchPlayerRank(FIXTURE_ACCOUNT_ID)).resolves.toMatchObject({
       kind: 'budget_exhausted',
     });
-    for (let index = 0; index < 20; index += 1) {
+    for (let index = 0; index < ANALYTICS_RATE_LIMIT.limit; index += 1) {
       await expect(rankSpent.api.fetchHeroSample(query)).resolves.toEqual(FETCHED);
     }
 
     // And the analytics budget spent leaves the rank request alone.
     const analyticsSpent = setUp();
-    for (let index = 0; index < 20; index += 1) {
+    for (let index = 0; index < ANALYTICS_RATE_LIMIT.limit; index += 1) {
       await analyticsSpent.api.fetchHeroSample(query);
     }
     await expect(analyticsSpent.api.fetchHeroSample(query)).resolves.toMatchObject({
@@ -1564,7 +1731,8 @@ describe('DeadlockApiService community requests', () => {
 
   it('never lets overlapping calls exceed the budget', async () => {
     const { api, http } = setUp();
-    for (let index = 0; index < 19; index += 1) {
+    const { limit } = ANALYTICS_RATE_LIMIT;
+    for (let index = 0; index < limit - 1; index += 1) {
       await api.fetchMetricBenchmark(query);
     }
 
@@ -1577,7 +1745,7 @@ describe('DeadlockApiService community requests', () => {
       'budget_exhausted',
       'fetched',
     ]);
-    expect(http.requests).toHaveLength(20);
+    expect(http.requests).toHaveLength(limit);
 
     // The rank has its own window, and the same guarantee.
     const rank = setUp();
@@ -1609,13 +1777,13 @@ describe('DeadlockApiService community requests', () => {
 
     // The pause is over, and the calls it stopped used none of the budgets.
     clock.now = START + 5_000;
-    for (let index = 0; index < 20; index += 1) {
+    for (let index = 0; index < ANALYTICS_RATE_LIMIT.limit; index += 1) {
       await expect(api.fetchPerformanceCurve(query)).resolves.toEqual(FETCHED);
     }
     for (let index = 0; index < 3; index += 1) {
       await expect(api.fetchPlayerRank(FIXTURE_ACCOUNT_ID)).resolves.toEqual(FETCHED);
     }
-    expect(http.requests).toHaveLength(23);
+    expect(http.requests).toHaveLength(ANALYTICS_RATE_LIMIT.limit + 3);
   });
 
   it.each(CALLS)('$method pauses on a 429 and answers paused', async (call) => {
@@ -1650,6 +1818,29 @@ describe('DeadlockApiService community requests', () => {
       await expect(syncState.getPausedUntil()).resolves.toBe(START + DEFAULT_PAUSE_MS);
     },
   );
+
+  it('pauses on a 503 like the other community requests', async () => {
+    const { api, http, syncState } = setUp(() =>
+      jsonResponse({ status: 503 }, 503, { 'retry-after': '90' }),
+    );
+
+    await expect(api.fetchItemStats(itemsQuery)).resolves.toEqual({
+      kind: 'paused',
+      until: START + 90_000,
+    });
+    await expect(syncState.getPausedUntil()).resolves.toBe(START + 90_000);
+
+    // The pause is shared by every kind of request: the next calls send nothing.
+    await expect(api.fetchMetricBenchmark(query)).resolves.toEqual({
+      kind: 'paused',
+      until: START + 90_000,
+    });
+    await expect(api.fetchItemStats(itemsQuery)).resolves.toEqual({
+      kind: 'paused',
+      until: START + 90_000,
+    });
+    expect(http.requests).toHaveLength(1);
+  });
 
   it.each(CALLS)('$method throws the failures of the API as errors', async (call) => {
     const failures = [
@@ -1728,7 +1919,7 @@ describe('DeadlockApiService community requests', () => {
   });
 
   it.each(ANALYTICS_CALLS)('$method logs its endpoint without any filter', async (call) => {
-    const { api, logger } = setUp();
+    const { api, logger } = setUp(createCommunityApi());
 
     await call.run(api);
 

@@ -5,11 +5,13 @@
  */
 import { describe, expect, it } from 'vitest';
 import { testAccountId, testMatchId } from '../../test/test-data';
+import { ANY_LENGTH_WINDOW } from '../analysis/cohort';
 import { parseAccountId } from '../domain/account';
 import { PAIGE_HERO_ID } from '../domain/hero';
 import {
   heroSampleRequest,
   heroesRequest,
+  itemStatsRequest,
   itemsRequest,
   matchHistoryRequest,
   matchMetadataRequest,
@@ -184,6 +186,39 @@ describe('heroSampleRequest', () => {
   });
 });
 
+describe('itemStatsRequest', () => {
+  /** The cohort of the item statistics: every match length, whatever the caller's duration window. */
+  const ANY_LENGTH_COHORT: CohortQuery = {
+    ...ALL_RANKS_COHORT,
+    minDurationS: ANY_LENGTH_WINDOW.minS,
+    maxDurationS: ANY_LENGTH_WINDOW.maxS,
+  };
+
+  /** The parameters of that cohort: the period, then the whole length range. */
+  const ANY_LENGTH_PARAMS = 'min_unix_timestamp=1789862400&min_duration_s=0&max_duration_s=7000';
+
+  it('builds the item-stats request with the minute buckets', () => {
+    // `bucket=game_time_min` splits every item by the minute it was bought; `min_matches=1` keeps
+    // the minutes the API would drop by default (it hides every group of fewer than 20 purchases).
+    expect(itemStatsRequest(ANY_LENGTH_COHORT)).toEqual({
+      url: `https://api.deadlock-api.com/v1/analytics/item-stats?hero_ids=67&game_mode=normal&bucket=game_time_min&min_matches=1&${ANY_LENGTH_PARAMS}`,
+      endpoint: '/v1/analytics/item-stats',
+      family: 'analytics',
+    });
+  });
+
+  it('appends the badge range of a rank tier after the duration window', () => {
+    expect(itemStatsRequest({ ...ANY_LENGTH_COHORT, badge: { min: 41, max: 46 } }).url).toBe(
+      `https://api.deadlock-api.com/v1/analytics/item-stats?hero_ids=67&game_mode=normal&bucket=game_time_min&min_matches=1&${ANY_LENGTH_PARAMS}${TIER_4_PARAMS}`,
+    );
+  });
+
+  it('sends the duration window of the query', () => {
+    // The builder has no window of its own: the caller decides (the review passes every length).
+    expect(itemStatsRequest(ALL_RANKS_COHORT).url).toContain(`&${WINDOW_PARAMS}`);
+  });
+});
+
 describe('cohort requests', () => {
   it('carry a hero, a date, a duration window and a badge range, nothing else', () => {
     // Community requests are anonymous: no account id, no match id, no player data.
@@ -191,6 +226,8 @@ describe('cohort requests', () => {
       'hero_ids',
       'game_mode',
       'resolution',
+      'bucket',
+      'min_matches',
       'min_unix_timestamp',
       'min_duration_s',
       'max_duration_s',
@@ -202,6 +239,7 @@ describe('cohort requests', () => {
       metricBenchmarkRequest(TIER_4_COHORT),
       performanceCurveRequest(TIER_4_COHORT),
       heroSampleRequest(TIER_4_COHORT),
+      itemStatsRequest(TIER_4_COHORT),
     ]) {
       const names = [...new URL(request.url).searchParams.keys()];
 

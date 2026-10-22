@@ -84,7 +84,7 @@ export type BenchmarkKey =
  * The statistic of the deadlock-api's performance curve: the average of a cumulative counter, at
  * each time of the match, over a cohort.
  */
-export type CurveStat = 'net_worth' | 'player_damage' | 'boss_damage' | 'kills';
+export type CurveStat = 'net_worth' | 'player_damage' | 'boss_damage' | 'kills' | 'deaths';
 
 /**
  * Where the community reference of a metric comes from:

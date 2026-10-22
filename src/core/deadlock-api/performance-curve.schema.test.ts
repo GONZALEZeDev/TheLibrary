@@ -12,7 +12,7 @@ import { parsePerformanceCurve, type CurvePoint } from './performance-curve.sche
 
 /**
  * One point of the curve in the exact shape of the API: the average and the standard deviation of
- * the four statistics the app reads (made up from the time), and others it does not.
+ * the five statistics the app reads (made up from the time), and others it does not.
  *
  * @param gameTime - The time of the point, in seconds since the start of the match.
  * @param overrides - Fields to change (or to add).
@@ -53,12 +53,14 @@ function expectedPoint(gameTime: number): CurvePoint {
       player_damage: gameTime * 5,
       boss_damage: gameTime * 2,
       kills: gameTime / 100,
+      deaths: gameTime / 150,
     },
     std: {
       net_worth: gameTime / 2,
       player_damage: gameTime / 4,
       boss_damage: gameTime / 5,
       kills: gameTime / 200,
+      deaths: gameTime / 300,
     },
   };
 }
@@ -88,10 +90,32 @@ describe('parsePerformanceCurve', () => {
     ]);
   });
 
-  it('reads the four statistics, and nothing else of a point', () => {
+  it('reads the five statistics, and nothing else of a point', () => {
     const [point] = parsePerformanceCurve([rawPoint(720, { gold_lane_creeps_avg: 7 })]);
 
     expect(point).toEqual(expectedPoint(720));
+  });
+
+  it('reads the deaths of each point', () => {
+    const curve = parsePerformanceCurve([
+      rawPoint(900),
+      rawPoint(180, { deaths_avg: 0.5, deaths_std: 0 }),
+    ]);
+
+    expect(curve.map((point) => point.avg.deaths)).toEqual([0.5, 6]);
+    expect(curve.map((point) => point.std.deaths)).toEqual([0, 3]);
+  });
+
+  it('skips a point without deaths', () => {
+    const body = [
+      rawPoint(180),
+      rawPointWithout(360, 'deaths_avg'),
+      rawPointWithout(540, 'deaths_std'),
+      rawPoint(720, { deaths_avg: null }),
+      rawPoint(900),
+    ];
+
+    expect(parsePerformanceCurve(body).map((point) => point.timeS)).toEqual([180, 900]);
   });
 
   it('parses an empty curve', () => {
@@ -101,13 +125,25 @@ describe('parsePerformanceCurve', () => {
   it('keeps a point at the start of the match and a point with no spread', () => {
     const body = [
       rawPoint(0),
-      rawPoint(180, { net_worth_std: 0, player_damage_std: 0, boss_damage_std: 0, kills_std: 0 }),
+      rawPoint(180, {
+        net_worth_std: 0,
+        player_damage_std: 0,
+        boss_damage_std: 0,
+        kills_std: 0,
+        deaths_std: 0,
+      }),
     ];
 
     const curve = parsePerformanceCurve(body);
 
     expect(curve.map((point) => point.timeS)).toEqual([0, 180]);
-    expect(curve[1]?.std).toEqual({ net_worth: 0, player_damage: 0, boss_damage: 0, kills: 0 });
+    expect(curve[1]?.std).toEqual({
+      net_worth: 0,
+      player_damage: 0,
+      boss_damage: 0,
+      kills: 0,
+      deaths: 0,
+    });
   });
 
   it('leaves out a point without kills_std', () => {
@@ -116,7 +152,7 @@ describe('parsePerformanceCurve', () => {
     expect(parsePerformanceCurve(body).map((point) => point.timeS)).toEqual([180, 540]);
   });
 
-  it('leaves out a point missing any of the eight fields, or the time', () => {
+  it('leaves out a point missing any of the ten fields, or the time', () => {
     const fields = [
       'game_time',
       'net_worth_avg',
@@ -127,6 +163,8 @@ describe('parsePerformanceCurve', () => {
       'boss_damage_std',
       'kills_avg',
       'kills_std',
+      'deaths_avg',
+      'deaths_std',
     ];
     for (const field of fields) {
       expect(parsePerformanceCurve([rawPointWithout(360, field), rawPoint(180)])).toEqual([
@@ -147,11 +185,13 @@ describe('parsePerformanceCurve', () => {
       rawPoint(360, { player_damage_avg: null }),
       rawPoint(360, { boss_damage_avg: Infinity }),
       rawPoint(360, { kills_avg: NaN }),
+      rawPoint(360, { deaths_avg: '4' }),
       // A spread: negative, not a number, not finite.
       rawPoint(360, { net_worth_std: -1 }),
       rawPoint(360, { player_damage_std: '1' }),
       rawPoint(360, { boss_damage_std: Infinity }),
       rawPoint(360, { kills_std: -0.001 }),
+      rawPoint(360, { deaths_std: -0.001 }),
       // Not even an object.
       null,
       'text',

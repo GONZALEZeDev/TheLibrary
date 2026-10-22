@@ -39,6 +39,7 @@ import {
   heroesRequest,
   heroSampleRequest,
   itemsRequest,
+  itemStatsRequest,
   matchHistoryRequest,
   matchMetadataRequest,
   MAX_RESPONSE_BYTES,
@@ -55,6 +56,7 @@ import {
 } from '../core/deadlock-api/endpoints';
 import { parseHeroSample } from '../core/deadlock-api/hero-sample.schema';
 import { parseHeroAssets } from '../core/deadlock-api/heroes.schema';
+import { parseItemStats, type ItemStatsRow } from '../core/deadlock-api/item-stats.schema';
 import { parseMatchHistory } from '../core/deadlock-api/match-history.schema';
 import {
   parseMetricBenchmark,
@@ -148,8 +150,8 @@ export type SteamProfileFetch =
 
 /**
  * Result of the requests for community data ({@link DeadlockApiService.fetchMetricBenchmark},
- * {@link DeadlockApiService.fetchPerformanceCurve}, {@link DeadlockApiService.fetchHeroSample} and
- * {@link DeadlockApiService.fetchPlayerRank}).
+ * {@link DeadlockApiService.fetchPerformanceCurve}, {@link DeadlockApiService.fetchHeroSample},
+ * {@link DeadlockApiService.fetchItemStats} and {@link DeadlockApiService.fetchPlayerRank}).
  *
  * @template T - What the request fetches, once validated.
  */
@@ -249,8 +251,8 @@ export class DeadlockApiService {
    */
   #profileRefreshes: readonly number[] = [];
   /**
-   * Times of the recent analytics requests (benchmark, curve and hero statistics share one window):
-   * per minute, kept in memory.
+   * Times of the recent analytics requests (benchmark, curve, hero statistics and item statistics
+   * share one window): per minute, kept in memory.
    */
   #analyticsRequests: readonly number[] = [];
   /** Times of the recent player rank requests: per hour, kept in memory. */
@@ -486,6 +488,22 @@ export class DeadlockApiService {
   }
 
   /**
+   * Download and validate the item statistics of a cohort: how many times its players bought each
+   * shop item in each minute of the match, which tells when a rank tier usually buys an item.
+   *
+   * Same rules as {@link DeadlockApiService.fetchMetricBenchmark}. The window of match durations is
+   * the caller's, as the query says (the review asks for every length of match).
+   *
+   * @param query - The community: a hero, a period, a duration window and a badge range.
+   * @returns The purchases by item and minute, sorted by item then minute (none when the cohort
+   *   holds no readable row), or why they were not downloaded.
+   * @throws AppError, as {@link DeadlockApiService.fetchMetricBenchmark}.
+   */
+  fetchItemStats(query: CohortQuery): Promise<AnalyticsFetch<readonly ItemStatsRow[]>> {
+    return this.#fetchCommunityData(itemStatsRequest(query), parseItemStats);
+  }
+
+  /**
    * Download and validate the rank badge of a player, if the budget and deadlock-api allow it.
    *
    * Same rules as {@link DeadlockApiService.fetchMetricBenchmark}, with {@link RANK_RATE_LIMIT} in
@@ -501,7 +519,7 @@ export class DeadlockApiService {
   }
 
   /**
-   * Send a request for community data and validate the answer: what the four requests above share.
+   * Send a request for community data and validate the answer: what the five requests above share.
    *
    * The pause comes first: while deadlock-api asked to wait, nothing is sent and nothing is counted.
    * Then the budget of the family of the request applies (`#admitAnalyticsRequest`, or
@@ -685,8 +703,9 @@ export class DeadlockApiService {
 
   /**
    * Check the budget of the analytics requests, and count the request when it may be sent. The
-   * benchmark, the curve and the hero statistics share this one window. The check and the count are
-   * synchronous, so two overlapping calls cannot both take the last request of the window.
+   * benchmark, the curve, the hero statistics and the item statistics share this one window. The
+   * check and the count are synchronous, so two overlapping calls cannot both take the last request
+   * of the window.
    *
    * @returns Why the request may not be sent, or `null` when it was counted.
    */

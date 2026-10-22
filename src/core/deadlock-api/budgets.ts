@@ -47,12 +47,14 @@ export const PROFILE_RATE_LIMIT: RateLimit = { limit: 10, windowMs: 60_000 };
 export const PROFILE_REFRESH_RATE_LIMIT: RateLimit = { limit: 3, windowMs: HOUR_MS };
 
 /**
- * Community analytics requests (benchmarks, curves, hero statistics): 20 per minute. deadlock-api
- * allows 200 per minute and per IP across every analytics endpoint. A comparison needs a handful of
- * requests, kept for a day afterwards, so 20 a minute is a ceiling that leaves the rest of the limit
- * to the other apps of the same network, not a rate the app aims at.
+ * Community analytics requests (benchmarks, curves, hero statistics, item statistics): 30 per
+ * minute. deadlock-api allows 200 per minute and per IP across every analytics endpoint. The
+ * comparison of one match needs a handful of requests, but opening the review needs up to about 30
+ * of them at once, all kept for a day afterwards. 30 a minute covers that opening and leaves most of
+ * the limit to the other apps of the same network: it is a ceiling that keeps a bug from hammering
+ * deadlock-api, not a rate the app aims at.
  */
-export const ANALYTICS_RATE_LIMIT: RateLimit = { limit: 20, windowMs: 60_000 };
+export const ANALYTICS_RATE_LIMIT: RateLimit = { limit: 30, windowMs: 60_000 };
 
 /**
  * Player rank requests: 3 per hour. deadlock-api allows 20 per minute and per IP, but the app needs

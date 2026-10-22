@@ -8,10 +8,10 @@
  * as the longest match of the cohort: a late point only averages the players whose match lasted
  * that long, and the answer does not say how many they are.
  *
- * The app reads the four counters its phase analysis compares (souls, damage to heroes, damage to
- * objectives, kills) and nothing else. This module is lenient on purpose: a point that lacks one of
- * them, or holds a value that is not a measure, is left out, and the others stay usable. Only a body
- * that is not even a list is an error.
+ * The app reads five counters and nothing else: the four its phase analysis compares (souls, damage
+ * to heroes, damage to objectives, kills) and the deaths. This module is lenient on purpose: a point
+ * that lacks one of them, or holds a value that is not a measure, is left out, and the others stay
+ * usable. Only a body that is not even a list is an error.
  *
  * @packageDocumentation
  */
@@ -46,6 +46,8 @@ const curvePointRowSchema = z.looseObject({
   boss_damage_std: z.number().nonnegative(),
   kills_avg: z.number(),
   kills_std: z.number().nonnegative(),
+  deaths_avg: z.number(),
+  deaths_std: z.number().nonnegative(),
 });
 
 /** One validated point of the answer. */
@@ -68,12 +70,14 @@ function toCurvePoint(row: CurvePointRow): CurvePoint {
       player_damage: row.player_damage_avg,
       boss_damage: row.boss_damage_avg,
       kills: row.kills_avg,
+      deaths: row.deaths_avg,
     },
     std: {
       net_worth: row.net_worth_std,
       player_damage: row.player_damage_std,
       boss_damage: row.boss_damage_std,
       kills: row.kills_std,
+      deaths: row.deaths_std,
     },
   };
 }

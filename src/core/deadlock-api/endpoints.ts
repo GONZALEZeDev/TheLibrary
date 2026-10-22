@@ -18,7 +18,7 @@ import type { MatchId } from '../domain/match';
 export const DEADLOCK_API_BASE_URL = 'https://api.deadlock-api.com';
 
 /** Public home of the project, advertised in the User-Agent of every request. */
-export const REPOSITORY_URL = 'https://github.com/GONZALEZeDev/TheLibrary';
+const REPOSITORY_URL = 'https://github.com/GONZALEZeDev/TheLibrary';
 
 /** Every request is abandoned after this delay, in milliseconds. */
 export const REQUEST_TIMEOUT_MS = 15_000;
@@ -272,6 +272,27 @@ export function heroSampleRequest(query: CohortQuery): ApiRequest {
   return {
     url: `${DEADLOCK_API_BASE_URL}/v1/analytics/hero-stats?game_mode=normal&${cohortFilters(query)}`,
     endpoint: '/v1/analytics/hero-stats',
+    family: 'analytics',
+  };
+}
+
+/**
+ * The purchases of every shop item by minute of the game, among the players of a hero in a
+ * community: how many bought each item in each minute, which tells when a rank tier buys an item.
+ *
+ * `bucket=game_time_min` splits the answer by the minute of the purchase (bucket 14 is 14:00 to
+ * 14:59). `min_matches=1` keeps every group: without it the API leaves out each (item, minute) pair
+ * with fewer than 20 purchases, which erases the early and late tails of the distribution of a
+ * rarely bought item. The other parameters are those of {@link metricBenchmarkRequest}; the caller
+ * puts the bounds of the duration window it wants in the query (the review passes every length).
+ *
+ * @param query - The community.
+ * @returns The request.
+ */
+export function itemStatsRequest(query: CohortQuery): ApiRequest {
+  return {
+    url: `${DEADLOCK_API_BASE_URL}/v1/analytics/item-stats?hero_ids=${String(query.heroId)}&game_mode=normal&bucket=game_time_min&min_matches=1&${cohortFilters(query)}`,
+    endpoint: '/v1/analytics/item-stats',
     family: 'analytics',
   };
 }

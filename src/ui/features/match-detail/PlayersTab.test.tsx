@@ -19,7 +19,7 @@ import type {
   PlayerRowView,
   PlayersTabView,
   TeamView,
-} from '../../../services/match-breakdown.service';
+} from '../../../services/match-breakdown-view';
 import { createTestQueryClient, createTestServices } from '../../../test/create-test-services';
 import { testMatchId } from '../../../test/test-data';
 import { AppProviders } from '../../app/AppProviders';

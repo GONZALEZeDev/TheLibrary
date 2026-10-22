@@ -5,9 +5,9 @@
  * An item has its picture, its name, the time it was bought (as minutes and seconds) and, when it was
  * imbued into an ability, which one. The groups are the slots of the shop in the order the shop lists
  * them (weapon, vitality, spirit), then the items the catalogue puts in no slot or does not know; a
- * group that holds no item is left out. The items are listed in the order they are given (the
- * breakdown service puts them in the order the page lists them: by tier, then by purchase time), and
- * a match that ended with no item says so.
+ * group that holds no item is left out. The items are listed in the order they are given (the view
+ * of the breakdown puts them in the order the page lists them: by slot, then by tier, then by
+ * purchase time), and a match that ended with no item says so.
  *
  * The build is a region of its own, named by its title, a peer of the region of the damage above it
  * (so the title is a level 2 heading and the slots are level 3). Each slot is a list named by its
@@ -20,7 +20,7 @@ import type { TFunction } from 'i18next';
 import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ITEM_SLOTS, type ItemSlot } from '../../../core/deadlock-api/assets.schema';
-import type { BuildItemView } from '../../../services/match-breakdown.service';
+import type { BuildItemView } from '../../../services/match-breakdown-view';
 import { GamePicture } from '../../components/GamePicture';
 import { formatGameTime } from './analysis-format';
 

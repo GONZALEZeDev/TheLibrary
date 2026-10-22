@@ -1,6 +1,10 @@
 /**
  * The breakdown of a match: the views of the match page that read what the analysis of its metrics
  * (`./analysis.service`) leaves aside. Each view has its own method and its own part of this file.
+ * This file reads what the views are made of (the stored projections, the archive of the match and
+ * the catalogues) and logs what it cannot read. The views, the states that say why a view has
+ * nothing to show and the pure builders that turn what is read into the views are in
+ * `./match-breakdown-view`.
  *
  * **The damage and build view** ({@link MatchBreakdownService.getDamageTab}) tells how the player
  * dealt their damage, source by source, compared with their own habits, and what they ended the
@@ -16,25 +20,10 @@
  *
  * The shares, the kinds and the habits are computed when the view is asked for
  * (`../core/analysis/damage-breakdown`), not stored. Where a match stands before any of it is read
- * (the states below) is decided by `./analysis-subject`, the gate the analysis shares: the two
- * views of a match tell the same states the same way. Nothing is projected, nothing is downloaded
- * for a match that is not `projected` or whose archive cannot be read, and the view never changes
- * the match.
- *
- * What the damage tab can be told about a match (`DamageTabView`):
- * - `not_analysed`: there is nothing to show. No account is linked, or the detail of the match is
- *   not archived;
- * - `pending`: the match is archived but the projection has not run on it yet, or ran with an older
- *   version of the metrics. The analysis of the match projects it (`AnalysisService.analyseMatch`);
- * - `failed`: the projection could not read the match;
- * - `unreadable`: the archive of the match is gone or damaged, or its items cannot be read. The
- *   detail view of the match explains the archive; this view only has nothing to show, and does not
- *   reset the match;
- * - `catalogue_unavailable`: the loadout of Paige or the item catalogue could not be read, and
- *   there is none cached (offline for good, a request refused). Without them the sources cannot be
- *   told apart nor named, and no half-named table is shown instead;
- * - `ready`: the breakdown, which is `null` when the match has no damage to show (no damage matrix
- *   in the archive, or no damage dealt to heroes), and the build.
+ * (the states of `DamageTabView`, see `./match-breakdown-view`) is decided by
+ * `./analysis-subject`, the gate the analysis shares: the two views of a match tell the same states
+ * the same way. Nothing is projected, nothing is downloaded for a match that is not `projected` or
+ * whose archive cannot be read, and the view never changes the match.
  *
  * **The players view** ({@link MatchBreakdownService.getPlayersTab}) is the scoreboard of the match:
  * its twelve players by team, with their hero, their rank and their place in Valve's top three, and
@@ -44,15 +33,8 @@
  * linked account (`archivedAccountOf`), not whether it is analysed, and is shown whether or not the
  * analysis has run. The hero and rank catalogues (`./hero-catalog.service`,
  * `./game-asset.service`) only decorate it: without them the players are shown by the id of their
- * hero and without the badge of their rank, and no state says so.
- *
- * What the players tab can be told about a match (`PlayersTabView`):
- * - `not_archived`: there is nothing to show. No account is linked, or the detail of the match is
- *   not archived;
- * - `unreadable`: the archive of the match is gone or damaged, or its scoreboard cannot be read.
- *   Like the damage tab, this view only has nothing to show and does not reset the match;
- * - `ready`: the teams (the tracked player's first), the places of the tracked player, and whether
- *   the match has a top three and is ranked.
+ * hero and without the badge of their rank, and no state says so. What the tab can be told about a
+ * match is `PlayersTabView`, in `./match-breakdown-view`.
  *
  * Nothing is logged on the normal path. Two kinds of lines are written, never with an account id or
  * a value of the payload or of a catalogue: one at `info` level each time a catalogue cannot be read
@@ -62,36 +44,15 @@
  *
  * @packageDocumentation
  */
-import {
-  buildDamageBreakdown,
-  readableSourceName,
-  type DamageBreakdown,
-} from '../core/analysis/damage-breakdown';
+import { buildDamageBreakdown } from '../core/analysis/damage-breakdown';
 import { PREVIOUS_LOOKUP } from '../core/analysis/insights/thresholds';
 import { PROJECTION_VERSION } from '../core/analysis/registry';
-import {
-  ITEM_SLOTS,
-  MAX_ITEM_TIER,
-  type CatalogueItem,
-  type CatalogueRank,
-  type ItemSlot,
-} from '../core/deadlock-api/assets.schema';
-import { PAIGE_HERO_ID, type HeroAsset, type HeroLoadout } from '../core/domain/hero';
+import type { CatalogueRank } from '../core/deadlock-api/assets.schema';
+import { PAIGE_HERO_ID, type HeroLoadout } from '../core/domain/hero';
 import type { MatchId } from '../core/domain/match';
-import { badgeParts, rankName } from '../core/domain/rank';
 import { errorLogContext, isAppError, issueOf, toAppError } from '../core/errors/app-error';
-import {
-  placesOf,
-  readScoreboard,
-  type ScoreboardPlayer,
-  type ScoreboardRead,
-  type StatPlace,
-} from '../core/match-detail/scoreboard';
-import {
-  finalBuildOf,
-  readTrackedItems,
-  type FinalBuildEntry,
-} from '../core/match-detail/tracked-items';
+import { placesOf, readScoreboard } from '../core/match-detail/scoreboard';
+import { finalBuildOf, readTrackedItems } from '../core/match-detail/tracked-items';
 import type { AccountSource } from '../ports/account-source.port';
 import type { Logger } from '../ports/logger.port';
 import {
@@ -102,113 +63,16 @@ import {
 import type { ArchiveReaderService } from './archive-reader.service';
 import type { GameAssetService, ItemCatalogue } from './game-asset.service';
 import type { HeroCatalogService } from './hero-catalog.service';
+import {
+  describeBuild,
+  describeTeams,
+  type DamageTabView,
+  type PlayerCatalogues,
+  type PlayersTabView,
+} from './match-breakdown-view';
 import type { MatchDetailRepository } from './match-detail.repository';
 import type { MetricsRepository } from './metrics.repository';
 import { ReportOnce } from './report-once';
-
-/**
- * One item of the build a player ended the match with, named and shown by the item catalogue.
- *
- * An item the catalogue does not know (the game added it after the catalogue was cached, say) keeps
- * `null` for everything the catalogue tells, and the page shows it by its id.
- */
-export interface BuildItemView {
-  /** The asset id of the item. */
-  readonly itemId: number;
-  /**
-   * The English name: the catalogue's, or its class name made readable when the catalogue has the
-   * item but no name for it; `null` when the catalogue does not know the item.
-   */
-  readonly name: string | null;
-  /** The image of the item on the asset bucket, or `null` when it has none or is unknown. */
-  readonly imageUrl: string | null;
-  /** The slot of the item in the shop, or `null` when it is unknown. */
-  readonly slot: ItemSlot | null;
-  /** The tier of the item, 1 to 5, or `null` when it is unknown. */
-  readonly tier: number | null;
-  /** When the item was bought, in seconds since the start of the match. */
-  readonly boughtAtS: number;
-  /**
-   * The English name of the ability the item was imbued into, or `null` when it was not imbued or
-   * when the catalogue does not know the ability.
-   */
-  readonly imbuedInto: string | null;
-}
-
-/**
- * What the damage and build tab of the match page shows: a state that says there is nothing to show
- * (see the header of this file), or the damage breakdown and the final build.
- */
-export type DamageTabView =
-  | { readonly kind: 'not_analysed' }
-  | { readonly kind: 'pending' }
-  | { readonly kind: 'failed' }
-  | { readonly kind: 'unreadable' }
-  | { readonly kind: 'catalogue_unavailable' }
-  | {
-      readonly kind: 'ready';
-      /** The damage by source, or `null` when the match has no damage to show. */
-      readonly breakdown: DamageBreakdown | null;
-      /** The items the player ended the match with, in the order the page lists them. */
-      readonly build: readonly BuildItemView[];
-    };
-
-/**
- * One row of the players tab: a player of the scoreboard, with what the catalogues tell about their
- * hero and their rank.
- *
- * The names are the English ones whatever the language of the interface. A hero the hero catalogue
- * does not know (or the whole catalogue, when it cannot be read) leaves `heroName` and
- * `heroImageUrl` `null`: the page shows the hero by its id. The name of the rank comes from the
- * badge alone, so it is there without the rank catalogue; only the image of the tier needs it.
- */
-export interface PlayerRowView extends ScoreboardPlayer {
-  /** `true` for the player the account is about: the page marks their row. */
-  readonly isTracked: boolean;
-  /** The English name of their hero, or `null` when the hero catalogue does not give it. */
-  readonly heroName: string | null;
-  /** The portrait of their hero on the asset bucket, or `null` when the catalogue has none. */
-  readonly heroImageUrl: string | null;
-  /**
-   * Their rank as the game writes it (`Sentinel 4`), or `null` when they have none to show: the
-   * match is not ranked, they have no rank yet, or their badge is no real rank.
-   */
-  readonly rankName: string | null;
-  /**
-   * The badge of the tier of their rank on the asset bucket, or `null` when they have no rank to
-   * show or the rank catalogue does not give the badge.
-   */
-  readonly rankImageUrl: string | null;
-}
-
-/** One team of the players tab. */
-export interface TeamView {
-  /** The team, as numbered by the API. */
-  readonly team: number;
-  /** `true` for the team that won the match. */
-  readonly won: boolean;
-  /** Its players, by slot. */
-  readonly players: readonly PlayerRowView[];
-}
-
-/**
- * What the players tab of the match page shows: a state that says there is nothing to show (see the
- * header of this file), or the scoreboard.
- */
-export type PlayersTabView =
-  | { readonly kind: 'not_archived' }
-  | { readonly kind: 'unreadable' }
-  | {
-      readonly kind: 'ready';
-      /** The teams of the match, the tracked player's first. */
-      readonly teams: readonly TeamView[];
-      /** The places of the tracked player among the players, see `placesOf`. */
-      readonly places: readonly StatPlace[];
-      /** `true` when some player is in Valve's top three; an older match has none. */
-      readonly hasTopThree: boolean;
-      /** `true` for a ranked match: the only one whose players have a rank to show. */
-      readonly ranked: boolean;
-    };
 
 /** What {@link MatchBreakdownService} needs. */
 export interface MatchBreakdownServiceDependencies {
@@ -243,138 +107,6 @@ interface DamageCatalogues {
   readonly loadout: HeroLoadout;
   /** The items, abilities and weapons of the game. */
   readonly items: ItemCatalogue;
-}
-
-/**
- * The name to show for an entry of the item catalogue: its English name, or, for the few entries
- * the catalogue has no name for, its class name made readable (as the damage lines do).
- *
- * @param item - The entry.
- * @returns The name.
- */
-function nameOf(item: CatalogueItem): string {
-  return item.name ?? readableSourceName(item.className);
-}
-
-/**
- * The place of a slot in the list of the build: weapon, vitality, spirit, then no slot.
- *
- * @param slot - The slot of an item, `null` when it has none.
- * @returns The rank, from 0.
- */
-function slotRank(slot: ItemSlot | null): number {
-  return slot === null ? ITEM_SLOTS.length : ITEM_SLOTS.indexOf(slot);
-}
-
-/**
- * Order two items of the build: by slot, then by tier (the lowest first, an item without a tier
- * last), then by the time they were bought, then by id so that the order never depends on the
- * input's.
- *
- * @param first - An item.
- * @param second - Another item.
- * @returns A negative number when `first` comes first, a positive one when `second` does.
- */
-function byBuildOrder(first: BuildItemView, second: BuildItemView): number {
-  // A number past the highest tier, rather than infinity: `Infinity - Infinity` is `NaN`, which
-  // would end the comparison instead of passing on to the next criterion.
-  const noTier = MAX_ITEM_TIER + 1;
-  return (
-    slotRank(first.slot) - slotRank(second.slot) ||
-    (first.tier ?? noTier) - (second.tier ?? noTier) ||
-    first.boughtAtS - second.boughtAtS ||
-    first.itemId - second.itemId
-  );
-}
-
-/**
- * Describe the items of a final build with the item catalogue.
- *
- * @param entries - The items the player ended the match with.
- * @param catalogue - The item catalogue, to look the items and the abilities they were imbued into
- *   up by id.
- * @returns The items in the order the page lists them (see {@link byBuildOrder}).
- */
-function describeBuild(
-  entries: readonly FinalBuildEntry[],
-  catalogue: ItemCatalogue,
-): readonly BuildItemView[] {
-  return entries
-    .map((entry): BuildItemView => {
-      const item = catalogue.byId.get(entry.itemId);
-      const ability =
-        entry.imbuedAbilityId === null ? undefined : catalogue.byId.get(entry.imbuedAbilityId);
-      return {
-        itemId: entry.itemId,
-        name: item === undefined ? null : nameOf(item),
-        imageUrl: item?.imageUrl ?? null,
-        slot: item?.slot ?? null,
-        tier: item?.tier ?? null,
-        boughtAtS: entry.boughtAtS,
-        imbuedInto: ability === undefined ? null : nameOf(ability),
-      };
-    })
-    .toSorted(byBuildOrder);
-}
-
-/**
- * What the players view takes from the catalogues. Both only decorate the scoreboard, so each is a
- * lookup that may be empty: a catalogue that could not be read has no entry for anybody.
- */
-interface PlayerCatalogues {
-  /** The playable heroes by id: their names and portraits. */
-  readonly heroes: ReadonlyMap<number, HeroAsset>;
-  /** The rank tiers by tier number: the badge of each. */
-  readonly ranks: ReadonlyMap<number, CatalogueRank>;
-}
-
-/**
- * Describe a player of the scoreboard with the catalogues.
- *
- * @param player - The player.
- * @param trackedSlot - The slot of the tracked player.
- * @param catalogues - The hero and rank catalogues, which may be empty.
- * @returns The row of the player. A badge that is no real rank (a sub-rank the game never gives) has
- *   neither a name nor an image, like a player who has no badge.
- */
-function describePlayer(
-  player: ScoreboardPlayer,
-  trackedSlot: number,
-  catalogues: PlayerCatalogues,
-): PlayerRowView {
-  const hero = catalogues.heroes.get(player.heroId);
-  const parts = player.badge === null ? null : badgeParts(player.badge);
-  return {
-    ...player,
-    isTracked: player.slot === trackedSlot,
-    heroName: hero?.name ?? null,
-    heroImageUrl: hero?.imageUrl ?? null,
-    rankName: player.badge === null ? null : rankName(player.badge),
-    rankImageUrl: parts === null ? null : (catalogues.ranks.get(parts.tier)?.imageUrl ?? null),
-  };
-}
-
-/**
- * Split the players of a scoreboard into their teams.
- *
- * @param read - The scoreboard, whose players are sorted by slot.
- * @param catalogues - The hero and rank catalogues, which may be empty.
- * @returns The teams, the tracked player's first and the others by team number; the players of a
- *   team are in the order of their slots.
- */
-function describeTeams(read: ScoreboardRead, catalogues: PlayerCatalogues): readonly TeamView[] {
-  const rows = read.players.map((player) => describePlayer(player, read.trackedSlot, catalogues));
-  const trackedTeam = rows.find((row) => row.isTracked)?.team;
-  const teams = [...new Set(rows.map((row) => row.team))].toSorted(
-    // The tracked player's team sorts before the others, which sort by their number.
-    (first, second) =>
-      Number(second === trackedTeam) - Number(first === trackedTeam) || first - second,
-  );
-  return teams.map((team) => ({
-    team,
-    won: team === read.winningTeam,
-    players: rows.filter((row) => row.team === team),
-  }));
 }
 
 /** Tells what the match page shows besides the analysis of a match, from its projection and archive. */

@@ -54,7 +54,7 @@ import { createTestServices, projectArchivedMatches } from '../test/create-test-
 import { testMatchId } from '../test/test-data';
 import { ArchiveReaderService } from './archive-reader.service';
 import { MatchDetailRepository } from './match-detail.repository';
-import type { DamageTabView, PlayersTabView } from './match-breakdown.service';
+import type { DamageTabView, PlayersTabView } from './match-breakdown-view';
 import { MetricsRepository, type ProjectionRecord } from './metrics.repository';
 
 /** The time of the synchronisation that archives the matches (Unix ms); the history ends before. */

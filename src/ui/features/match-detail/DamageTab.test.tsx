@@ -15,7 +15,7 @@ import type { DamageBreakdown, DamageSourceRow } from '../../../core/analysis/da
 import { AppError } from '../../../core/errors/app-error';
 import type { Language } from '../../../core/settings/language';
 import type { AppServices } from '../../../services/app-services';
-import type { BuildItemView, DamageTabView } from '../../../services/match-breakdown.service';
+import type { BuildItemView, DamageTabView } from '../../../services/match-breakdown-view';
 import { createTestQueryClient, createTestServices } from '../../../test/create-test-services';
 import { testMatchId } from '../../../test/test-data';
 import { AppProviders } from '../../app/AppProviders';

@@ -43,7 +43,7 @@ import { useTranslation } from 'react-i18next';
 import type { MatchId } from '../../../core/domain/match';
 import { toAppError } from '../../../core/errors/app-error';
 import type { PlaceStat, ScoreboardPlayer, StatPlace } from '../../../core/match-detail/scoreboard';
-import type { PlayerRowView, TeamView } from '../../../services/match-breakdown.service';
+import type { PlayerRowView, TeamView } from '../../../services/match-breakdown-view';
 import { GamePicture } from '../../components/GamePicture';
 import { formatDifference, formatMetricValue, NO_VALUE } from './analysis-format';
 import {

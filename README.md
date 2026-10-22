@@ -20,7 +20,7 @@ The first version is built in six milestones:
 1. **M1 Foundations** — tooling, CI, the desktop shell and its screens, the theme, French and English.
 2. **M2 Data** — synchronisation of your match history (M2a), then the local archive of your Paige matches (M2b).
 3. **M3 Account** — Steam sign-in and onboarding.
-4. **M4 Analysis** — metrics compared with your rank and your own history, strengths and weaknesses: on the match page (M4a), then more of the match — items, players, damage by source (M4b) — and summaries over 7, 30 and 90 days (M4c).
+4. **M4 Analysis** — metrics compared with your rank and your own history, strengths and weaknesses on the match page (M4a); the rest of the match in tabs, with your damage by source compared with your habits, your final build and the 12 players (M4b); summaries over 7, 30 and 90 days (M4c).
 5. **M5 Screens** — dashboard, match history, match detail and settings.
 6. **M6 Delivery** — signed installer, automatic updates and the release workflow.
 

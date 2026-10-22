@@ -90,14 +90,24 @@ export function markOfPlace(place: number): ReviewMark | null {
 }
 
 /**
+ * Tell whether a rank stored for a match is in Valve's top three.
+ *
+ * @param rank - The rank stored for the match: 1 to 3 in the top three, 0 outside it.
+ * @returns `true` for the ranks 1 to 3, and `false` for 0 and for any other number.
+ */
+export function isInValveTopThree(rank: number): boolean {
+  return rank >= 1 && rank <= VALVE_TOP_RANKS;
+}
+
+/**
  * Mark the place of the player in Valve's top three of a match.
  *
  * @param rank - The rank stored for the match: 1 to 3 in the top three, 0 outside it.
- * @returns `'strong'` in the top three and `null` outside it: missing it says nothing, as only
- *   three of the twelve players have it.
+ * @returns `'strong'` in the top three ({@link isInValveTopThree}) and `null` outside it: missing it
+ *   says nothing, as only three of the twelve players have it.
  */
 export function markOfValveRank(rank: number): ReviewMark | null {
-  return rank >= 1 && rank <= VALVE_TOP_RANKS ? 'strong' : null;
+  return isInValveTopThree(rank) ? 'strong' : null;
 }
 
 /**

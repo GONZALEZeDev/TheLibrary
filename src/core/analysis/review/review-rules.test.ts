@@ -19,6 +19,7 @@ import {
 import {
   flaggedSide,
   histogramMean,
+  isInValveTopThree,
   markOfDeathsBeforeResistance,
   markOfLaneGap,
   markOfPercentile,
@@ -94,6 +95,24 @@ describe('the marks of the other points', () => {
     expect(markOfLaneGap(LANE_SOULS_CLEAR_GAP - 1)).toBeNull();
     expect(markOfLaneGap(LANE_SOULS_CLEAR_GAP)).toBe('strong');
     expect(markOfLaneGap(LANE_SOULS_CLEAR_GAP + 1)).toBe('strong');
+  });
+});
+
+describe('isInValveTopThree', () => {
+  it('tells the ranks of the top three from the others', () => {
+    // 1st to 3rd are in it; 0 is a match that has a top three without the player.
+    expect(isInValveTopThree(1)).toBe(true);
+    expect(isInValveTopThree(2)).toBe(true);
+    expect(isInValveTopThree(3)).toBe(true);
+    expect(isInValveTopThree(0)).toBe(false);
+    expect(isInValveTopThree(4)).toBe(false);
+    expect(isInValveTopThree(-1)).toBe(false);
+  });
+
+  it('is what marks a rank strong', () => {
+    for (const rank of [-1, 0, 1, 2, 3, 4, 12]) {
+      expect(markOfValveRank(rank) === 'strong').toBe(isInValveTopThree(rank));
+    }
   });
 });
 

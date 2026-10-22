@@ -19,7 +19,7 @@ import {
   guaranteedEndS,
   reviewCohortRank,
 } from './cohort';
-import { phaseSpans } from './phases';
+import { PHASE_START_S, phaseSpans } from './phases';
 import type { PhaseSpan } from './phases';
 
 /**
@@ -230,6 +230,31 @@ describe('communitySpan', () => {
       startS: 0,
       endS: 600,
     });
+  });
+
+  it('keeps the whole of an early or mid phase that was played to its end, in every window', () => {
+    // The early game is over at 10:00 and the mid game at 25:00. Whatever the window of the match,
+    // the cohort surely reaches these times (the first window is read up to 12:00, the others from
+    // their start), so a phase that is over is compared whole: a figure counted over the whole phase
+    // and one counted over the community span are the same.
+    const completeFromS = { early: PHASE_START_S.mid, mid: PHASE_START_S.late } as const;
+    const durations = [
+      PHASE_START_S.mid,
+      ...DURATION_WINDOWS.flatMap(({ minS, maxS }) => [minS, maxS]),
+    ];
+    const completePhases = durations.flatMap((durationS) =>
+      (['early', 'mid'] as const)
+        .filter((phase) => durationS >= completeFromS[phase])
+        .map((phase) => ({ durationS, span: spanOf(durationS, phase) })),
+    );
+
+    expect(completePhases.length).toBeGreaterThan(durations.length);
+    for (const { durationS, span } of completePhases) {
+      expect(communitySpan(span, durationWindowOf(durationS))).toEqual({
+        startS: span.startS,
+        endS: span.endS,
+      });
+    }
   });
 
   it('has no community span for the late phase of a match of 25 to 30 minutes', () => {

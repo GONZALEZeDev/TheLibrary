@@ -9,9 +9,12 @@
  *   the game data (public game data, 2026-10-21);
  * - the signature ability of another hero (Infernus), and an innate ability without a name, as the
  *   real catalogue has (220 of its entries have an empty name or one equal to the class name);
- * - twenty shop items over the three slots and the tiers 1 to 4. Their names, slots and tiers are
- *   those of the items Paige players ended their matches with; Express Shot has its real id, the
- *   other ids are invented (from 9,100,001), so that no fixture match quotes a real build.
+ * - thirty shop items over the three slots and the tiers 1 to 4. Twenty are items Paige players
+ *   ended their matches with (names, slots and tiers); ten were added so that the twelve resistance
+ *   items of the review are all there. Those twelve and Express Shot have their real ids, and the
+ *   twelve their real class names, since the review finds them by class name and the community
+ *   statistics by id. The other ids are invented (from 9,100,001), so that no fixture match quotes a
+ *   real build.
  *
  * Every image link is on the asset bucket, except the sub-rank images of the rank catalogue, which
  * the real API serves from its own host (the release Content Security Policy does not allow them,
@@ -22,6 +25,7 @@
  *
  * @packageDocumentation
  */
+import { RESISTANCE_ITEMS } from '../../../core/analysis/review/resistance-items';
 import { ASSET_IMAGE_ORIGIN } from '../../../core/deadlock-api/assets.schema';
 import { DEADLOCK_API_BASE_URL } from '../../../core/deadlock-api/endpoints';
 import { PAIGE_HERO_ID } from '../../../core/domain/hero';
@@ -144,11 +148,19 @@ interface ShopItemSpec {
   readonly name: string;
   readonly slot: ShopSlot;
   readonly tier: number;
+  /**
+   * The class name of the item, for an item whose class name is not `upgrade_` and its name in
+   * snake case: the game named many items after an earlier version of them (Spirit Resilience is
+   * `upgrade_tech_purge`). Left out, the item follows the pattern.
+   */
+  readonly className?: string;
 }
 
 /**
- * The shop items of the fixtures. Names, slots and tiers are those of the items the Paige players
- * of the real matches ended with; only Express Shot keeps its real id.
+ * The shop items of the fixtures: twenty that the Paige players of the real matches ended with
+ * (their names, slots and tiers), then the ten resistance items that complete the twelve of the
+ * review. Express Shot and the twelve resistance items keep their real ids, and the resistance
+ * items their real class names.
  */
 const SHOP_ITEM_SPECS: readonly ShopItemSpec[] = [
   { id: 9_100_001, name: 'Opening Rounds', slot: 'weapon', tier: 2 },
@@ -157,10 +169,22 @@ const SHOP_ITEM_SPECS: readonly ShopItemSpec[] = [
   { id: 9_100_003, name: 'Trophy Collector', slot: 'vitality', tier: 2 },
   { id: 9_100_004, name: 'Guardian Ward', slot: 'vitality', tier: 2 },
   { id: 9_100_005, name: 'Reactive Barrier', slot: 'vitality', tier: 2 },
-  { id: 9_100_006, name: 'Spirit Shielding', slot: 'vitality', tier: 2 },
+  {
+    id: 112198670,
+    name: 'Spirit Shielding',
+    slot: 'vitality',
+    tier: 2,
+    className: 'upgrade_spirit_bubble',
+  },
   { id: 9_100_007, name: 'Rescue Beam', slot: 'vitality', tier: 3 },
   { id: 9_100_008, name: 'Divine Barrier', slot: 'vitality', tier: 4 },
-  { id: 9_100_009, name: 'Indomitable', slot: 'vitality', tier: 4 },
+  {
+    id: 951866250,
+    name: 'Indomitable',
+    slot: 'vitality',
+    tier: 4,
+    className: 'upgrade_auto_cleanse',
+  },
   { id: 9_100_010, name: 'Extra Charge', slot: 'spirit', tier: 1 },
   { id: 9_100_011, name: 'Mystic Expansion', slot: 'spirit', tier: 1 },
   { id: 9_100_012, name: 'Arcane Surge', slot: 'spirit', tier: 2 },
@@ -171,6 +195,77 @@ const SHOP_ITEM_SPECS: readonly ShopItemSpec[] = [
   { id: 9_100_017, name: 'Vortex Web', slot: 'spirit', tier: 4 },
   { id: 9_100_018, name: 'Transcendent Cooldown', slot: 'spirit', tier: 4 },
   { id: 9_100_019, name: 'Spirit Burn', slot: 'spirit', tier: 4 },
+  // The ten other resistance items of the review, which all sit in the vitality slot.
+  {
+    id: 1235347618,
+    name: 'Battle Vest',
+    slot: 'vitality',
+    tier: 2,
+    className: 'upgrade_regenerating_bullet_shield',
+  },
+  {
+    id: 805079544,
+    name: 'Weapon Shielding',
+    slot: 'vitality',
+    tier: 2,
+    className: 'upgrade_weapon_shielding',
+  },
+  {
+    id: 3970837787,
+    name: "Enchanter's Emblem",
+    slot: 'vitality',
+    tier: 2,
+    className: 'upgrade_magic_shield',
+  },
+  {
+    id: 3140772621,
+    name: 'Bullet Resilience',
+    slot: 'vitality',
+    tier: 3,
+    className: 'upgrade_improved_bullet_armor',
+  },
+  {
+    id: 1378931225,
+    name: 'Metal Skin',
+    slot: 'vitality',
+    tier: 3,
+    className: 'upgrade_metal_skin',
+  },
+  {
+    id: 2163598980,
+    name: 'Spirit Resilience',
+    slot: 'vitality',
+    tier: 3,
+    className: 'upgrade_tech_purge',
+  },
+  {
+    id: 3731635960,
+    name: 'Dispel Magic',
+    slot: 'vitality',
+    tier: 3,
+    className: 'upgrade_reduce_debuff_duration',
+  },
+  {
+    id: 1955841979,
+    name: 'Spellbreaker',
+    slot: 'vitality',
+    tier: 4,
+    className: 'upgrade_spellbreaker',
+  },
+  {
+    id: 3028234315,
+    name: 'Witchmail',
+    slot: 'vitality',
+    tier: 4,
+    className: 'upgrade_absorbing_armor',
+  },
+  {
+    id: 2407781327,
+    name: 'Colossus',
+    slot: 'vitality',
+    tier: 4,
+    className: 'upgrade_colossus',
+  },
 ];
 
 /** What a shop item of each tier costs, in souls (index 0 is tier 1). */
@@ -180,17 +275,19 @@ const TIER_COSTS: readonly number[] = [500, 1_250, 3_000, 6_400];
  * Build a shop item of the catalogue.
  *
  * Its class name and the name of its images follow the game's pattern: `upgrade_` and the English
- * name in snake case (`Express Shot` is `upgrade_express_shot`, its shop image `express_shot`).
+ * name in snake case, apostrophes dropped (`Express Shot` is `upgrade_express_shot`, its shop image
+ * `express_shot`; the image of Enchanter's Emblem is `enchanters_emblem`). An item with a
+ * `className` keeps it instead of the pattern's, and its images still follow its name.
  *
  * @param spec - The item.
  * @returns The raw entry.
  */
 function shopItem(spec: ShopItemSpec): RawShopItem {
-  const slug = spec.name.toLowerCase().replaceAll(' ', '_');
+  const slug = spec.name.toLowerCase().replaceAll(' ', '_').replaceAll("'", '');
   const folder = `${SHOP_IMAGES}/${spec.slot}`;
   return {
     id: spec.id,
-    class_name: `upgrade_${slug}`,
+    class_name: spec.className ?? `upgrade_${slug}`,
     name: spec.name,
     type: 'upgrade',
     item_slot_type: spec.slot,
@@ -272,6 +369,20 @@ export const FIXTURE_ITEM_CATALOGUE: readonly RawCatalogueItem[] = [
  * ({@link FIXTURE_EXPRESS_SHOT_ID}): what a fixture match may buy.
  */
 export const FIXTURE_SHOP_ITEM_IDS: readonly number[] = SHOP_ITEM_SPECS.map((spec) => spec.id);
+
+/**
+ * The ids of the twelve resistance items of the review, in the order of `RESISTANCE_ITEMS`: the
+ * ones a fixture match may buy, and the ones the fixture item statistics describe.
+ */
+export const FIXTURE_RESISTANCE_ITEM_IDS: readonly number[] = RESISTANCE_ITEMS.map(
+  ({ className }) => {
+    const spec = SHOP_ITEM_SPECS.find((candidate) => candidate.className === className);
+    if (spec === undefined) {
+      throw new Error(`The fixture item catalogue has no resistance item ${className}`);
+    }
+    return spec.id;
+  },
+);
 
 /** A tier of the rank catalogue, in the raw shape of the API (subset of the fields). */
 export interface RawCatalogueRank {

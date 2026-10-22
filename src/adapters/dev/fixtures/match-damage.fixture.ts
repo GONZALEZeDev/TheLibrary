@@ -307,9 +307,9 @@ const MYSTIC_EXPANSION_ID = requireCatalogueEntry(
 
 /**
  * The shop items a build is drawn from: the whole catalogue but Express Shot, which is decided
- * apart. Coupled to `assets.fixture.ts`: it has 20 shop items, so 19 here, which is exactly what the
- * biggest build asks for (12 kept + 5 consumed + 2 sold). A build takes each item at most once, so
- * the catalogue must not lose an item without the three ranges above (`KEPT_ITEMS`,
+ * apart. Coupled to `assets.fixture.ts`: it has 30 shop items, so 29 here, where the biggest build
+ * asks for 19 (12 kept + 5 consumed + 2 sold). A build takes each item at most once, so the
+ * catalogue must not drop below that without the three ranges above (`KEPT_ITEMS`,
  * `CONSUMED_ITEMS`, `SOLD_ITEMS`) shrinking with it.
  */
 const BUILD_SHOP_ITEM_IDS: readonly number[] = FIXTURE_SHOP_ITEM_IDS.filter(

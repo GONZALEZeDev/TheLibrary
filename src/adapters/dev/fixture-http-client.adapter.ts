@@ -30,6 +30,7 @@ import type {
 } from '../../ports/http-client.port';
 import {
   createHeroSamplesFixture,
+  createItemStatsFixture,
   createMetricBenchmarkFixture,
   createPerformanceCurveFixture,
   createPlayerRankFixture,
@@ -292,11 +293,18 @@ const PERFORMANCE_CURVE_PATH = /^\/v1\/analytics\/player-performance-curve(?:\?(
  */
 const HERO_SAMPLE_PATH = /^\/v1\/analytics\/hero-stats(?:\?.*)?$/;
 
+/**
+ * The path of the item statistics endpoint, once the base URL is cut off, then its query when there
+ * is one (`itemStatsRequest`). The query is ignored: the answer is always the same.
+ */
+const ITEM_STATS_PATH = /^\/v1\/analytics\/item-stats(?:\?.*)?$/;
+
 /** The path of the player rank endpoint, once the base URL is cut off: the account id is in it. */
 const PLAYER_RANK_PATH = /^\/v1\/players\/(\d+)\/rank$/;
 
 /**
- * Answer a request for community data (the benchmark, the curve, the hero statistics or a rank).
+ * Answer a request for community data (the benchmark, the curve, the hero statistics, the item
+ * statistics or a rank).
  *
  * The answers do not depend on the community asked for (the hero, the period, the badge range),
  * except for the length of the curve, which follows `max_duration_s` as the real API's does, and
@@ -321,6 +329,9 @@ function answerCommunityRequest(path: string, trackedAccountId: AccountId): Http
   }
   if (HERO_SAMPLE_PATH.test(path)) {
     return jsonResponse(createHeroSamplesFixture());
+  }
+  if (ITEM_STATS_PATH.test(path)) {
+    return jsonResponse(createItemStatsFixture());
   }
   const rankRoute = PLAYER_RANK_PATH.exec(path);
   if (rankRoute !== null) {
@@ -375,9 +386,9 @@ function answerCheckAuthentication(form: string, confirmed: Set<string>): Fixtur
  *   and loadouts of the heroes), the detail of the matches of that history
  *   (`GET /v1/matches/{match_id}/metadata`, see `answerMatchMetadata`), and the Steam profile
  *   (`GET /v1/players/steam`, with or without `refresh`) of the fixture account, an empty list for
- *   any other, and the community data of the match analysis (the benchmark, the performance curve
- *   and the hero statistics of `GET /v1/analytics/…`, and the rank `GET /v1/players/{id}/rank`, see
- *   `answerCommunityRequest`);
+ *   any other, and the community data of the match analysis and the review (the benchmark, the
+ *   performance curve, the hero statistics and the item statistics of `GET /v1/analytics/…`, and
+ *   the rank `GET /v1/players/{id}/rank`, see `answerCommunityRequest`);
  * - Steam's OpenID endpoint: the confirmation of an assertion, once (`POST`, see
  *   `answerCheckAuthentication`). Each fixture API remembers what it confirmed;
  * - Steam's avatar CDN: the avatar of the fixture account, as a JPEG;

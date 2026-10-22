@@ -1,8 +1,9 @@
 /**
  * Synthetic community data served by the development HTTP client: what deadlock-api answers to the
- * four requests of the match analysis (the benchmark of the metrics, the performance curve, the
- * statistics of the heroes, and the rank of a player), in the raw shape of the API (reduced to the
- * fields the app reads and a few it ignores, like the real answers).
+ * five requests of the match analysis and the review (the benchmark of the metrics, the performance
+ * curve, the statistics of the heroes, the rank of a player, and the purchases of the items by
+ * minute), in the raw shape of the API (reduced to the fields the app reads and a few it ignores,
+ * like the real answers).
  *
  * No real player is described here. The numbers are invented, close to what the community of Paige
  * looks like: they only have to be plausible and the same every time, so that the dev mode and the
@@ -11,6 +12,11 @@
  * @packageDocumentation
  */
 import { PAIGE_HERO_ID, type HeroId } from '../../../core/domain/hero';
+import {
+  FIXTURE_ITEM_CATALOGUE,
+  FIXTURE_RESISTANCE_ITEM_IDS,
+  FIXTURE_SHOP_ITEM_IDS,
+} from './assets.fixture';
 
 /** The nine percentiles of a metric, at the points 1, 5, 10, 25, 50, 75, 90, 95 and 99. */
 type NinePercentiles = readonly [
@@ -38,6 +44,31 @@ export interface RawHeroSample {
   readonly losses: number;
   /** The number of matches the hero was played in: `wins + losses`. */
   readonly matches: number;
+}
+
+/**
+ * One row of the item statistics, in the raw shape of the API: the purchases of one item in one
+ * minute of the game (all the fields of a real row).
+ */
+export interface RawItemStatsRow {
+  readonly item_id: number;
+  /** The minute of the game the purchases were made in: 14 stands for 14:00 to 14:59. */
+  readonly bucket: number;
+  readonly wins: number;
+  readonly losses: number;
+  /** The purchases: `wins + losses`. */
+  readonly matches: number;
+  /** The distinct buyers. */
+  readonly players: number;
+  /** The mean second of the purchases, from the start of the match. */
+  readonly avg_buy_time_s: number;
+  /** The mean second of the sales of the purchases that were sold, 0 when none was. */
+  readonly avg_sell_time_s: number;
+  /** The mean buy time, as a percentage of the length of the match. */
+  readonly avg_buy_time_relative: number;
+  readonly avg_sell_time_relative: number;
+  /** How many of the purchases were sold later. */
+  readonly sold: number;
 }
 
 /** The rank of a player, in the raw shape of the API. */
@@ -141,7 +172,7 @@ interface CounterGrowth {
 }
 
 /**
- * The counters of the curve: the four the app reads and two it ignores, shaped after the community
+ * The counters of the curve: the five the app reads and one it ignores, shaped after the community
  * of Paige (about 25 000 souls and 2.7 kills after 25 minutes).
  */
 const CURVE_COUNTERS: Readonly<Record<string, CounterGrowth>> = {
@@ -236,6 +267,152 @@ function heroSample(heroId: HeroId, wins: number, losses: number): RawHeroSample
  */
 export function createHeroSamplesFixture(): RawHeroSample[] {
   return [heroSample(1, 1190, 920), heroSample(2, 1021, 853), heroSample(PAIGE_HERO_ID, 1439, 983)];
+}
+
+/** The first minute of the game the item statistics hold purchases of. */
+const FIRST_ITEM_MINUTE = 6;
+
+/** The last minute of the game the item statistics hold purchases of. */
+const LAST_ITEM_MINUTE = 40;
+
+/** The tiers of the shop items the item statistics describe: the three the review looks at. */
+type ItemStatsTier = 2 | 3 | 4;
+
+/**
+ * The minute in which an item of each tier is bought most, as in the real answer: a tier 2 item
+ * around 13:00, a tier 3 around 28:00 and a tier 4 around 35:00. An item's own peak is up to a
+ * minute away from it (see {@link createItemStatsFixture}).
+ */
+const ITEM_PEAK_MINUTE_BY_TIER: Readonly<Record<ItemStatsTier, number>> = { 2: 13, 3: 28, 4: 35 };
+
+/**
+ * How many minutes away from its peak an item of each tier is still bought, exclusive: an item is
+ * bought in the minutes closer to its peak than this, and in no other. The later the tier, the
+ * wider the run of minutes. With the peaks above, no tier 2 item is bought after minute 21 and no
+ * tier 4 item before minute 25.
+ */
+const ITEM_REACH_MINUTES_BY_TIER: Readonly<Record<ItemStatsTier, number>> = { 2: 8, 3: 12, 4: 10 };
+
+/** How many times the least bought item is bought in its busiest minute. */
+const PEAK_PURCHASES_BASE = 120;
+
+/**
+ * How many more times each next item is bought in its busiest minute: the items go through seven
+ * sizes (the base, then the base plus one to six steps) and start over, so that the histograms
+ * differ in size.
+ */
+const PEAK_PURCHASES_STEP = 50;
+
+/** The share of the purchases of a minute that were in a won match. */
+const ITEM_WIN_RATE = 0.55;
+
+/** The share of the purchases of a minute that were made by a distinct player. */
+const ITEM_BUYER_RATE = 0.85;
+
+/** How rare a sale is: one purchase in this many is sold again. */
+const ITEM_SOLD_ONE_IN = 8;
+
+/** How long after the purchase a sold item is sold, in seconds. */
+const ITEM_SOLD_AFTER_S = 300;
+
+/** The length of a match that the relative times of the item statistics are taken against. */
+const ITEM_MATCH_LENGTH_S = 2200;
+
+/**
+ * The shop items the fixture item statistics describe besides the resistance items: the first four
+ * of the catalogue, since the real answer holds every item and not only the ones a rule looks for.
+ */
+const ITEM_STATS_OTHER_ITEM_IDS: readonly number[] = FIXTURE_SHOP_ITEM_IDS.filter(
+  (itemId) => !FIXTURE_RESISTANCE_ITEM_IDS.includes(itemId),
+).slice(0, 4);
+
+/**
+ * The tier of a shop item of the fixture catalogue.
+ *
+ * @param itemId - The id of the item.
+ * @returns Its tier, 2 to 4.
+ * @throws Error when the catalogue holds no shop item under that id, or one of a tier the item
+ *   statistics do not describe (a mistake of the fixtures, not of the data).
+ */
+function shopItemTier(itemId: number): ItemStatsTier {
+  const entry = FIXTURE_ITEM_CATALOGUE.find((item) => item.id === itemId);
+  if (entry?.type !== 'upgrade') {
+    throw new Error('The fixture item catalogue has no shop item for an item of the statistics');
+  }
+  const tier = entry.item_tier;
+  if (tier !== 2 && tier !== 3 && tier !== 4) {
+    throw new Error(`The item statistics describe no item of tier ${String(tier)}`);
+  }
+  return tier;
+}
+
+/**
+ * Build the row of the item statistics for one item in one minute.
+ *
+ * @param itemId - The item.
+ * @param minute - The minute of the game.
+ * @param purchases - How many times the item was bought in that minute (1 or more).
+ * @returns The row.
+ */
+function itemStatsRow(itemId: number, minute: number, purchases: number): RawItemStatsRow {
+  const wins = Math.round(purchases * ITEM_WIN_RATE);
+  const sold = Math.floor(purchases / ITEM_SOLD_ONE_IN);
+  // The mean buy time falls inside the minute, and moves a little with the number of purchases.
+  const buyTimeS = minute * 60 + 15 + (purchases % 30);
+  const sellTimeS = sold === 0 ? 0 : buyTimeS + ITEM_SOLD_AFTER_S;
+  const relativeTo = (timeS: number): number =>
+    roundToHundredths(Math.min(100, (timeS / ITEM_MATCH_LENGTH_S) * 100));
+  return {
+    item_id: itemId,
+    bucket: minute,
+    wins,
+    losses: purchases - wins,
+    matches: purchases,
+    players: Math.max(1, Math.round(purchases * ITEM_BUYER_RATE)),
+    avg_buy_time_s: buyTimeS,
+    avg_sell_time_s: sellTimeS,
+    avg_buy_time_relative: relativeTo(buyTimeS),
+    avg_sell_time_relative: relativeTo(sellTimeS),
+    sold,
+  };
+}
+
+/**
+ * Imitate what deadlock-api answers to `GET /v1/analytics/item-stats` with `bucket=game_time_min`
+ * and `min_matches=1`: one row per item and minute that holds a purchase. It describes the twelve
+ * resistance items and four other shop items, within the minutes 6 to 40.
+ *
+ * The purchases of an item make a hump around its peak minute: the minute of its tier (see
+ * `ITEM_PEAK_MINUTE_BY_TIER`), moved by a minute earlier, none or a minute later by turns from one
+ * item to the next. The hump is a parabola that reaches 0 at `ITEM_REACH_MINUTES_BY_TIER` minutes
+ * from the peak, so an item is bought in a run of consecutive minutes and the others hold no row,
+ * like the minutes of a real answer in which nobody bought the item: a tier 4 item has no row for
+ * the early minutes, and a tier 2 item none for the late ones. A count takes basic arithmetic only
+ * (no `Math.exp` or `Math.pow`), so that it is the same on every engine. The answer does not depend
+ * on the community asked for.
+ *
+ * @returns The raw rows of the answer: item by item (the resistance items first), minute by minute.
+ * @throws Error when an item has no tier 2 to 4 in the fixture item catalogue.
+ */
+export function createItemStatsFixture(): RawItemStatsRow[] {
+  const rows: RawItemStatsRow[] = [];
+  const itemIds = [...FIXTURE_RESISTANCE_ITEM_IDS, ...ITEM_STATS_OTHER_ITEM_IDS];
+  for (const [index, itemId] of itemIds.entries()) {
+    const tier = shopItemTier(itemId);
+    const peakMinute = ITEM_PEAK_MINUTE_BY_TIER[tier] + (index % 3) - 1;
+    const reach = ITEM_REACH_MINUTES_BY_TIER[tier];
+    const peakPurchases = PEAK_PURCHASES_BASE + PEAK_PURCHASES_STEP * (index % 7);
+    for (let minute = FIRST_ITEM_MINUTE; minute <= LAST_ITEM_MINUTE; minute += 1) {
+      // A parabola: all the purchases of the peak at the peak, none at `reach` minutes from it.
+      const offset = (minute - peakMinute) / reach;
+      const weight = Math.max(0, 1 - offset * offset);
+      const purchases = Math.round(peakPurchases * weight);
+      if (purchases >= 1) {
+        rows.push(itemStatsRow(itemId, minute, purchases));
+      }
+    }
+  }
+  return rows;
 }
 
 /**

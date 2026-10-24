@@ -56,3 +56,6 @@ auditConfig:
     # Remove this entry once braces ships a fix (`npm view braces version` above 3.0.3): the weekly
     # lock file maintenance then picks it up, and this line would hide a future real exposure.
     - GHSA-vfj7-8cjw-p6xm
+minimumReleaseAgeExclude:
+  # Renovate security update: zod@4.6.6
+  - zod@4.6.6

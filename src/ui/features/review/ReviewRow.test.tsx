@@ -107,7 +107,7 @@ function rowOf(overrides: Partial<ReviewRowData> = {}): ReviewRowData {
     comparedValue: 1.6,
     reference: 1.3,
     difference: { kind: 'absolute', amount: 0.3 },
-    percentile: 40,
+    gapWithinNoise: false,
     weak: 7,
     strong: 2,
     marked: 18,
@@ -133,7 +133,6 @@ function fewMatchesRowOf(count: number): ReviewRowData {
     comparedValue: null,
     reference: null,
     difference: null,
-    percentile: null,
     weak: count === 0 ? 0 : 1,
     strong: 0,
     marked: count,
@@ -246,6 +245,38 @@ describe('ReviewRow', () => {
     expect(cells.getByText('4.9 of 12')).toBeInTheDocument();
     expect(cells.getByText('+0.8')).toBeInTheDocument();
     expect(cells.getByText('6.2 of 12 → 5.7 of 12 · better')).toBeInTheDocument();
+  });
+
+  it.each([
+    { language: 'en', phrase: 'about the same', gap: '+0.3' },
+    { language: 'fr', phrase: 'à peu près pareil', gap: '+0,3' },
+  ] as const)(
+    'says "$phrase" instead of a gap within the noise of the matches',
+    async ({ language, phrase, gap }) => {
+      await renderIn(language, <ReviewRow row={rowOf({ gapWithinNoise: true })} />);
+
+      const row = within(theRow());
+      // The figure of the tier is still shown; its gap is the phrase and not the decimal.
+      expect(row.getByText(language === 'en' ? '1.3' : '1,3')).toBeInTheDocument();
+      expect(row.queryByText(gap)).toBeNull();
+      const words = row.getByText(phrase);
+      // The phrase stands in the gap's place, with the name of the column for a screen reader.
+      expect(words.textContent).toBe(`${language === 'en' ? 'Gap' : 'Écart'} ${phrase}`);
+    },
+  );
+
+  it('names its point with no link: only the rows of the summary link to their tab', async () => {
+    await renderIn('en', <ReviewRow row={rowOf()} />);
+
+    expect(within(theRow()).queryByRole('link')).not.toBeInTheDocument();
+    expect(within(theRow()).getByText('Deaths')).toBeInTheDocument();
+  });
+
+  it('writes the decimal of a gap outside the noise', async () => {
+    await renderIn('en', <ReviewRow row={rowOf({ gapWithinNoise: false })} />);
+
+    expect(within(theRow()).getByText('+0.3')).toBeInTheDocument();
+    expect(within(theRow()).queryByText('about the same')).toBeNull();
   });
 
   it('writes a relative gap as a percentage', async () => {

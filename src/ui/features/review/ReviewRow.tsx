@@ -2,7 +2,8 @@
  * One row of the review: a point (a metric, the deaths of a phase, a resistance item, a place among
  * the players…), with the player's figure over the last matches, the figure of the tier above and the
  * gap to it, in how many matches the point was weak or strong, and how it moved since the matches
- * before. Every tab of the review page lists its points with this row.
+ * before. Every tab of the review page lists its points with this row. A gap within the noise of the
+ * matches is not written to the decimal: the row says the two figures are about the same.
  *
  * The row is a grid whose columns line up from one row to the next: the arrow of a flagged point, its
  * name (with a picture before it for an item), the player's figure with the number of matches it
@@ -19,17 +20,24 @@
  * it does, the row says so under the tier's figure, so that the gap visibly refers to the figure it
  * was measured on.
  *
+ * In the summary, the name of the point is a link to the tab that lists it, which opens in place of
+ * the summary as a tab does (the address is replaced, not added to). The link is named by the point;
+ * the hidden word of the flag stays after it. The rows of the other tabs are already in their tab and
+ * have no link.
+ *
  * The matches behind the row are in its evidence panel ({@link EvidencePanel}): one line for each,
  * most recent first, with the word of the flag after the ones that were weak or strong. A row with no
  * match to list has no panel: it has nothing to open.
  *
  * @packageDocumentation
  */
+import { Link } from '@tanstack/react-router';
 import type { TFunction } from 'i18next';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ReviewMark } from '../../../core/analysis/review/review-rules';
 import type { ReviewMatchValue, ReviewRow as ReviewRowData } from '../../../services/review-view';
+import type { ReviewTab } from '../../app/router';
 import { INSIGHT_STYLE, NO_VALUE } from '../match-detail/analysis-format';
 import { EvidencePanel } from '../match-detail/EvidencePanel';
 import {
@@ -39,6 +47,7 @@ import {
   formatReviewValue,
   reviewLabel,
 } from './review-format';
+import { ReviewFigure } from './ReviewFigure';
 import { REVIEW_ROW_GRID } from './review-layout';
 
 /** Props of {@link ReviewRow}. */
@@ -51,6 +60,11 @@ export interface ReviewRowProps {
    * empty `alt` (or `aria-hidden`), or a screen reader would say the item twice.
    */
   readonly picture?: ReactNode;
+  /**
+   * The tab the name of the point links to (see `reviewTabOf`); none by default, for a row that is
+   * already in the tab of its point. The summary gives it.
+   */
+  readonly tab?: ReviewTab;
 }
 
 /** How many milliseconds make a second: the start of a match is in seconds. */
@@ -75,26 +89,16 @@ const SIDE_OF_MARK = {
  */
 const ROW = `${REVIEW_ROW_GRID} rounded-lg py-1.5`;
 
+/**
+ * The look of the name of a point that links to its tab: the colour of the text, as the names of the
+ * other rows, with an underline that says it is a link and darkens under the pointer, and the outline
+ * of the focus of the app.
+ */
+const LINKED_NAME =
+  'rounded-sm underline decoration-fg-muted underline-offset-4 hover:decoration-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-bright';
+
 /** The classes of the text of a figure that is a small print: the marks, the progress, the gap. */
 const SMALL_FIGURE = 'text-xs text-fg-muted tabular-nums';
-
-/**
- * A figure of a row, with the name of its column for assistive technologies: a bare "1.3" would not
- * say whether it is the player's figure, the tier's or the gap.
- *
- * @param column - The name of the column.
- * @param figure - The figure, already written.
- * @param className - The classes of the text.
- * @returns The line.
- */
-function renderFigure(column: string, figure: string, className: string) {
-  return (
-    <p className={className}>
-      <span className="sr-only">{column} </span>
-      {figure}
-    </p>
-  );
-}
 
 /**
  * The player's figure with the number of matches it counts.
@@ -108,13 +112,15 @@ function renderFigure(column: string, figure: string, className: string) {
 function renderPlayerCell(row: ReviewRowData, t: TFunction, language: string) {
   return (
     <div className="text-right">
-      {renderFigure(
-        t('review.columns.you'),
-        formatReviewValue(row.value, row.unit, language, t),
-        row.value === null
-          ? 'text-sm text-fg-muted tabular-nums'
-          : 'text-sm font-semibold tabular-nums',
-      )}
+      <ReviewFigure
+        column={t('review.columns.you')}
+        figure={formatReviewValue(row.value, row.unit, language, t)}
+        className={
+          row.value === null
+            ? 'text-sm text-fg-muted tabular-nums'
+            : 'text-sm font-semibold tabular-nums'
+        }
+      />
       <p className={SMALL_FIGURE}>{t('review.count', { count: row.count })}</p>
     </div>
   );
@@ -150,12 +156,19 @@ function comparedLine(row: ReviewRowData, t: TFunction, language: string): strin
  * @param row - The point.
  * @param t - Translation function.
  * @param language - The language of the interface.
- * @returns The figure and its gap, and the figure of the player the gap was measured on when it is
- *   not the one of the first column; a dash, with no gap, for a point that has no figure of the tier.
+ * @returns The figure and its gap (the words "about the same" for a gap within the noise of the
+ *   matches), and the figure of the player the gap was measured on when it is not the one of the first
+ *   column; a dash, with no gap, for a point that has no figure of the tier.
  */
 function renderTierCell(row: ReviewRowData, t: TFunction, language: string) {
   if (row.reference === null) {
-    return renderFigure(t('review.columns.tier'), NO_VALUE, 'text-sm text-fg-muted tabular-nums');
+    return (
+      <ReviewFigure
+        column={t('review.columns.tier')}
+        figure={NO_VALUE}
+        className="text-sm text-fg-muted tabular-nums"
+      />
+    );
   }
   const compared = comparedLine(row, t, language);
   return (
@@ -171,7 +184,9 @@ function renderTierCell(row: ReviewRowData, t: TFunction, language: string) {
                 that a screen reader or a copy reads: "1.3 Gap +0.3", not "1.3Gap +0.3". */}{' '}
             <span className="text-xs text-fg-muted">
               <span className="sr-only">{t('review.columns.gap')} </span>
-              {formatReviewGap(row.difference, row.unit, language, t)}
+              {row.gapWithinNoise
+                ? t('review.gap.withinNoise')
+                : formatReviewGap(row.difference, row.unit, language, t)}
             </span>
           </>
         )}
@@ -262,7 +277,7 @@ function evidenceLines(row: ReviewRowData, t: TFunction, language: string): stri
  *   list. The panel is anchored at the right edge of the row, so that it leaves the names of the rows
  *   below free to the pointer.
  */
-export function ReviewRow({ row, picture }: ReviewRowProps) {
+export function ReviewRow({ row, picture, tab }: ReviewRowProps) {
   const { t, i18n } = useTranslation();
   const language = i18n.language;
   // What marks a point of the summary: the arrow and the colours, and the word.
@@ -278,7 +293,15 @@ export function ReviewRow({ row, picture }: ReviewRowProps) {
       <div className="flex min-w-0 items-center gap-2.5">
         {picture}
         <span className="text-sm">
-          {label}
+          {tab === undefined ? (
+            label
+          ) : (
+            // `replace`, as the tabs of the page: the summary and the tab it opens are one entry of
+            // the history, and going back leaves the review.
+            <Link to="/review" search={{ tab }} replace className={LINKED_NAME}>
+              {label}
+            </Link>
+          )}
           {row.side !== null && (
             <>
               {' '}
@@ -289,8 +312,16 @@ export function ReviewRow({ row, picture }: ReviewRowProps) {
       </div>
       {renderPlayerCell(row, t, language)}
       {renderTierCell(row, t, language)}
-      {renderFigure(t('review.columns.marks'), marks === '' ? NO_VALUE : marks, SMALL_FIGURE)}
-      {renderFigure(t('review.columns.progress'), formatProgress(row, language, t), SMALL_FIGURE)}
+      <ReviewFigure
+        column={t('review.columns.marks')}
+        figure={marks === '' ? NO_VALUE : marks}
+        className={SMALL_FIGURE}
+      />
+      <ReviewFigure
+        column={t('review.columns.progress')}
+        figure={formatProgress(row, language, t)}
+        className={SMALL_FIGURE}
+      />
     </div>
   );
 

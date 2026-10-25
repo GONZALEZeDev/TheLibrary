@@ -70,6 +70,9 @@ const ITEM_STATS_REQUESTS = 2;
 /** How long a test waits to see that nothing more happens: well over a few turns of the event loop. */
 const SETTLE_MS = 50;
 
+/** When the item statistics of the tests that set them by hand were downloaded. */
+const ITEMS_FETCHED_AT = Date.UTC(2026, 9, 19, 8, 0, 0);
+
 /** The tier above the player's: the player is Sentinel 4 in the synthetic history, and tier 5 is Mystic. */
 const TIER_ABOVE: CohortRank = { kind: 'tier', tier: 5 };
 
@@ -668,7 +671,72 @@ describe('ReviewPage', () => {
       expect(screen.queryByText(EN.loading)).not.toBeInTheDocument();
       expect(screen.queryByText(EN.unavailable)).not.toBeInTheDocument();
       expect(screen.queryByText(/^Data of /)).not.toBeInTheDocument();
+      // The item statistics came with it, fresh: nothing is said of them either.
+      expect(screen.queryByText(/item statistics/i)).not.toBeInTheDocument();
     });
+
+    it.each([
+      {
+        kind: 'missing',
+        en: 'No item statistics yet: the resistance items have no tier figure',
+        fr: "Pas encore de statistiques d'objets : les objets de résistance n'ont pas de chiffre du palier",
+      },
+      {
+        kind: 'stale',
+        en: `Item statistics of ${formatDay('en', ITEMS_FETCHED_AT)}`,
+        fr: `Statistiques d'objets du ${formatDay('fr', ITEMS_FETCHED_AT)}`,
+      },
+      {
+        kind: 'fallback',
+        en: 'Item statistics of every rank: too few matches in that tier',
+        fr: "Statistiques d'objets de tous les rangs : trop peu de parties dans ce palier",
+      },
+      {
+        kind: 'none',
+        en: 'No item statistics for that tier',
+        fr: "Pas de statistiques d'objets pour ce palier",
+      },
+    ] as const)('says when the item statistics are $kind', async ({ kind, en, fr }) => {
+      const itemStats =
+        kind === 'missing' ? { kind } : ({ kind, fetchedAt: ITEMS_FETCHED_AT } as const);
+      for (const [language, line] of [
+        ['en', en],
+        ['fr', fr],
+      ] as const) {
+        const test = await setUp();
+        noDownload(test.services);
+        serveReview(test.services, (review) => ({
+          ...review,
+          community: { ...review.community, itemStats },
+        }));
+        const { unmount } = await renderReview(test, { language });
+
+        // One line, among the lines about the comparison, which a screen reader is told of.
+        const status = await screen.findByRole('status');
+        expect(await within(status).findByText(line)).toBeInTheDocument();
+        unmount();
+      }
+    });
+
+    it.each(['fresh', 'no_items'] as const)(
+      'says nothing of the item statistics when they are %s',
+      async (kind) => {
+        // Without items to ask for, the resistance section says why it has no item: the header
+        // does not say it again.
+        const itemStats = kind === 'fresh' ? { kind, fetchedAt: ITEMS_FETCHED_AT } : { kind };
+        const test = await setUp();
+        noDownload(test.services);
+        serveReview(test.services, (review) => ({
+          ...review,
+          community: { ...review.community, itemStats },
+        }));
+        await renderReview(test);
+
+        expect(await screen.findByText(EN.noBefore)).toBeInTheDocument();
+        await settle();
+        expect(screen.queryByText(/item statistics/i)).not.toBeInTheDocument();
+      },
+    );
 
     it.each([
       {
@@ -753,9 +821,10 @@ describe('ReviewPage', () => {
           kind: 'available',
           rank: TIER_ABOVE,
           comparedWith: 'tier_above',
-          itemStatsDue: false,
+          itemStats: { kind: 'fresh', fetchedAt },
           fallbackMatches: 3,
           missingMatches: 1,
+          unusableMatches: 2,
           stale: true,
           fetchedAt,
         },
@@ -770,11 +839,70 @@ describe('ReviewPage', () => {
       expect(
         screen.getByText('No comparison yet for 1 match: it will come at a next opening'),
       ).toBeInTheDocument();
+      // The matches whose length holds too few players are told apart: no opening will bring theirs.
+      expect(
+        screen.getByText('No comparison for 2 matches: too few Paige players in their length'),
+      ).toBeInTheDocument();
       expect(screen.getByText(`Data of ${formatDay('en', fetchedAt)}`)).toBeInTheDocument();
       // The comparison is there, whatever its age: it is not said to be unavailable.
       await settle();
       expect(screen.queryByText(EN.unavailable)).not.toBeInTheDocument();
     });
+
+    it.each([
+      {
+        language: 'en',
+        missing: 0,
+        unusable: 1,
+        line: 'No comparison for 1 match: too few Paige players in its length',
+      },
+      {
+        language: 'fr',
+        missing: 0,
+        unusable: 1,
+        line: 'Pas de comparaison pour 1 partie : trop peu de joueurs de Paige sur sa durée',
+      },
+      {
+        language: 'fr',
+        missing: 0,
+        unusable: 3,
+        line: 'Pas de comparaison pour 3 parties : trop peu de joueurs de Paige sur leur durée',
+      },
+      {
+        language: 'fr',
+        missing: 2,
+        unusable: 0,
+        line: 'Pas encore de comparaison pour 2 parties : elle viendra à une prochaine ouverture',
+      },
+    ] as const)(
+      'counts apart the matches with no comparison to come: $missing missing, $unusable unusable, in $language',
+      async ({ language, missing, unusable, line }) => {
+        const test = await setUp();
+        noDownload(test.services);
+        serveReview(test.services, (review) => ({
+          ...review,
+          community: {
+            kind: 'available',
+            rank: TIER_ABOVE,
+            comparedWith: 'tier_above',
+            itemStats: { kind: 'fresh', fetchedAt: NOW },
+            fallbackMatches: 0,
+            missingMatches: missing,
+            unusableMatches: unusable,
+            stale: false,
+            fetchedAt: NOW,
+          },
+        }));
+        await renderReview(test, { language });
+
+        const status = await screen.findByRole('status');
+        expect(await within(status).findByText(line)).toBeInTheDocument();
+        // One line for each count that is not 0, and none for the other.
+        const otherLine =
+          missing === 0 ? /prochaine ouverture|next opening/ : /sur (sa|leur) durée/;
+        expect(within(status).queryByText(otherLine)).not.toBeInTheDocument();
+      },
+    );
 
     it('says the comparison is downloading until the answer comes', async () => {
       const test = await setUp();
@@ -887,8 +1015,9 @@ describe('ReviewPage', () => {
       expect(before.community).toMatchObject({
         kind: 'available',
         missingMatches: 0,
+        unusableMatches: 0,
         stale: false,
-        itemStatsDue: true,
+        itemStats: { kind: 'missing' },
       });
       const refresh = vi.spyOn(services.review, 'refreshCommunity');
       const requestsBefore = analyticsRequests(http);
@@ -899,7 +1028,9 @@ describe('ReviewPage', () => {
         expect(refresh).toHaveBeenCalledTimes(1);
       });
       await waitFor(async () => {
-        expect((await readReview(services)).community).toMatchObject({ itemStatsDue: false });
+        expect((await readReview(services)).community).toMatchObject({
+          itemStats: { kind: 'fresh' },
+        });
       });
       await settle();
 
@@ -921,9 +1052,10 @@ describe('ReviewPage', () => {
           kind: 'available',
           rank: TIER_ABOVE,
           comparedWith: 'tier_above',
-          itemStatsDue: true,
+          itemStats: { kind: 'missing' },
           fallbackMatches: 0,
           missingMatches: 0,
+          unusableMatches: 0,
           stale: false,
           fetchedAt: NOW,
         },

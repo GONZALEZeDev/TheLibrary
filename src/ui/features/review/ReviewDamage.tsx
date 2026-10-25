@@ -9,9 +9,10 @@
  * - the picture and the name of the source, and what it is for the weapon, the melee attack and an
  *   item, in the cell the damage table of the match page uses (`DamageSourceCell`);
  * - its share of the damage of the last matches, with the figure and a bar (`ShareBar`) drawn to the
- *   same length;
- * - its share over the matches before, or a dash when those matches dealt no damage (there is nothing
- *   to share, so no share to show: never a 0 %);
+ *   same length, or a dash and no bar when those matches dealt no damage (there is nothing to share,
+ *   so no share to show: never a 0 %);
+ * - its share over the matches before, or a dash when those matches dealt no damage or are fewer
+ *   than five (the page then says there are not enough earlier matches);
  * - in how many of the last matches the source dealt damage.
  *
  * A share is the damage the source dealt over all the matches of the window, over all the damage of
@@ -45,6 +46,7 @@ import { ShareBar } from '../../components/ShareBar';
 import { formatShare, NO_VALUE } from '../match-detail/analysis-format';
 import { DamageSourceCell, SOURCE_CELL } from '../match-detail/DamageSourceCell';
 import { REVIEW_LIST_BOX, REVIEW_SECTION_TITLE } from './review-layout';
+import { ReviewFigure } from './ReviewFigure';
 
 /** Props of {@link ReviewDamage}. */
 export interface ReviewDamageProps {
@@ -79,24 +81,6 @@ interface WindowColumns {
 }
 
 /**
- * A figure of a row, with the name of its column for assistive technologies: a bare "44%" would not
- * say whether it is the share now or the share before.
- *
- * @param column - The name of the column.
- * @param figure - The figure, already written.
- * @param className - The classes of the text.
- * @returns The line.
- */
-function renderFigure(column: string, figure: string, className: string) {
-  return (
-    <p className={className}>
-      <span className="sr-only">{column} </span>
-      {figure}
-    </p>
-  );
-}
-
-/**
  * One row of the list: a damage source.
  *
  * @param row - The source.
@@ -111,22 +95,38 @@ function renderRow(row: DamageShareRow, columns: WindowColumns, t: TFunction, la
       <div className={GRID}>
         <DamageSourceCell name={row.name} kind={row.kind} imageUrl={row.imageUrl} />
         <div className={FIGURE_CELL}>
-          {renderFigure(
-            columns.now,
-            formatShare(row.shareNow, language),
-            'text-sm font-semibold tabular-nums',
+          {row.shareNow === null ? (
+            <ReviewFigure
+              column={columns.now}
+              figure={NO_VALUE}
+              className="text-sm text-fg-muted tabular-nums"
+            />
+          ) : (
+            <>
+              <ReviewFigure
+                column={columns.now}
+                figure={formatShare(row.shareNow, language)}
+                className="text-sm font-semibold tabular-nums"
+              />
+              {/* The share before is the figure of the next cell: the bar has no mark for it. */}
+              <ShareBar share={row.shareNow} />
+            </>
           )}
-          {/* The share before is the figure of the next cell: the bar has no mark for it. */}
-          <ShareBar share={row.shareNow} />
         </div>
         <div className={FIGURE_CELL}>
-          {row.shareBefore === null
-            ? renderFigure(columns.before, NO_VALUE, 'text-sm text-fg-muted tabular-nums')
-            : renderFigure(
-                columns.before,
-                formatShare(row.shareBefore, language),
-                'text-sm tabular-nums',
-              )}
+          {row.shareBefore === null ? (
+            <ReviewFigure
+              column={columns.before}
+              figure={NO_VALUE}
+              className="text-sm text-fg-muted tabular-nums"
+            />
+          ) : (
+            <ReviewFigure
+              column={columns.before}
+              figure={formatShare(row.shareBefore, language)}
+              className="text-sm tabular-nums"
+            />
+          )}
         </div>
         <div className={FIGURE_CELL}>
           <p className="text-xs text-fg-muted tabular-nums">

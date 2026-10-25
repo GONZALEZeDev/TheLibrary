@@ -15,6 +15,7 @@ import type {
   ReviewSubject,
   ReviewUnit,
 } from '../../../services/review-view';
+import type { ReviewTab } from '../../app/router';
 import { createI18n } from '../../i18n/i18n';
 import { NO_VALUE } from '../match-detail/analysis-format';
 import {
@@ -24,6 +25,7 @@ import {
   formatReviewValue,
   reviewLabel,
   reviewRowKey,
+  reviewTabOf,
 } from './review-format';
 
 /** The minus sign the formatters write, instead of the hyphen of the number formats. */
@@ -69,7 +71,7 @@ function rowOf(overrides: Partial<ReviewRow> = {}): ReviewRow {
     comparedValue: 1.6,
     reference: null,
     difference: null,
-    percentile: null,
+    gapWithinNoise: false,
     weak: 0,
     strong: 0,
     marked: 0,
@@ -129,6 +131,9 @@ describe('formatReviewValue', () => {
     { unit: 'rate', value: 0.5, en: '50%', fr: '50 %' },
     { unit: 'rate', value: 1, en: '100%', fr: '100 %' },
     { unit: 'rate', value: 0, en: '0%', fr: '0 %' },
+    // A small rate is not rounded to nothing, nor a large one to all, as the damage shares are not.
+    { unit: 'rate', value: 0.004, en: '< 1%', fr: '< 1 %' },
+    { unit: 'rate', value: 0.996, en: '> 99%', fr: '> 99 %' },
   ] as const)('writes a minute, a place and a rate: $unit $value', async (input) => {
     const { unit, value, en, fr } = input;
     expect(plain(formatReviewValue(value, unit, 'en', await translatorOf('en')))).toBe(en);
@@ -493,6 +498,31 @@ describe('reviewLabel', () => {
       expect(reviewLabel(subject, await translatorOf('fr'), 'fr')).toBe(PLACE_NAMES[stat].fr);
     },
   );
+});
+
+describe('reviewTabOf', () => {
+  /**
+   * One point of each kind, with the tab that lists it. A new kind of point is a type error here, so
+   * that it cannot be left without a tab.
+   */
+  const TAB_OF_KIND = {
+    metric: { subject: { kind: 'metric', key: 'deaths' }, tab: 'stats' },
+    phase_deaths: { subject: { kind: 'phase_deaths', phase: 'mid' }, tab: 'deaths' },
+    resistance_minute: { subject: { kind: 'resistance_minute', item: KNOWN_ITEM }, tab: 'deaths' },
+    resistance_rate: { subject: { kind: 'resistance_rate', item: KNOWN_ITEM }, tab: 'deaths' },
+    first_resistance_minute: { subject: { kind: 'first_resistance_minute' }, tab: 'deaths' },
+    deaths_before_resistance: { subject: { kind: 'deaths_before_resistance' }, tab: 'deaths' },
+    place: { subject: { kind: 'place', stat: 'netWorth' }, tab: 'players' },
+    valve_top_three: { subject: { kind: 'valve_top_three' }, tab: 'players' },
+    valve_top_three_place: { subject: { kind: 'valve_top_three_place' }, tab: 'players' },
+  } as const satisfies Record<
+    ReviewSubject['kind'],
+    { readonly subject: ReviewSubject; readonly tab: ReviewTab }
+  >;
+
+  it.each(Object.entries(TAB_OF_KIND))('finds a %s point in its tab', (_kind, expected) => {
+    expect(reviewTabOf(expected.subject)).toBe(expected.tab);
+  });
 });
 
 describe('reviewRowKey', () => {

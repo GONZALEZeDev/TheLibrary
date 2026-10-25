@@ -303,9 +303,17 @@
       "fallback_other": "{{count}} parties comparées à tous les rangs : trop peu de parties dans ce palier",
       "partial_one": "Pas encore de comparaison pour {{count}} partie : elle viendra à une prochaine ouverture",
       "partial_other": "Pas encore de comparaison pour {{count}} parties : elle viendra à une prochaine ouverture",
+      "tooFew_one": "Pas de comparaison pour {{count}} partie : trop peu de joueurs de Paige sur sa durée",
+      "tooFew_other": "Pas de comparaison pour {{count}} parties : trop peu de joueurs de Paige sur leur durée",
       "loading": "Téléchargement de la comparaison…",
       "unavailable": "Comparaison indisponible pour l'instant",
       "stale": "Données du {{date}}"
+    },
+    "itemStats": {
+      "missing": "Pas encore de statistiques d'objets : les objets de résistance n'ont pas de chiffre du palier",
+      "stale": "Statistiques d'objets du {{date}}",
+      "fallback": "Statistiques d'objets de tous les rangs : trop peu de parties dans ce palier",
+      "none": "Pas de statistiques d'objets pour ce palier"
     },
     "summary": {
       "weaknesses": "À travailler",
@@ -324,6 +332,9 @@
     "count_one": "{{count}} partie",
     "count_other": "{{count}} parties",
     "compared": "Toi sur la même durée : {{value}}",
+    "gap": {
+      "withinNoise": "à peu près pareil"
+    },
     "progress": {
       "better": "mieux",
       "worse": "moins bien",
@@ -342,7 +353,8 @@
       "firstMinute": "Ton premier objet de résistance",
       "deathsBefore": "Morts avant ton premier objet de résistance",
       "bought": "Acheté",
-      "boughtAt": "Acheté à"
+      "boughtAt": "Acheté à",
+      "tierCaveat": "Les morts du palier viennent des compteurs de ses parties et peuvent différer d'une par partie des tiennes."
     },
     "damage": {
       "title": "Tes dégâts aux héros par source",

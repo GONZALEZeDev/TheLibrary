@@ -407,6 +407,17 @@ describe('ReviewDamage', () => {
     ]);
   });
 
+  it('shows a dash and no bar for a share now when the last matches dealt no damage', async () => {
+    const strings = STRINGS.en;
+    await renderSources('en', [sourceOf({ shareNow: null, shareBefore: 0.18, appearsNow: 0 })]);
+
+    // There is nothing to share: a dash, never a 0 %, and no bar drawn for a share that is not known.
+    const row = rowNamed(strings.title, 'Rallying Charge');
+    expect(figureUnder(row, strings.now)).toBe(DASH);
+    expect(figureUnder(row, strings.before)).toBe('18%');
+    expect(row.querySelector('.bg-accent')).toBeNull();
+  });
+
   it('shows a source the player stopped using with a share of zero now', async () => {
     const strings = STRINGS.en;
     await renderSources('en', [sourceOf({ shareNow: 0, shareBefore: 0.18, appearsNow: 0 })]);

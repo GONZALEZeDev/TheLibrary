@@ -10,7 +10,8 @@
  * The two sections are always stacked: a row needs most of the width of the tab for its figures,
  * which two columns would not leave it. The points come from every other tab (a metric, the deaths
  * of a phase, a place among the players, a resistance item…), and a resistance item shows its
- * picture before its name, so that the item is known at a glance. The page around the tab handles
+ * picture before its name, so that the item is known at a glance. The name of each point is a link to
+ * the tab it comes from, which sets it among the points of its kind. The page around the tab handles
  * every state (no account, no match, a review being read): this component only renders rows.
  *
  * The headings: the page title is the `h1` of the page, the tab panel is named by its tab, and each
@@ -78,7 +79,7 @@ function renderSection(
       {rows.length === 0 ? (
         <p className="text-sm text-fg-muted">{t(section.none)}</p>
       ) : (
-        <ReviewRowList rows={rows} />
+        <ReviewRowList rows={rows} linked />
       )}
     </section>
   );

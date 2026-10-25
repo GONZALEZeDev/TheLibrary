@@ -42,6 +42,8 @@ const STRINGS = {
     boughtAt: 'Bought at',
     unavailable: 'The item names are unavailable for now.',
     tierAndGap: 'Tier above · Gap',
+    deathsCaveat:
+      "The tier's deaths come from its match counters and can differ by one per match from yours.",
   },
   fr: {
     deathsTitle: 'Tes morts par phase',
@@ -53,6 +55,8 @@ const STRINGS = {
     boughtAt: 'Acheté à',
     unavailable: "Les noms des objets sont indisponibles pour l'instant.",
     tierAndGap: 'Palier au-dessus · Écart',
+    deathsCaveat:
+      "Les morts du palier viennent des compteurs de ses parties et peuvent différer d'une par partie des tiennes.",
   },
 } as const;
 
@@ -148,7 +152,7 @@ function rowOf(subject: ReviewSubject, overrides: Partial<ReviewRowData> = {}): 
     comparedValue: 1.6,
     reference: 1.3,
     difference: { kind: 'absolute', amount: 0.3 },
-    percentile: 40,
+    gapWithinNoise: false,
     weak: 7,
     strong: 2,
     marked: 18,
@@ -308,6 +312,28 @@ describe('ReviewDeaths', () => {
     const section = sectionNamed(strings.deathsTitle);
     expect(labelsOfRows(within(section).getByRole('list'), strings.phases)).toEqual(strings.phases);
   });
+
+  it.each(LANGUAGES)(
+    'says under the heading of the deaths that the tier counts them otherwise, in %s',
+    async (language) => {
+      const strings = STRINGS[language];
+      await renderIn(language, <ReviewDeaths deaths={readyDeaths()} />);
+
+      // The sentence stands between the heading and the rows, in the muted text of a remark.
+      const section = sectionNamed(strings.deathsTitle);
+      const caveat = within(section).getByText(strings.deathsCaveat);
+      expect(caveat).toHaveClass('text-fg-muted');
+      const heading = within(section).getByRole('heading', { name: strings.deathsTitle });
+      expect(heading.compareDocumentPosition(caveat)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      expect(caveat.compareDocumentPosition(within(section).getByRole('list'))).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+      // It is about the deaths of the phases only, not about the resistance items.
+      expect(
+        within(sectionNamed(strings.resistanceTitle)).queryByText(strings.deathsCaveat),
+      ).toBeNull();
+    },
+  );
 
   it.each(LANGUAGES)(
     'shows the deaths before the first resistance item in %s',

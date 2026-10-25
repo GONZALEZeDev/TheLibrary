@@ -303,9 +303,17 @@
       "fallback_other": "{{count}} matches compared with every rank: too few matches in that tier",
       "partial_one": "No comparison yet for {{count}} match: it will come at a next opening",
       "partial_other": "No comparison yet for {{count}} matches: it will come at a next opening",
+      "tooFew_one": "No comparison for {{count}} match: too few Paige players in its length",
+      "tooFew_other": "No comparison for {{count}} matches: too few Paige players in their length",
       "loading": "Downloading the comparison…",
       "unavailable": "Comparison unavailable for now",
       "stale": "Data of {{date}}"
+    },
+    "itemStats": {
+      "missing": "No item statistics yet: the resistance items have no tier figure",
+      "stale": "Item statistics of {{date}}",
+      "fallback": "Item statistics of every rank: too few matches in that tier",
+      "none": "No item statistics for that tier"
     },
     "summary": {
       "weaknesses": "To work on",
@@ -324,6 +332,9 @@
     "count_one": "{{count}} match",
     "count_other": "{{count}} matches",
     "compared": "You on the same stretch: {{value}}",
+    "gap": {
+      "withinNoise": "about the same"
+    },
     "progress": {
       "better": "better",
       "worse": "worse",
@@ -342,7 +353,8 @@
       "firstMinute": "Your first resistance item",
       "deathsBefore": "Deaths before your first resistance item",
       "bought": "Bought",
-      "boughtAt": "Bought at"
+      "boughtAt": "Bought at",
+      "tierCaveat": "The tier's deaths come from its match counters and can differ by one per match from yours."
     },
     "damage": {
       "title": "Your damage to heroes by source",

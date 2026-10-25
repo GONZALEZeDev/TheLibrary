@@ -11,8 +11,10 @@
  * Showing and hiding is left to the style sheet (the `group-hover` and `group-focus-visible`
  * variants): the panel is always in the page, so that it is the description of the wrapper for
  * assistive technologies whether it is on screen or not. The wrapper is named after what it describes.
- * The wrapper itself takes the focus and has no focusable child, so `focus-visible` is what a keyboard
- * gives it and a click does not: a click on a row no longer pins its panel over the rows below.
+ * The wrapper itself takes the focus, so `focus-visible` is what a keyboard gives it and a click does
+ * not: a click on a row no longer pins its panel over the rows below. A row may hold a link (the
+ * summary of the review links each point to its tab); the link is reached after the wrapper, and
+ * focusing it neither opens nor pins the panel, which follows the wrapper's own `focus-visible`.
  *
  * @packageDocumentation
  */

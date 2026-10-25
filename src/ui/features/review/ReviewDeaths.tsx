@@ -7,7 +7,9 @@
  * (`ReviewRowList`) in the order the review gives them: the tab never sorts, filters or cuts them, so
  * that every point the review makes is here.
  *
- * - **The deaths** are one list of the three phases, in the order of the match.
+ * - **The deaths** are one list of the three phases, in the order of the match, under a sentence that
+ *   says where the tier's deaths come from: the counters of its matches, which can differ by one per
+ *   match from the death details the player's deaths are read from.
  * - **The resistance** is two lists. The first holds the points about the twelve items as a whole: the
  *   minute of the first resistance item, whichever it is, and the deaths before it. The second holds
  *   the twelve items in the order of their list, two rows for each: the minute the player buys it,
@@ -80,6 +82,7 @@ export function ReviewDeaths({ deaths }: ReviewDeathsProps) {
         <h2 id={phasesId} className={REVIEW_SECTION_TITLE}>
           {t('review.deaths.title')}
         </h2>
+        <p className="text-sm text-fg-muted">{t('review.deaths.tierCaveat')}</p>
         <ReviewRowList rows={deaths.phases} />
       </section>
       <section aria-labelledby={resistanceId} className="space-y-2">

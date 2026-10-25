@@ -2,14 +2,25 @@
  * Tests of the summary tab of the review, rendered on its own with summaries built by hand (the
  * summary the service builds is tested with the service), in English and in French: the weaknesses
  * before the strengths, each section with its name, the sentence of a section where nothing recurs,
- * and the picture of a resistance item before its name.
+ * the picture of a resistance item before its name, and the name of each row as a link to its tab.
+ *
+ * The tab is rendered on the review route of a router of its own, as the links of its rows need one:
+ * the address they lead to is the one of the application.
  *
  * The rows are the ones of the review, drawn by `ReviewRow` (tested on its own); the tests here are
  * about which rows the tab lists, in which order and under which heading. The numbers are synthetic.
  *
  * @packageDocumentation
  */
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from '@tanstack/react-router';
 import { render, screen, within } from '@testing-library/react';
+import { userEvent } from '@testing-library/user-event';
 import type { ReactElement } from 'react';
 import { I18nextProvider } from 'react-i18next';
 import { describe, expect, it } from 'vitest';
@@ -20,6 +31,7 @@ import type {
   ReviewRow as ReviewRowData,
   ReviewSubject,
 } from '../../../services/review-view';
+import { reviewSearchSchema } from '../../app/router';
 import { createI18n } from '../../i18n/i18n';
 import { REVIEW_SECTION_TITLE } from './review-layout';
 import { ReviewSummary } from './ReviewSummary';
@@ -33,6 +45,13 @@ const STRINGS = {
     noStrength: 'No recurring strength',
     tierAndGap: 'Tier above · Gap',
     labels: { kda: 'KDA', accuracy: 'Accuracy', lastHits: 'Last hits', denies: 'Denies' },
+    links: {
+      kda: 'KDA',
+      earlyDeaths: 'Deaths in early',
+      metalSkin: 'Metal Skin · Bought at',
+      netWorthPlace: 'Place in Souls',
+      topThree: "In Valve's top three",
+    },
   },
   fr: {
     weaknesses: 'À travailler',
@@ -41,6 +60,13 @@ const STRINGS = {
     noStrength: 'Aucun point fort récurrent',
     tierAndGap: 'Palier au-dessus · Écart',
     labels: { kda: 'KDA', accuracy: 'Précision', lastHits: 'Last hits', denies: 'Denies' },
+    links: {
+      kda: 'KDA',
+      earlyDeaths: 'Morts en early',
+      metalSkin: 'Metal Skin · Acheté à',
+      netWorthPlace: 'Place en Âmes',
+      topThree: 'Dans le top 3 de Valve',
+    },
   },
 } as const;
 
@@ -68,15 +94,44 @@ const SPELLBREAKER: ResistanceItemView = {
 };
 
 /**
- * Render an element with the i18next instance of one language.
+ * Render an element with the i18next instance of one language, as the page of the review route of a
+ * router of its own, which opens at the review.
+ *
+ * @param language - The language of the interface.
+ * @param element - The element to render.
+ * @returns The container the element was rendered in, and the router and its history, to see where
+ *   a link leads.
+ */
+async function renderInRouter(language: Language, element: ReactElement) {
+  const i18n = await createI18n(language);
+  const rootRoute = createRootRoute();
+  const reviewRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/review',
+    validateSearch: reviewSearchSchema,
+    component: () => element,
+  });
+  const history = createMemoryHistory({ initialEntries: ['/review'] });
+  const router = createRouter({ routeTree: rootRoute.addChildren([reviewRoute]), history });
+  await router.load();
+  const { container } = render(
+    <I18nextProvider i18n={i18n}>
+      <RouterProvider router={router} />
+    </I18nextProvider>,
+  );
+  await screen.findAllByRole('region');
+  return { container, router, history };
+}
+
+/**
+ * Render an element with the i18next instance of one language (see {@link renderInRouter}).
  *
  * @param language - The language of the interface.
  * @param element - The element to render.
  * @returns The container the element was rendered in.
  */
 async function renderIn(language: Language, element: ReactElement): Promise<HTMLElement> {
-  const i18n = await createI18n(language);
-  return render(<I18nextProvider i18n={i18n}>{element}</I18nextProvider>).container;
+  return (await renderInRouter(language, element)).container;
 }
 
 /**
@@ -97,7 +152,7 @@ function rowOf(subject: ReviewSubject, overrides: Partial<ReviewRowData> = {}): 
     comparedValue: 1.6,
     reference: 1.3,
     difference: { kind: 'absolute', amount: 0.3 },
-    percentile: 40,
+    gapWithinNoise: false,
     weak: 7,
     strong: 2,
     marked: 18,
@@ -276,6 +331,60 @@ describe('ReviewSummary', () => {
     // Side by side, a row would be crushed: nothing makes the container a grid, a flex line or
     // columns, at any width.
     expect(container?.className).not.toMatch(/grid|flex|columns/u);
+  });
+
+  it.each(LANGUAGES)(
+    'links the name of each row to the tab of its point in %s',
+    async (language) => {
+      const strings = STRINGS[language];
+      const weaknesses = [
+        metricRow('kda', 'weakness'),
+        rowOf({ kind: 'phase_deaths', phase: 'early' }, { side: 'weakness' }),
+        rowOf(
+          { kind: 'resistance_minute', item: METAL_SKIN },
+          { unit: 'minute', side: 'weakness' },
+        ),
+      ];
+      const strengths = [
+        rowOf({ kind: 'place', stat: 'netWorth' }, { unit: 'place', side: 'strength' }),
+        rowOf({ kind: 'valve_top_three' }, { unit: 'rate', side: 'strength' }),
+      ];
+      await renderIn(language, <ReviewSummary summary={summaryOf(weaknesses, strengths)} />);
+
+      // One link a row, named after the point (its flag is said after it, out of the link), to the
+      // stats for a metric, the deaths for the deaths and the resistance, the players for a place.
+      const links = screen.getAllByRole('link');
+      expect(links.map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
+        [strings.links.kda, '/review?tab=stats'],
+        [strings.links.earlyDeaths, '/review?tab=deaths'],
+        [strings.links.metalSkin, '/review?tab=deaths'],
+        [strings.links.netWorthPlace, '/review?tab=players'],
+        [strings.links.topThree, '/review?tab=players'],
+      ]);
+      for (const item of screen.getAllByRole('listitem')) {
+        expect(within(item).getAllByRole('link')).toHaveLength(1);
+      }
+    },
+  );
+
+  it('opens the tab of a row in place of the summary, as the tabs do', async () => {
+    const { router, history } = await renderInRouter(
+      'en',
+      <ReviewSummary
+        summary={summaryOf(
+          [rowOf({ kind: 'phase_deaths', phase: 'early' }, { side: 'weakness' })],
+          [],
+        )}
+      />,
+    );
+    const entries = history.length;
+
+    await userEvent.setup().click(screen.getByRole('link', { name: 'Deaths in early' }));
+
+    // The address names the tab, and replaced the one of the summary: going back leaves the review.
+    expect(router.state.location.pathname).toBe('/review');
+    expect(router.state.location.search).toEqual({ tab: 'deaths' });
+    expect(history.length).toBe(entries);
   });
 
   it('puts the picture of a resistance item before its name in the summary', async () => {

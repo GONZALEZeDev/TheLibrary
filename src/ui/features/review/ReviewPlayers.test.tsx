@@ -114,7 +114,7 @@ function rowOf(subject: ReviewSubject, overrides: Partial<ReviewRowData> = {}): 
     comparedValue: null,
     reference: null,
     difference: null,
-    percentile: null,
+    gapWithinNoise: false,
     weak: 0,
     strong: 0,
     marked: 0,

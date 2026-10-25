@@ -7,7 +7,7 @@
  * - the invitation to link a Steam account, the same one the match list gives, when none is linked;
  * - one sentence, when the account has no analysed match yet: the review fills after the next
  *   synchronisation;
- * - the review: three lines under the title, then five tabs, one for each part of the review
+ * - the review: the lines under the title, then five tabs, one for each part of the review
  *   (`ReviewSummary`, `ReviewStats`, `ReviewDeaths`, `ReviewDamage` and `ReviewPlayers`). Only the
  *   open tab is built.
  * While the review is read, only the title is shown; a review that cannot be read says why, in place
@@ -20,8 +20,14 @@
  * - the comparison with the tier above: the tier (the player's own when it is the highest, or every
  *   rank when the player has none), then what makes it less than whole when that applies: matches
  *   compared with every rank because the tier holds too few of their length, matches that have no
- *   comparison yet, data a day old or more. When there is no comparison at all, the line says that
- *   one is being downloaded or that it is unavailable.
+ *   comparison yet (it comes with a download), matches that have none to have (too few Paige players
+ *   of their length, even over every rank), data a day old or more. When there is no comparison at
+ *   all, the line says that one is being downloaded or that it is unavailable;
+ * - the item statistics the resistance items are compared with, when they are not there or not
+ *   whole: not downloaded yet, a day old or more, of every rank, or holding nothing for the tier.
+ *   They are cached apart from the cohorts, so the line is told whatever the cohorts say. Fresh
+ *   statistics need no line, and neither does a review with no item to have them of (the resistance
+ *   section says why).
  *
  * **The comparison** is downloaded by the page when it opens, if the review lacks it or holds it old
  * (`useReviewCommunityRefresh`), and the review is read again once the data is in the cache. The
@@ -46,7 +52,12 @@ import type { CohortRank, ComparedWith } from '../../../core/analysis/cohort';
 import { MIN_PERSONAL_MATCHES } from '../../../core/analysis/insights/thresholds';
 import { RANK_TIER_NAMES } from '../../../core/domain/rank';
 import { toAppError } from '../../../core/errors/app-error';
-import type { Review, ReviewCommunity, ReviewWindow } from '../../../services/review-view';
+import type {
+  Review,
+  ReviewCommunity,
+  ReviewItemStats,
+  ReviewWindow,
+} from '../../../services/review-view';
 import type { ReviewTab } from '../../app/router';
 import { EmptyState } from '../../components/EmptyState';
 import { PageHeader } from '../../components/PageHeader';
@@ -99,21 +110,25 @@ type CommunityRefresh = ReturnType<typeof useReviewCommunityRefresh>;
  * The item statistics are part of it: a download cut short after the cohorts (the budget of the
  * minute is spent in that order) leaves complete cohorts and no item statistics, and the cohorts
  * alone would not call for another download for a day. A download that cannot give them (no
- * resistance item to ask for) leaves the review saying they are not due, so the page does not ask
+ * resistance item to ask for) leaves the review saying there are no items, so the page does not ask
  * for what cannot come. Even a review that stays due after a download cannot loop: the download
  * is asked for once when it becomes needed, and not again while it stays needed (the review read
  * again after it does not change that), only the next time the page opens.
  *
  * @param community - Where the comparison stands.
- * @returns `true` when none of the matches is compared, when some are not, when any of the data
- *   compared with is a day old or more, or when the item statistics are due.
+ * @returns `true` when none of the matches is compared, when some are not (those with data too thin
+ *   to compare with included: their data is old in its turn one day, and a download renews it), when
+ *   any of the data compared with is a day old or more, or when the item statistics are missing or a
+ *   day old.
  */
 function lacksCommunityData(community: ReviewCommunity): boolean {
   return (
-    community.itemStatsDue ||
+    community.itemStats.kind === 'missing' ||
+    community.itemStats.kind === 'stale' ||
     community.kind === 'missing' ||
     community.stale ||
-    community.missingMatches > 0
+    community.missingMatches > 0 ||
+    community.unusableMatches > 0
   );
 }
 
@@ -191,7 +206,8 @@ function tierLine(rank: CohortRank, comparedWith: ComparedWith, t: TFunction): s
  * @param day - How to write a date.
  * @param t - Translation function.
  * @returns With a comparison: the tier, then a line for each of the matches compared with every
- *   rank, the matches with no comparison yet, and the age of the data, when they apply. Without one:
+ *   rank, the matches with no comparison yet, the matches with none to have, and the age of the data,
+ *   when they apply. Without one:
  *   that it is being downloaded, that it is unavailable once the download ended without it, or
  *   nothing while the download has not begun.
  */
@@ -218,6 +234,9 @@ function cohortLines(
   if (community.missingMatches > 0) {
     lines.push(t('review.cohort.partial', { count: community.missingMatches }));
   }
+  if (community.unusableMatches > 0) {
+    lines.push(t('review.cohort.tooFew', { count: community.unusableMatches }));
+  }
   if (community.stale) {
     lines.push(t('review.cohort.stale', { date: day.format(community.fetchedAt) }));
   }
@@ -225,8 +244,37 @@ function cohortLines(
 }
 
 /**
+ * The line about the item statistics the resistance items are compared with.
+ *
+ * @param itemStats - Where the item statistics of the tier stand.
+ * @param day - How to write a date.
+ * @param t - Translation function.
+ * @returns What makes them less than whole (not downloaded yet, old, of every rank, holding nothing
+ *   for the tier), or `null` when nothing does or when there are no items to have them of.
+ */
+function itemStatsLine(
+  itemStats: ReviewItemStats,
+  day: Intl.DateTimeFormat,
+  t: TFunction,
+): string | null {
+  switch (itemStats.kind) {
+    case 'fresh':
+    case 'no_items':
+      return null;
+    case 'missing':
+      return t('review.itemStats.missing');
+    case 'stale':
+      return t('review.itemStats.stale', { date: day.format(itemStats.fetchedAt) });
+    case 'fallback':
+      return t('review.itemStats.fallback');
+    case 'none':
+      return t('review.itemStats.none');
+  }
+}
+
+/**
  * The lines under the title: the matches covered, what the progress is measured against, and the
- * comparison with the tier above.
+ * comparison with the tier above, the item statistics included.
  *
  * @param review - The review.
  * @param refresh - The download of the comparison.
@@ -242,12 +290,14 @@ function renderHeaderLines(
   t: TFunction,
 ) {
   const covered = windowLine(review.recent, day, t);
+  const comparison = cohortLines(review.community, refresh, day, t);
+  const itemStats = itemStatsLine(review.community.itemStats, day, t);
   return (
     <div className="space-y-1 text-sm text-fg-muted">
       {covered === null ? null : <p>{covered}</p>}
       <p>{progressLine(review.before, t)}</p>
       <div role="status" className="space-y-1">
-        {cohortLines(review.community, refresh, day, t).map((line) => (
+        {(itemStats === null ? comparison : [...comparison, itemStats]).map((line) => (
           <p key={line}>{line}</p>
         ))}
       </div>

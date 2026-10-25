@@ -12,6 +12,9 @@
  * is keyed by its point (`reviewRowKey`), which no language changes and no two points share, so that
  * a list may hold the rows of several tabs and of several items.
  *
+ * A list of the summary links the name of each row to the tab of its point (`reviewTabOf`); the
+ * lists of the other tabs are already in that tab, and do not.
+ *
  * A row about a resistance item (the minute the player buys it, how often they buy it) shows the
  * picture of the item before its name, wherever the list stands, so that the item is known at a
  * glance. The picture is decorative (an empty `alt`: the name beside it says the item), and an item
@@ -22,7 +25,7 @@
  */
 import type { ReviewRow as ReviewRowData } from '../../../services/review-view';
 import { GamePicture } from '../../components/GamePicture';
-import { reviewRowKey } from './review-format';
+import { reviewRowKey, reviewTabOf } from './review-format';
 import { REVIEW_LIST_BOX } from './review-layout';
 import { ReviewRow } from './ReviewRow';
 import { ReviewRowHeader } from './ReviewRowHeader';
@@ -31,6 +34,11 @@ import { ReviewRowHeader } from './ReviewRowHeader';
 export interface ReviewRowListProps {
   /** The points to list, in the order to show them. */
   readonly rows: readonly ReviewRowData[];
+  /**
+   * Whether the name of each row links to the tab of its point: the summary's do. `false` by
+   * default.
+   */
+  readonly linked?: boolean;
 }
 
 /**
@@ -58,7 +66,7 @@ function pictureOf(row: ReviewRowData) {
  * @returns The box with the header and the list; nothing for no row, since a header over an empty
  *   list says nothing (the caller says in a sentence that there is nothing to list).
  */
-export function ReviewRowList({ rows }: ReviewRowListProps) {
+export function ReviewRowList({ rows, linked = false }: ReviewRowListProps) {
   if (rows.length === 0) {
     return null;
   }
@@ -67,7 +75,12 @@ export function ReviewRowList({ rows }: ReviewRowListProps) {
       <ReviewRowHeader />
       <ul className="divide-y divide-border">
         {rows.map((row) => (
-          <ReviewRow key={reviewRowKey(row.subject)} row={row} picture={pictureOf(row)} />
+          <ReviewRow
+            key={reviewRowKey(row.subject)}
+            row={row}
+            picture={pictureOf(row)}
+            {...(linked ? { tab: reviewTabOf(row.subject) } : {})}
+          />
         ))}
       </ul>
     </div>

@@ -77,7 +77,7 @@ function rowOf(subject: ReviewSubject): ReviewRowData {
     comparedValue: 1.6,
     reference: 1.3,
     difference: { kind: 'absolute', amount: 0.3 },
-    percentile: 40,
+    gapWithinNoise: false,
     weak: 7,
     strong: 2,
     marked: 18,

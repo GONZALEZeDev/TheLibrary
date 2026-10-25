@@ -2,7 +2,7 @@
  * How the review is written: the figure of a point and its gap with the tier above, in how many
  * matches it was weak or strong, how it moved since the matches before, and the name of the point, in
  * the language of the interface. It also gives the key that tells the points of one list apart, which
- * no language changes.
+ * no language changes, and the tab of the page that lists each point.
  *
  * The number formats are those of the analysis of a match (`../match-detail/analysis-format`), so
  * that the review and the match page write the same figure the same way: a decimal separator and a
@@ -25,11 +25,13 @@ import type {
   ReviewSubject,
   ReviewUnit,
 } from '../../../services/review-view';
+import type { ReviewTab } from '../../app/router';
 import {
   formatDecimalIfNeeded,
   formatDifference,
   formatMetricValue,
   formatOneDecimal,
+  formatShare,
   formatSignedPercent,
   metricLabel,
   NO_VALUE,
@@ -63,7 +65,9 @@ const PLACE_LABEL_KEYS = {
  * - A number of deaths has one decimal, alone (`1.8`) or for ten minutes (`1.8 per 10 min`).
  * - A minute reads "12.4 min", a place "5.7 of 12" and a place in Valve's top three "1.5 of 3": a
  *   decimal only when the figure is not whole.
- * - A rate (how often something happened) is a percentage.
+ * - A rate (how often something happened) is a percentage, written as the damage shares are: one
+ *   under half a percent (and over 0) reads "< 1%" and not "0%", and one of 99.5 % or more (and under
+ *   1) reads "> 99%" and not "100%".
  * - A count has a decimal only when it is not whole (`8`, `4.5`), as the gap beside it does: the
  *   figure of the tier is the middle of many matches, often a half, and written whole it would
  *   contradict a gap of `+3.5` between 8 and 4.5. The figure of one match is whole and reads whole.
@@ -96,7 +100,7 @@ export function formatReviewValue(
     case 'top_three_place':
       return t('review.unit.topThreePlace', { value: formatDecimalIfNeeded(value, language) });
     case 'rate':
-      return formatMetricValue(value, 'percent', language);
+      return formatShare(value, language);
     case 'count':
       // Not `formatMetricValue`, which writes a count whole: the gap of a count keeps its decimal
       // (`formatDifference`), and the two figures must agree with it.
@@ -257,6 +261,33 @@ export function reviewLabel(subject: ReviewSubject, t: TFunction, language: stri
       return t('review.players.topThree');
     case 'valve_top_three_place':
       return t('review.players.topThreePlace');
+  }
+}
+
+/**
+ * Find the tab of the review page that lists a point, which a row of the summary links to.
+ *
+ * - A metric is in the stats.
+ * - The deaths of a phase and every point about the resistance items are in the deaths.
+ * - A place among the players and Valve's top three are in the players.
+ *
+ * @param subject - The point.
+ * @returns The tab.
+ */
+export function reviewTabOf(subject: ReviewSubject): ReviewTab {
+  switch (subject.kind) {
+    case 'metric':
+      return 'stats';
+    case 'phase_deaths':
+    case 'resistance_minute':
+    case 'resistance_rate':
+    case 'first_resistance_minute':
+    case 'deaths_before_resistance':
+      return 'deaths';
+    case 'place':
+    case 'valve_top_three':
+    case 'valve_top_three_place':
+      return 'players';
   }
 }
 

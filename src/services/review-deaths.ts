@@ -125,11 +125,9 @@ function phaseDeathsPoint(phase: Phase): ReviewPoint<PlacedReviewMatch, PlacedMa
       if (placement === null) {
         return UNJUDGED;
       }
-      const percentile = orientedPercentile(placement.percentile, 'lower');
       return {
-        mark: markOfPercentile(percentile),
+        mark: markOfPercentile(orientedPercentile(placement.percentile, 'lower')),
         marked: true,
-        percentile,
         comparison: {
           player: deathsFigureOf(phase, deaths, minutes),
           community: communityDeathsFigureOf(phase, average.rate, minutes),

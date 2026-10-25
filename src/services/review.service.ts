@@ -57,7 +57,6 @@ import {
 } from '../core/analysis/cohort';
 import { REVIEW_MATCHES } from '../core/analysis/insights/thresholds';
 import { PROJECTION_VERSION } from '../core/analysis/registry';
-import { RESISTANCE_ITEMS } from '../core/analysis/review/resistance-items';
 import type { AccountId } from '../core/domain/account';
 import { PAIGE_HERO_ID, type HeroLoadout } from '../core/domain/hero';
 import { errorLogContext, toAppError } from '../core/errors/app-error';
@@ -69,7 +68,7 @@ import type { HeroCatalogService } from './hero-catalog.service';
 import type { ItemBenchmarkRead, ItemBenchmarkService } from './item-benchmark.service';
 import type { LinkedAccountRepository } from './linked-account.repository';
 import type { MetricsRepository, RecentMatch } from './metrics.repository';
-import { buildReview } from './review-build';
+import { buildReview, resistanceItemIds } from './review-build';
 import type { ReviewView } from './review-view';
 
 /** What {@link ReviewService} needs. */
@@ -183,19 +182,6 @@ export function refreshOutcomeOf(outcomes: readonly CohortRefresh[]): ReviewComm
     return 'unavailable';
   }
   return outcomes.includes('unavailable') ? 'partial' : 'updated';
-}
-
-/**
- * Find the resistance items in the item catalogue.
- *
- * @param catalogue - The item catalogue.
- * @returns The id of each item of the list of resistance items that the catalogue knows, in list
- *   order. An item the catalogue does not know (a game patch renamed it) is left out.
- */
-function resistanceItemIds(catalogue: ItemCatalogue): number[] {
-  return RESISTANCE_ITEMS.flatMap(
-    ({ className }) => catalogue.byClassName.get(className)?.id ?? [],
-  );
 }
 
 /** Reads what the review page shows, and downloads the community data it compares the matches with. */

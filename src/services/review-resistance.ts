@@ -147,11 +147,9 @@ function minutePoint(item: ResistanceItemView, tierItem: TierItem | null): Resis
       if (placement === null || tierMean === null) {
         return UNJUDGED;
       }
-      const percentile = orientedPercentile(placement, 'lower');
       return {
-        mark: markOfPercentile(percentile),
+        mark: markOfPercentile(orientedPercentile(placement, 'lower')),
         marked: true,
-        percentile,
         comparison: { player: minute, community: tierMean },
       };
     },

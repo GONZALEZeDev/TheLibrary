@@ -209,7 +209,6 @@ describe('deathRowsOf', () => {
       0,
       10,
     );
-    expect(early?.percentile).toBeCloseTo(50, 8);
     expect(early?.matches.map(({ matchId, value, mark }) => [matchId, value, mark])).toEqual([
       [matchIdAt(0), 6, 'weak'],
       [matchIdAt(1), 0, 'strong'],
@@ -411,7 +410,6 @@ describe('deathRowsOf', () => {
       comparedValue: null,
       reference: null,
       difference: null,
-      percentile: null,
     });
     expect(early?.matches.map(({ mark }) => mark)).toEqual([null, null, null, null, null]);
   });

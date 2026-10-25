@@ -112,7 +112,6 @@ describe('playerRowsOf', () => {
       comparedValue: null,
       reference: null,
       difference: null,
-      percentile: null,
       // Places 1 to 3 are strong, 10 to 12 weak, the places in between neither: 3 strong, 2 weak.
       weak: 2,
       strong: 3,
@@ -176,7 +175,6 @@ describe('playerRowsOf', () => {
       comparedValue: null,
       reference: null,
       difference: null,
-      percentile: null,
       weak: 0,
       strong: 3,
       marked: 6,
@@ -224,7 +222,6 @@ describe('playerRowsOf', () => {
       comparedValue: null,
       reference: null,
       difference: null,
-      percentile: null,
       // Getting into the top three is judged by the other row; its place is not weak or strong.
       weak: 0,
       strong: 0,

@@ -423,8 +423,8 @@ describe('ReviewService.getReview', { timeout: SLOW_TEST_MS }, () => {
       kind: 'available',
       rank: TIER_ABOVE,
       comparedWith: 'tier_above',
-      // The refresh stored the item statistics last: nothing is due.
-      itemStatsDue: false,
+      // The refresh stored the item statistics last: they are fresh, and nothing is due.
+      itemStats: { kind: 'fresh' },
       fallbackMatches: 0,
       missingMatches: 0,
       stale: false,
@@ -449,7 +449,7 @@ describe('ReviewService.getReview', { timeout: SLOW_TEST_MS }, () => {
       comparedWith: 'tier_above',
       // The item catalogue was just downloaded and names the resistance items, whose statistics are
       // not cached either.
-      itemStatsDue: true,
+      itemStats: { kind: 'missing' },
     });
     expect(review.recent.count).toBe(REVIEW_MATCHES);
     expect(communityRequests(context)).toEqual([]);
@@ -492,7 +492,7 @@ describe('ReviewService.getReview', { timeout: SLOW_TEST_MS }, () => {
       kind: 'missing',
       rank: { kind: 'tier', tier: 11 },
       comparedWith: 'own_tier',
-      itemStatsDue: true,
+      itemStats: { kind: 'missing' },
     });
     await expect(context.review.refreshCommunity()).resolves.toBe('updated');
     const review = ready(await context.review.getReview());

@@ -8,17 +8,15 @@
  * - **the player's figure**, made of every match that has a value;
  * - **the comparison with the tier**: the player's compared figure, the tier's figure and the gap
  *   between them, made of the matches compared with the tier only, the two figures of each match
- *   taken on the same stretch;
+ *   taken on the same stretch, and whether that gap is within the noise of those matches;
  * - **the marks**: how many matches a rule judged, and how many of them were weak or strong, which
  *   set the side of the summary;
- * - **the position** among the tier, the median of the placements;
  * - **the progress** against the matches before.
  *
  * The player's figure, both figures of the comparison and the progress share one centre, the median
- * or the mean, as the tier's figure of the point is one or the other. The position is always a
- * median: a placement is a rank among the tier, which a mean of ranks would not keep. A figure made
- * of fewer than `MIN_PERSONAL_MATCHES` values is not given, as a centre of so few says more about
- * the luck of the draw than about the player; the counts are always given.
+ * or the mean, as the tier's figure of the point is one or the other. A figure made of fewer than
+ * `MIN_PERSONAL_MATCHES` values is not given, as a centre of so few says more about the luck of the
+ * draw than about the player; the counts are always given.
  *
  * The tabs also place a match the same way, from the length of the match as the database holds it:
  * {@link placementBasisOf} works out what a point is placed from, once for all the points of a tab
@@ -39,6 +37,7 @@ import { phaseSpans } from '../core/analysis/phases';
 import { differenceOf } from '../core/analysis/references';
 import {
   flaggedSide,
+  isWithinNoise,
   meanOf,
   progressOf,
   type ReviewMark,
@@ -67,11 +66,6 @@ export interface JudgedMatch {
   readonly entry: ReviewMatchValue;
   /** Whether a rule judged the match: its mark, `null` included, is then a verdict that counts. */
   readonly marked: boolean;
-  /**
-   * Where the match stands among the tier above, oriented so that higher is better (1 to 99);
-   * `null` when it was not placed among the tier.
-   */
-  readonly percentile: number | null;
   /**
    * The two figures of the match's comparison with the tier, in the unit of the row; `null` when it
    * was not compared with the tier (a match judged by a fixed rule is marked but not compared).
@@ -119,9 +113,8 @@ function gatedCenterOf(values: readonly number[], center: ReviewCenter): number 
  *
  * @param input - See {@link ReviewRowInput}.
  * @returns The row. Its figures are each made of their own matches: the player's figure of every
- *   match with a value, the comparison with the tier of the matches compared with it, the position
- *   of the matches placed among it (the same matches, for a point whose placement and comparison
- *   read the same data); each is `null` under {@link MIN_PERSONAL_MATCHES} of them.
+ *   match with a value, the comparison with the tier of the matches compared with it; each is `null`
+ *   under {@link MIN_PERSONAL_MATCHES} of them.
  */
 export function reviewRowOf(input: ReviewRowInput): ReviewRow {
   const { subject, unit, better, display, center, judged, before } = input;
@@ -131,15 +124,13 @@ export function reviewRowOf(input: ReviewRowInput): ReviewRow {
   const strong = marked.filter(({ entry }) => entry.mark === 'strong').length;
   // Both figures of the comparison come from the same matches, so the gap is like for like.
   const comparisons = judged.flatMap(({ comparison }) => comparison ?? []);
-  const comparedValue = gatedCenterOf(
-    comparisons.map(({ player }) => player),
-    center,
-  );
+  const comparedFigures = comparisons.map(({ player }) => player);
+  const comparedValue = gatedCenterOf(comparedFigures, center);
   const reference = gatedCenterOf(
     comparisons.map(({ community }) => community),
     center,
   );
-  const percentiles = judged.flatMap(({ percentile }) => percentile ?? []);
+  const gap = comparedValue === null || reference === null ? null : comparedValue - reference;
   return {
     subject,
     unit,
@@ -152,7 +143,7 @@ export function reviewRowOf(input: ReviewRowInput): ReviewRow {
       comparedValue === null || reference === null
         ? null
         : differenceOf(comparedValue, reference, display),
-    percentile: gatedCenterOf(percentiles, 'median'),
+    gapWithinNoise: gap !== null && isWithinNoise(gap, comparedFigures),
     weak,
     strong,
     marked: marked.length,
@@ -240,13 +231,13 @@ export function placeReviewMatches(reviewMatches: readonly ReviewMatch[]): Place
  * What one of the last matches says about a point once it has a value there: the verdict of a rule,
  * and the figures the row sums up. The value itself and the match it is of are the row's to add.
  */
-export type Verdict = Pick<JudgedMatch, 'marked' | 'percentile' | 'comparison'> & {
+export type Verdict = Pick<JudgedMatch, 'marked' | 'comparison'> & {
   /** Whether the match is weak or strong for the point, or neither. */
   readonly mark: ReviewMark | null;
 };
 
-/** The verdict of a match no rule judged: no mark, no placement, no comparison with the tier. */
-export const UNJUDGED: Verdict = { mark: null, marked: false, percentile: null, comparison: null };
+/** The verdict of a match no rule judged: no mark, no comparison with the tier. */
+export const UNJUDGED: Verdict = { mark: null, marked: false, comparison: null };
 
 /**
  * One point of a tab: what its row is about, how its figures are made, how a match gives its value

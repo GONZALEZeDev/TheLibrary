@@ -153,11 +153,13 @@ export interface ReviewRow {
    */
   readonly difference: Difference | null;
   /**
-   * Where the player stands among the tier above: the median of the percentiles of the matches that
-   * were placed among it, oriented so that higher is better (1 to 99). `null` when fewer than
-   * `MIN_PERSONAL_MATCHES` matches were.
+   * Whether the gap between {@link ReviewRow.comparedValue} and the reference is within the noise of
+   * the compared matches: smaller than `PROGRESS_MIN_Z` standard errors of the player's compared
+   * figure (the tier's figure counts as exact). The page then says the two are about the same rather
+   * than write a decimal the luck of the draw explains. `false` when there is no gap, and when fewer
+   * than two figures were compared, as they have no spread to weigh it against.
    */
-  readonly percentile: number | null;
+  readonly gapWithinNoise: boolean;
   /** In how many of the last matches the point was weak. */
   readonly weak: number;
   /** In how many of the last matches the point was strong. */
@@ -186,19 +188,50 @@ export interface ReviewWindow {
 }
 
 /**
+ * Where the item statistics of the tier stand: the resistance items are compared with them, and they
+ * are cached apart from the cohorts and downloaded last, so they can be missing or old while the
+ * cohorts are complete.
+ *
+ * - `no_items`: there is nothing to have statistics of. The item catalogue cannot be read, or knows
+ *   none of the resistance items, so a download has no item to ask for (and the resistance section
+ *   says why it has no item).
+ * - `missing`: no statistics are cached for the items.
+ * - `stale`: statistics are cached, a day old or more. That comes first, whatever they hold: they are
+ *   due for a download, which will tell what they hold now.
+ * - `none`: statistics less than a day old are cached, but the tier holds too few matches even over
+ *   every rank: there is nothing to compare with.
+ * - `fallback`: statistics less than a day old are cached, of every rank, as the tier holds too few
+ *   matches.
+ * - `fresh`: statistics less than a day old, of the rank asked for, are cached.
+ *
+ * The page asks for a download when they are `missing` or `stale`, and for nothing when there are no
+ * items: a download could not change that.
+ */
+export type ReviewItemStats =
+  | { readonly kind: 'no_items' }
+  | { readonly kind: 'missing' }
+  | {
+      readonly kind: 'stale' | 'none' | 'fallback' | 'fresh';
+      /** When the cached statistics were downloaded (Unix ms). */
+      readonly fetchedAt: number;
+    };
+
+/**
  * Where the comparison with the tier above stands.
  *
  * - `available`: some of the last matches are compared with the tier `rank`. `fallbackMatches` of
- *   them are compared with every rank instead, as the tier holds too few matches of their length;
- *   `missingMatches` have no tier data cached and are not compared at all. `stale` is set when any
- *   of the data used is a day old or more, and `fetchedAt` is when the oldest of it was downloaded
- *   (Unix ms).
- * - `missing`: none of the last matches has tier data cached.
+ *   them are compared with every rank instead, as the tier holds too few matches of their length.
+ *   Two counts are not compared at all: `missingMatches` have no tier data cached yet (a download
+ *   will bring it), and `unusableMatches` have tier data cached that holds too few matches of their
+ *   length even over every rank (a download does not change that until the community plays more).
+ *   `stale` is set when any of the data used is a day old or more, and `fetchedAt` is when the
+ *   oldest of it was downloaded (Unix ms).
+ * - `missing`: none of the last matches is compared: no tier data is cached for them, or what is
+ *   cached holds too few matches of their length even over every rank.
  *
  * Both say which rank the review asks for (`rank`) and how it relates to the player's own
- * (`comparedWith`), and whether the item statistics of that rank are due (`itemStatsDue`), whether or
- * not any data of the cohorts is cached yet. The item statistics are cached apart from the cohorts
- * and downloaded last, so one can be missing or old while the other is complete.
+ * (`comparedWith`), and where the item statistics of that rank stand (`itemStats`), whether or not
+ * any data of the cohorts is cached yet.
  */
 export type ReviewCommunity =
   | {
@@ -211,15 +244,11 @@ export type ReviewCommunity =
        * first two apart, as the highest tier is both.
        */
       readonly comparedWith: ComparedWith;
-      /**
-       * Whether the item statistics of the tier, which the resistance items are compared with, are
-       * due for a download: not cached, or a day old or more. It is `false` when a download could
-       * not change that: the item catalogue cannot be read, or knows none of the resistance items,
-       * so there are no items to ask the statistics of.
-       */
-      readonly itemStatsDue: boolean;
+      /** Where the item statistics of the tier stand, which the resistance items are compared with. */
+      readonly itemStats: ReviewItemStats;
       readonly fallbackMatches: number;
       readonly missingMatches: number;
+      readonly unusableMatches: number;
       readonly stale: boolean;
       readonly fetchedAt: number;
     }
@@ -229,8 +258,8 @@ export type ReviewCommunity =
       readonly rank: CohortRank;
       /** How `rank` relates to the player's own rank, see the `available` case. */
       readonly comparedWith: ComparedWith;
-      /** Whether the item statistics of the tier are due for a download, see the `available` case. */
-      readonly itemStatsDue: boolean;
+      /** Where the item statistics of the tier stand, see the `available` case. */
+      readonly itemStats: ReviewItemStats;
     };
 
 /**

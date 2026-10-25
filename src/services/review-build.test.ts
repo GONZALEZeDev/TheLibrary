@@ -37,7 +37,7 @@ import type { CohortRead } from './benchmark.service';
 import type { ItemCatalogue } from './game-asset.service';
 import type { ItemBenchmarkRead } from './item-benchmark.service';
 import type { RecentMatch } from './metrics.repository';
-import { buildReview, type ReviewInputs } from './review-build';
+import { buildReview, resistanceItemIds, type ReviewInputs } from './review-build';
 import type { ResistanceReview, Review, ReviewRow } from './review-view';
 
 /** The tier the player is compared with in the tests: Phantom's tier (7). */
@@ -414,6 +414,26 @@ function fullCatalogue(): ItemCatalogue {
   ]);
 }
 
+describe('resistanceItemIds', () => {
+  it('finds the id of each resistance item the catalogue knows, in list order', () => {
+    // Every item is known: the ids follow the list of resistance items.
+    expect(resistanceItemIds(fullCatalogue())).toEqual(
+      RESISTANCE_ITEMS.map((_item, index) => FIRST_ITEM_ID + index),
+    );
+    // An item the catalogue does not know is left out, and so is an entry that is no resistance item.
+    expect(
+      resistanceItemIds(
+        catalogueOf([
+          resistanceEntry(2),
+          loadoutEntry(8_001, WEAPON, 'weapon'),
+          resistanceEntry(0),
+        ]),
+      ),
+    ).toEqual([FIRST_ITEM_ID, FIRST_ITEM_ID + 2]);
+    expect(resistanceItemIds(catalogueOf([]))).toEqual([]);
+  });
+});
+
 describe('buildReview', () => {
   describe('the two windows', () => {
     it('builds a review from 3 matches with counts but no figures', () => {
@@ -435,7 +455,7 @@ describe('buildReview', () => {
         kind: 'missing',
         rank: RANK,
         comparedWith: 'tier_above',
-        itemStatsDue: false,
+        itemStats: { kind: 'no_items' },
       });
       const netWorth = placeRow(review, 'netWorth');
       expect(netWorth).toMatchObject({
@@ -444,7 +464,8 @@ describe('buildReview', () => {
         weak: 0,
         strong: 3,
         marked: 3,
-        side: 'strength',
+        // Strong in each of three matches is too few matches to be listed: five are needed.
+        side: null,
         progress: { before: null, direction: null },
       });
       expect(netWorth.matches).toHaveLength(3);
@@ -455,12 +476,11 @@ describe('buildReview', () => {
         comparedValue: null,
         reference: null,
         difference: null,
-        percentile: null,
         marked: 0,
         side: null,
       });
-      // The point that was strong in every match is listed, with its counts, and nothing else is.
-      expect(review.summary.strengths).toEqual([netWorth]);
+      // Three matches are too few to list a point on either side.
+      expect(review.summary.strengths).toEqual([]);
       expect(review.summary.weaknesses).toEqual([]);
     });
 
@@ -473,7 +493,7 @@ describe('buildReview', () => {
         kind: 'missing',
         rank: RANK,
         comparedWith: 'tier_above',
-        itemStatsDue: false,
+        itemStats: { kind: 'no_items' },
       });
       expect(review.summary).toEqual({ weaknesses: [], strengths: [] });
       expect(placeRow(review, 'netWorth')).toMatchObject({ count: 0, value: null, side: null });
@@ -576,9 +596,12 @@ describe('buildReview', () => {
           kind: 'available',
           rank: RANK,
           comparedWith: 'tier_above',
-          itemStatsDue: false,
+          itemStats: { kind: 'no_items' },
           fallbackMatches: 2,
-          missingMatches: 2,
+          // 4 has nothing cached, and will come with a download; 5 is cached with nothing to compare
+          // with, which a download does not change.
+          missingMatches: 1,
+          unusableMatches: 1,
           stale: true,
           fetchedAt: OLDER_FETCHED_AT,
         });
@@ -592,9 +615,10 @@ describe('buildReview', () => {
           kind: 'available',
           rank: RANK,
           comparedWith: 'tier_above',
-          itemStatsDue: false,
+          itemStats: { kind: 'no_items' },
           fallbackMatches: 0,
           missingMatches: 0,
+          unusableMatches: 0,
           stale: false,
           fetchedAt: FETCHED_AT,
         });
@@ -629,7 +653,7 @@ describe('buildReview', () => {
             kind: 'missing',
             rank: RANK,
             comparedWith: 'tier_above',
-            itemStatsDue: false,
+            itemStats: { kind: 'no_items' },
           });
         }
       });
@@ -654,49 +678,95 @@ describe('buildReview', () => {
     });
   });
 
-  describe('says whether the item statistics are due', () => {
+  describe('tells where the item statistics stand', () => {
+    /** When the item statistics of the tests were downloaded. */
+    const ITEMS_FETCHED_AT = FETCHED_AT - 3_600_000;
+
     /**
      * The item statistics of the tier, as the cache holds them.
      *
      * @param stale - Whether they are a day old or more.
+     * @param used - The rank they are of: the one asked for by default, every rank for a fallback,
+     *   `null` when even every rank holds too few matches.
+     * @param wanted - The rank that was asked for; the tier of the tests by default.
      * @returns What the service reads.
      */
-    function cachedItems(stale: boolean): ItemBenchmarkRead {
+    function cachedItems(
+      stale: boolean,
+      used: CohortRank | null = RANK,
+      wanted: CohortRank = RANK,
+    ): ItemBenchmarkRead {
       return {
         kind: 'cached',
         stale,
-        data: {
-          wanted: RANK,
-          used: RANK,
-          sampleMatches: 200,
-          items: new Map(),
-          fetchedAt: FETCHED_AT,
-        },
+        data: { wanted, used, sampleMatches: 200, items: new Map(), fetchedAt: ITEMS_FETCHED_AT },
       };
     }
 
     it.each([
-      { what: 'are not cached', itemBenchmark: { kind: 'missing' }, due: true },
-      { what: 'are a day old or more', itemBenchmark: cachedItems(true), due: true },
-      { what: 'are fresh', itemBenchmark: cachedItems(false), due: false },
-    ] as const)('says $due when the item statistics $what', ({ itemBenchmark, due }) => {
-      const recent = listing(3);
-      const cohorts = cohortsOf([[DURATION_S, cachedRead(DURATION_S)]]);
-      const catalogue = fullCatalogue();
+      {
+        what: 'are not cached',
+        itemBenchmark: { kind: 'missing' },
+        itemStats: { kind: 'missing' },
+      },
+      {
+        what: 'are fresh and of the tier',
+        itemBenchmark: cachedItems(false),
+        itemStats: { kind: 'fresh', fetchedAt: ITEMS_FETCHED_AT },
+      },
+      {
+        what: 'are a day old or more',
+        itemBenchmark: cachedItems(true),
+        itemStats: { kind: 'stale', fetchedAt: ITEMS_FETCHED_AT },
+      },
+      {
+        what: 'are of every rank, the tier holding too few matches',
+        itemBenchmark: cachedItems(false, { kind: 'all' }),
+        itemStats: { kind: 'fallback', fetchedAt: ITEMS_FETCHED_AT },
+      },
+      {
+        what: 'hold nothing to compare with',
+        itemBenchmark: cachedItems(false, null),
+        itemStats: { kind: 'none', fetchedAt: ITEMS_FETCHED_AT },
+      },
+      // Old data is due for a download whatever it holds: its age comes first.
+      {
+        what: 'are old and of every rank',
+        itemBenchmark: cachedItems(true, { kind: 'all' }),
+        itemStats: { kind: 'stale', fetchedAt: ITEMS_FETCHED_AT },
+      },
+      {
+        what: 'are old and hold nothing to compare with',
+        itemBenchmark: cachedItems(true, null),
+        itemStats: { kind: 'stale', fetchedAt: ITEMS_FETCHED_AT },
+      },
+      // A player with no rank asks for every rank: data of every rank is then no fallback.
+      {
+        what: 'are of every rank, asked for',
+        itemBenchmark: cachedItems(false, { kind: 'all' }, { kind: 'all' }),
+        itemStats: { kind: 'fresh', fetchedAt: ITEMS_FETCHED_AT },
+      },
+    ] as const)(
+      'says $itemStats.kind when the item statistics $what',
+      ({ itemBenchmark, itemStats }) => {
+        const recent = listing(3);
+        const cohorts = cohortsOf([[DURATION_S, cachedRead(DURATION_S)]]);
+        const catalogue = fullCatalogue();
 
-      // Whether the matches are compared with the tier or not does not change it: the item
-      // statistics are cached apart from the cohorts, and the page asks for them apart.
-      expect(reviewOf({ recent, cohorts, itemBenchmark, catalogue }).community).toMatchObject({
-        kind: 'available',
-        itemStatsDue: due,
-      });
-      expect(reviewOf({ recent, itemBenchmark, catalogue }).community).toMatchObject({
-        kind: 'missing',
-        itemStatsDue: due,
-      });
-    });
+        // Whether the matches are compared with the tier or not does not change it: the item
+        // statistics are cached apart from the cohorts, and the page asks for them apart.
+        expect(reviewOf({ recent, cohorts, itemBenchmark, catalogue }).community).toMatchObject({
+          kind: 'available',
+          itemStats,
+        });
+        expect(reviewOf({ recent, itemBenchmark, catalogue }).community).toMatchObject({
+          kind: 'missing',
+          itemStats,
+        });
+      },
+    );
 
-    it('says they are due when the catalogue knows only some of the resistance items', () => {
+    it('says they are missing when the catalogue knows only some of the resistance items', () => {
       const catalogue = catalogueOf([resistanceEntry(0)]);
 
       const { community } = reviewOf({
@@ -705,12 +775,13 @@ describe('buildReview', () => {
         catalogue,
       });
 
-      expect(community).toMatchObject({ itemStatsDue: true });
+      expect(community).toMatchObject({ itemStats: { kind: 'missing' } });
     });
 
-    it('says they are not due when there is nothing to ask for', () => {
+    it('says there are no items to have statistics of when there is nothing to ask for', () => {
       // Without the catalogue, or with one that knows none of the resistance items, the download
-      // finds no item to ask the statistics of: a page that asked would learn nothing.
+      // finds no item to ask the statistics of: a page that asked would learn nothing, and whatever
+      // the cache holds compares no row.
       const catalogues = [
         null,
         catalogueOf([]),
@@ -718,13 +789,11 @@ describe('buildReview', () => {
       ];
 
       for (const catalogue of catalogues) {
-        const { community } = reviewOf({
-          recent: listing(3),
-          itemBenchmark: { kind: 'missing' },
-          catalogue,
-        });
+        for (const itemBenchmark of [{ kind: 'missing' } as const, cachedItems(true)]) {
+          const { community } = reviewOf({ recent: listing(3), itemBenchmark, catalogue });
 
-        expect(community).toMatchObject({ itemStatsDue: false });
+          expect(community).toMatchObject({ itemStats: { kind: 'no_items' } });
+        }
       }
     });
   });
@@ -749,11 +818,12 @@ describe('buildReview', () => {
     });
 
     it('shares the damage over the last matches and the ones before', () => {
-      // The weapon dealt 3 000 of 4 000 over the last matches, and 1 000 of 2 000 before them.
-      const recent = listing(21, (index) =>
+      // The weapon dealt 3 000 of 4 000 over the last matches, and 1 000 of 2 000 over the five
+      // before them (five are the fewest that give a share before).
+      const recent = listing(25, (index) =>
         index < 20
           ? { [damageSourceKey(WEAPON)]: 150, [damageSourceKey(BOOKWYRM)]: 50 }
-          : { [damageSourceKey(WEAPON)]: 1_000, [damageSourceKey(BOOKWYRM)]: 1_000 },
+          : { [damageSourceKey(WEAPON)]: 200, [damageSourceKey(BOOKWYRM)]: 200 },
       );
 
       const { damage } = reviewOf({ recent, catalogue: fullCatalogue(), loadout: LOADOUT });

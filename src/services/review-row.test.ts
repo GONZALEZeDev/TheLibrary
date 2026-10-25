@@ -2,8 +2,8 @@
  * Tests of the row of a point of the review ({@link reviewRowOf}), of the basis a match is placed
  * from ({@link placementBasisOf}) and of the skeleton the tabs build their points on
  * ({@link pointRowOf}), on judged matches written by hand: the player's figure, the comparison with
- * the tier, the counts of weak and strong matches, the position and the progress, each centred on the
- * median or on the mean, and each held back under five matches.
+ * the tier, the counts of weak and strong matches and the progress, each centred on the median or on
+ * the mean, and each held back under five matches.
  *
  * @packageDocumentation
  */
@@ -47,8 +47,6 @@ interface Judgement {
   readonly mark?: ReviewMark | null;
   /** Whether a rule judged the match. */
   readonly marked?: boolean;
-  /** Its oriented percentile; none by default. */
-  readonly percentile?: number | null;
   /** Its two figures of the comparison with the tier; none by default. */
   readonly comparison?: CommunityComparison | null;
 }
@@ -61,7 +59,7 @@ interface Judgement {
  * @returns The judged match.
  */
 function judgedMatch(index: number, judgement: Judgement): JudgedMatch {
-  const { value, mark = null, marked = false, percentile = null, comparison = null } = judgement;
+  const { value, mark = null, marked = false, comparison = null } = judgement;
   return {
     entry: {
       matchId: testMatchId(LAST_MATCH_ID - index),
@@ -70,7 +68,6 @@ function judgedMatch(index: number, judgement: Judgement): JudgedMatch {
       mark,
     },
     marked,
-    percentile,
     comparison,
   };
 }
@@ -120,7 +117,7 @@ describe('reviewRowOf', () => {
       comparedValue: null,
       reference: null,
       difference: null,
-      percentile: null,
+      gapWithinNoise: false,
       weak: 0,
       strong: 0,
       marked: 0,
@@ -182,6 +179,60 @@ describe('reviewRowOf', () => {
     });
   });
 
+  it('tells a gap within the noise of the compared matches from one outside it', () => {
+    // The player's compared figures are 4, 6, 2, 8 and 0: a mean of 4 and a sample variance of 10,
+    // so the standard error of that mean is √(10 / 5) = √2, about 1.41. The tier's figure counts as
+    // exact.
+    const player = [4, 6, 2, 8, 0];
+    const against = (community: number) =>
+      comparedMatches(player.map((value) => [value, community] as const));
+
+    // A gap of 1 is within the noise, on either side of the tier.
+    expect(rowOf({ judged: against(5) })).toMatchObject({
+      difference: { kind: 'absolute', amount: -1 },
+      gapWithinNoise: true,
+    });
+    expect(rowOf({ judged: against(3) }).gapWithinNoise).toBe(true);
+    // A gap of 2 is outside it.
+    expect(rowOf({ judged: against(6) })).toMatchObject({
+      difference: { kind: 'absolute', amount: -2 },
+      gapWithinNoise: false,
+    });
+    // The rule weighs the figures and not how the gap is shown: a share of the tier is weighed the
+    // same way.
+    expect(rowOf({ judged: against(5), display: 'relative' }).gapWithinNoise).toBe(true);
+    expect(rowOf({ judged: against(6), display: 'relative' }).gapWithinNoise).toBe(false);
+  });
+
+  it('weighs the gap against the compared matches only, around the centre of the row', () => {
+    // Two matches have a value but no comparison: their spread is not the comparison's.
+    const judged = [
+      ...comparedMatches([
+        [4, 5],
+        [6, 5],
+        [2, 5],
+        [8, 5],
+        [0, 5],
+      ]),
+      judgedMatch(5, { value: 40 }),
+      judgedMatch(6, { value: -40 }),
+    ];
+    expect(rowOf({ judged }).gapWithinNoise).toBe(true);
+    // The median of the compared figures is 4 too, and the gap of 1 is still within the noise.
+    expect(rowOf({ judged, center: 'median' }).gapWithinNoise).toBe(true);
+  });
+
+  it('calls no gap noise when there is no gap', () => {
+    // Four compared matches give no tier figure, so there is no gap to weigh.
+    const judged = comparedMatches([
+      [4, 5],
+      [6, 5],
+      [2, 5],
+      [8, 5],
+    ]);
+    expect(rowOf({ judged })).toMatchObject({ difference: null, gapWithinNoise: false });
+  });
+
   it('shows the gap as a share of the tier when the display says so', () => {
     const judged = comparedMatches([
       [6, 4],
@@ -238,39 +289,21 @@ describe('reviewRowOf', () => {
     });
   });
 
-  it('gives no position under five placed matches', () => {
-    const placed = [10, 20, 30, 40].map((percentile, index) =>
-      judgedMatch(index, { value: 1, percentile }),
-    );
-    const rest = [4, 5].map((value) => judgedMatch(value, { value: 1 }));
-
-    expect(rowOf({ judged: [...placed, ...rest] })).toMatchObject({ count: 6, percentile: null });
-  });
-
-  it('takes the position as the median of the placements, whatever the centre of the row', () => {
-    // The mean of these placements is 38: a position is a rank among the tier, kept as a median.
-    const judged = [10, 20, 30, 40, 90].map((percentile, index) =>
-      judgedMatch(index, { value: 1, percentile }),
-    );
-
-    expect(rowOf({ judged, center: 'mean' }).percentile).toBe(30);
-    expect(rowOf({ judged, center: 'median' }).percentile).toBe(30);
-  });
-
   it('counts the weak and the strong matches among the ones a rule judged', () => {
     const judged = [
       judgedMatch(0, { value: 1, marked: true, mark: 'weak' }),
       judgedMatch(1, { value: 2, marked: true, mark: 'weak' }),
       judgedMatch(2, { value: 3, marked: true, mark: 'strong' }),
       judgedMatch(3, { value: 4, marked: true, mark: null }),
+      judgedMatch(4, { value: 5, marked: true, mark: null }),
       // A match no rule judged is in the figures and in none of the counts.
-      judgedMatch(4, { value: 5 }),
       judgedMatch(5, { value: 6 }),
+      judgedMatch(6, { value: 7 }),
     ];
 
     const row = rowOf({ judged });
 
-    expect(row).toMatchObject({ weak: 2, strong: 1, marked: 4, count: 6, side: 'weakness' });
+    expect(row).toMatchObject({ weak: 2, strong: 1, marked: 5, count: 7, side: 'weakness' });
     expect(row.matches.map(({ value, mark }) => [value, mark])).toEqual([
       [1, 'weak'],
       [2, 'weak'],
@@ -278,6 +311,7 @@ describe('reviewRowOf', () => {
       [4, null],
       [5, null],
       [6, null],
+      [7, null],
     ]);
   });
 
@@ -384,8 +418,7 @@ type DeathsPoint = ReviewPoint<PlacedReviewMatch, PlacedMatch>;
 
 /**
  * The point of the tests: the deaths a match stores, better lower, around the mean. A match is
- * strong from three deaths down and weak from six, is placed at the 40th percentile, and is compared
- * with a tier that dies four times.
+ * strong from three deaths down and weak from six, and is compared with a tier that dies four times.
  *
  * @param overrides - What differs from that point.
  * @returns The point.
@@ -401,7 +434,6 @@ function deathsPoint(overrides: Partial<DeathsPoint> = {}): DeathsPoint {
     judge: (_placed, deaths): Verdict => ({
       mark: deaths >= 6 ? 'weak' : deaths <= 3 ? 'strong' : null,
       marked: true,
-      percentile: 40,
       comparison: { player: deaths, community: 4 },
     }),
     ...overrides,
@@ -493,8 +525,7 @@ describe('pointRowOf', () => {
       [6, 'weak'],
     ]);
     expect(row).toMatchObject({ weak: 2, strong: 1, marked: 6, side: 'weakness' });
-    // The placement and both figures of the comparison are the judge's: 29 / 6 against 4.
-    expect(row.percentile).toBe(40);
+    // Both figures of the comparison are the judge's: 29 / 6 against 4.
     expect(row.comparedValue).toBeCloseTo(29 / 6, 10);
     expect(row.reference).toBe(4);
     expect(row.difference).toEqual({ kind: 'absolute', amount: 29 / 6 - 4 });
@@ -513,7 +544,6 @@ describe('pointRowOf', () => {
       strong: 0,
       comparedValue: null,
       reference: null,
-      percentile: null,
     });
     expect(row.matches.map(({ mark }) => mark)).toEqual([null, null, null, null, null]);
   });

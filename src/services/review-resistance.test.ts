@@ -219,7 +219,6 @@ describe('resistanceReviewOf', () => {
       progress: { before: 10, direction: 'better' },
     });
     expect(minute?.difference).toEqual({ kind: 'absolute', amount: 42.5 / 6 - 7 });
-    expect(minute?.percentile).toBeCloseTo(35, 8);
     expect(minute?.matches.map(({ matchId, value, mark }) => [matchId, value, mark])).toEqual([
       [matchIdAt(0), 4.5, 'strong'],
       [matchIdAt(1), 10, 'weak'],
@@ -268,7 +267,6 @@ describe('resistanceReviewOf', () => {
       comparedValue: 0.75,
       reference: 0.5,
       difference: { kind: 'absolute', amount: 0.25 },
-      percentile: null,
       weak: 0,
       strong: 0,
       marked: 0,
@@ -320,7 +318,6 @@ describe('resistanceReviewOf', () => {
       comparedValue: null,
       reference: null,
       difference: null,
-      percentile: null,
       marked: 0,
       weak: 0,
       strong: 0,
@@ -387,7 +384,6 @@ describe('resistanceReviewOf', () => {
       count: 5,
       reference: null,
       comparedValue: null,
-      percentile: null,
       // The earlier matches died once, the last ones 2.4 times: worse, as the spread allows.
       progress: { before: 1, direction: 'worse' },
     });
@@ -587,14 +583,13 @@ describe('resistanceReviewOf', () => {
     for (const benchmark of benchmarks) {
       const first = resistanceReviewOf(recent, [], items, benchmark).items[0];
 
-      // The player's own figures stay; the tier's figures, the gap, the position and the marks do not.
+      // The player's own figures stay; the tier's figures, the gap and the marks do not.
       expect(first?.minute).toMatchObject({
         value: 7,
         count: 6,
         comparedValue: null,
         reference: null,
         difference: null,
-        percentile: null,
         marked: 0,
         weak: 0,
         strong: 0,
@@ -619,7 +614,7 @@ describe('resistanceReviewOf', () => {
 
     const first = resistanceReviewOf(recent, [], itemViews(), benchmark).items[0];
 
-    expect(first?.minute).toMatchObject({ value: 7, reference: null, marked: 0, percentile: null });
+    expect(first?.minute).toMatchObject({ value: 7, reference: null, marked: 0 });
     expect(first?.rate).toMatchObject({ value: 1, comparedValue: 1, reference: 0 });
   });
 });

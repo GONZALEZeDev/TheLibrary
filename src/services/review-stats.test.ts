@@ -204,7 +204,7 @@ describe('statsRowsOf', () => {
       comparedValue: null,
       reference: null,
       difference: null,
-      percentile: null,
+      gapWithinNoise: false,
       weak: 0,
       strong: 0,
       marked: 0,
@@ -226,7 +226,7 @@ describe('statsRowsOf', () => {
     const stats = statsRowsOf(recent, []);
 
     const deaths = rowOf(stats, 'deaths');
-    expect(deaths).toMatchObject({ value: 3, count: 7, marked: 0, percentile: null });
+    expect(deaths).toMatchObject({ value: 3, count: 7, marked: 0 });
     expect(deaths.matches).toEqual(
       [3, 1, 4, 1, 5, 9, 2].map((value, index) => ({
         matchId: testMatchId(LAST_MATCH_ID - index),
@@ -263,8 +263,8 @@ describe('statsRowsOf', () => {
 
     const stats = statsRowsOf(recent, []);
 
-    expect(rowOf(stats, 'deaths')).toMatchObject({ percentile: 5, weak: 5, strong: 0 });
-    expect(rowOf(stats, 'kda')).toMatchObject({ percentile: 95, weak: 0, strong: 5 });
+    expect(rowOf(stats, 'deaths')).toMatchObject({ weak: 5, strong: 0 });
+    expect(rowOf(stats, 'kda')).toMatchObject({ weak: 0, strong: 5 });
   });
 
   it('marks the lane gap by its own rule', () => {
@@ -285,7 +285,6 @@ describe('statsRowsOf', () => {
       marked: 6,
       weak: 2,
       strong: 2,
-      percentile: null,
       comparedValue: null,
       reference: null,
       difference: null,
@@ -302,7 +301,7 @@ describe('statsRowsOf', () => {
     const row = rowOf(statsRowsOf(recent, []), 'kda');
 
     expect(row).toMatchObject({ value: 3, count: 5, marked: 0, weak: 0, strong: 0 });
-    expect(row).toMatchObject({ percentile: null, reference: null, comparedValue: null });
+    expect(row).toMatchObject({ reference: null, comparedValue: null });
     expect(row.matches.map(({ mark }) => mark)).toEqual([null, null, null, null, null]);
   });
 
@@ -327,7 +326,6 @@ describe('statsRowsOf', () => {
       comparedValue: null,
       reference: null,
       difference: null,
-      percentile: null,
     });
     expect(rowOf(stats, 'kda')).toMatchObject({
       value: 2.5,
@@ -335,7 +333,6 @@ describe('statsRowsOf', () => {
       comparedValue: 2.5,
       reference: 2.5,
       difference: { kind: 'relative', ratio: 0 },
-      percentile: 50,
     });
   });
 

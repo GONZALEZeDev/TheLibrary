@@ -66,17 +66,15 @@ function judge(definition: MetricDefinition, placed: PlacedReviewMatch, value: n
   const { reference, basis } = placed;
   const fixedRule = FIXED_RULES.get(definition.key);
   if (fixedRule !== undefined) {
-    return { mark: fixedRule(value), marked: true, percentile: null, comparison: null };
+    return { mark: fixedRule(value), marked: true, comparison: null };
   }
   const cell = communityCellOf(definition, value, basis, reference);
   if (cell.kind !== 'percentile' && cell.kind !== 'curve') {
     return UNJUDGED;
   }
-  const percentile = orientedPercentile(cell.percentile, definition.better);
   return {
-    mark: markOfPercentile(percentile),
+    mark: markOfPercentile(orientedPercentile(cell.percentile, definition.better)),
     marked: true,
-    percentile,
     comparison: communityComparisonOf(definition, value, basis, reference),
   };
 }

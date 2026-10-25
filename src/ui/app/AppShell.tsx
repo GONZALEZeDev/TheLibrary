@@ -1,11 +1,11 @@
 /**
- * Application frame: a fixed sidebar with the two tabs, the settings and the linked Steam account,
- * and the area where the active page renders.
+ * Application frame: a fixed sidebar with the dashboard, the match history and the review, the
+ * settings and the linked Steam account, and the area where the active page renders.
  *
  * @packageDocumentation
  */
 import { Link, Outlet } from '@tanstack/react-router';
-import { BookOpen, History, LayoutDashboard, Settings } from 'lucide-react';
+import { BookOpen, ClipboardList, History, LayoutDashboard, Settings } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { SidebarAccount } from '../features/account/SidebarAccount';
 
@@ -46,6 +46,10 @@ export function AppShell() {
           <Link to="/matches" {...NAV_LINK_PROPS}>
             <History aria-hidden="true" className="size-4" />
             {t('nav.matches')}
+          </Link>
+          <Link to="/review" {...NAV_LINK_PROPS}>
+            <ClipboardList aria-hidden="true" className="size-4" />
+            {t('nav.review')}
           </Link>
           {/* Settings sit at the bottom of the sidebar. */}
           <Link

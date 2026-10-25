@@ -23,6 +23,7 @@ import { DEFAULT_PERIOD, PERIODS } from '../../core/domain/period';
 import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { MatchDetailPage } from '../features/match-detail/MatchDetailPage';
 import { MatchesPage } from '../features/matches/MatchesPage';
+import { ReviewPage } from '../features/review/ReviewPage';
 import { SettingsPage } from '../features/settings/SettingsPage';
 import { AppShell } from './AppShell';
 import { NotFoundPage } from './NotFoundPage';
@@ -55,6 +56,20 @@ export type MatchTab = (typeof MATCH_TABS)[number];
 /** Search parameters of `/matches/$matchId`, e.g. `/matches/100000001?tab=damage`. */
 export const matchDetailSearchSchema = z.object({
   tab: z.enum(MATCH_TABS).default('analysis').catch('analysis'),
+});
+
+/**
+ * The tabs the review route accepts: the `tab` of the URL is one of these ids. The page decides their
+ * order and their names (`ReviewPage`).
+ */
+export const REVIEW_TABS = ['summary', 'stats', 'deaths', 'damage', 'players'] as const;
+
+/** The id of a tab of the review page. */
+export type ReviewTab = (typeof REVIEW_TABS)[number];
+
+/** Search parameters of `/review`, e.g. `/review?tab=deaths`. */
+export const reviewSearchSchema = z.object({
+  tab: z.enum(REVIEW_TABS).default('summary').catch('summary'),
 });
 
 // Root layout: the application shell renders the matched child route in its <Outlet />.
@@ -103,6 +118,14 @@ const matchDetailRoute = createRoute({
   component: MatchDetailPage,
 });
 
+const reviewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/review',
+  // The open tab lives in the URL; links that do not name one open the summary.
+  validateSearch: reviewSearchSchema,
+  component: ReviewPage,
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings',
@@ -114,6 +137,7 @@ const routeTree = rootRoute.addChildren([
   dashboardRoute,
   matchesRoute,
   matchDetailRoute,
+  reviewRoute,
   settingsRoute,
 ]);
 

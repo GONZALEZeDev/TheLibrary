@@ -99,7 +99,7 @@ const TEXTS: Readonly<Record<Language, Texts>> = {
 const EN = TEXTS.en;
 
 /** The links of the navigation, in order: nothing else is a link of the sidebar without an account. */
-const NAV_LINKS = ['Dashboard', 'Matches', 'Settings'];
+const NAV_LINKS = ['Dashboard', 'Matches', 'Review', 'Settings'];
 
 /** What can be set up for a test. */
 interface SetUpOptions extends TestServicesOptions {

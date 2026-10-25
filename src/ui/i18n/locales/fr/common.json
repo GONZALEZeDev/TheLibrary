@@ -6,6 +6,7 @@
     "label": "Navigation principale",
     "dashboard": "Tableau de bord",
     "matches": "Parties",
+    "review": "Bilan",
     "settings": "Réglages",
     "account": "Compte Steam : {{name}}"
   },
@@ -276,6 +277,94 @@
       "both": "Retenu pour ta place dans ton rang et l'écart avec tes habitudes"
     },
     "points": "{{value}} pts"
+  },
+  "review": {
+    "title": "Bilan",
+    "window_one": "Ta dernière partie, le {{from}}",
+    "window_other": "Tes {{count}} dernières parties, du {{from}} au {{to}}",
+    "windowOneDay": "Tes {{count}} dernières parties, le {{date}}",
+    "before_one": "Progression : face à la partie d'avant",
+    "before_other": "Progression : face aux {{count}} parties d'avant",
+    "noBefore": "Pas assez de parties plus anciennes pour mesurer ta progression",
+    "empty": "Aucune partie analysée pour l'instant : le bilan se remplit après la prochaine synchronisation.",
+    "tabs": {
+      "label": "Sections du bilan",
+      "summary": "Résumé",
+      "stats": "Stats",
+      "deaths": "Morts et résistance",
+      "damage": "Dégâts par source",
+      "players": "Joueurs"
+    },
+    "cohort": {
+      "tier": "Comparé aux joueurs de Paige {{tier}}, le palier au-dessus du tien, sur 30 jours",
+      "own": "Comparé aux joueurs de Paige {{tier}}, ton propre palier (le plus haut), sur 30 jours",
+      "all": "Comparé aux joueurs de Paige de tous les rangs (aucun rang connu pour toi), sur 30 jours",
+      "fallback_one": "{{count}} partie comparée à tous les rangs : trop peu de parties dans ce palier",
+      "fallback_other": "{{count}} parties comparées à tous les rangs : trop peu de parties dans ce palier",
+      "partial_one": "Pas encore de comparaison pour {{count}} partie : elle viendra à une prochaine ouverture",
+      "partial_other": "Pas encore de comparaison pour {{count}} parties : elle viendra à une prochaine ouverture",
+      "loading": "Téléchargement de la comparaison…",
+      "unavailable": "Comparaison indisponible pour l'instant",
+      "stale": "Données du {{date}}"
+    },
+    "summary": {
+      "weaknesses": "À travailler",
+      "strengths": "Tes points forts",
+      "noWeakness": "Aucun point faible récurrent",
+      "noStrength": "Aucun point fort récurrent"
+    },
+    "columns": {
+      "you": "Toi",
+      "tier": "Palier au-dessus",
+      "gap": "Écart",
+      "marks": "Faible / fort",
+      "progress": "Progression"
+    },
+    "marks": "faible dans {{weak}}/{{marked}} · fort dans {{strong}}/{{marked}}",
+    "count_one": "{{count}} partie",
+    "count_other": "{{count}} parties",
+    "compared": "Toi sur la même durée : {{value}}",
+    "progress": {
+      "better": "mieux",
+      "worse": "moins bien",
+      "stable": "stable"
+    },
+    "unit": {
+      "minute": "{{value}} min",
+      "place": "{{value}} sur 12",
+      "topThreePlace": "{{value}} sur 3",
+      "per10": "{{value}} pour 10 min"
+    },
+    "deaths": {
+      "title": "Tes morts par phase",
+      "phase": "Morts en {{phase}}",
+      "resistanceTitle": "Tes objets de résistance",
+      "firstMinute": "Ton premier objet de résistance",
+      "deathsBefore": "Morts avant ton premier objet de résistance",
+      "bought": "Acheté",
+      "boughtAt": "Acheté à"
+    },
+    "damage": {
+      "title": "Tes dégâts aux héros par source",
+      "now_one": "Dernière partie",
+      "now_other": "{{count}} dernières",
+      "before_zero": "Aucune partie avant",
+      "before_one": "Partie d'avant",
+      "before_other": "{{count}} d'avant",
+      "appears_one": "Dans {{count}} partie",
+      "appears_other": "Dans {{count}} parties",
+      "empty": "Aucun dégât aux héros par source dans ces parties."
+    },
+    "players": {
+      "title": "Tes places parmi les 12 joueurs",
+      "place": "Place en {{stat}}",
+      "topThree": "Dans le top 3 de Valve",
+      "topThreePlace": "Place moyenne dans le top 3 de Valve"
+    },
+    "evidence": {
+      "match": "{{date}} : {{value}}"
+    },
+    "catalogueUnavailable": "Les noms des objets sont indisponibles pour l'instant."
   },
   "settings": {
     "title": "Réglages",

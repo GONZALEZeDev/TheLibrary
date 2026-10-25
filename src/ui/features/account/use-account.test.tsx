@@ -29,6 +29,7 @@ import {
 } from '../../../test/create-test-services';
 import { matchSummary, testAccountId, testMatchId } from '../../../test/test-data';
 import { ServicesProvider } from '../../app/ServicesContext';
+import { ANALYSIS_COMMUNITY_QUERY_KEY } from '../match-detail/use-match-analysis';
 import {
   DETAILS_QUERY_KEY,
   DETAILS_SUMMARY_QUERY_KEY,
@@ -39,6 +40,7 @@ import {
   usePeriodSummary,
   useRecentMatches,
 } from '../matches/use-matches';
+import { REVIEW_COMMUNITY_QUERY_KEY, REVIEW_QUERY_KEY } from '../review/use-review';
 import { SETTINGS_QUERY_KEY } from '../settings/use-settings';
 import {
   ACCOUNT_QUERY_KEY,
@@ -434,7 +436,9 @@ describe('useUnlinkAccount', () => {
     const { services } = setUp();
     const { result, queryClient } = renderWithServices(services, useUnlinkAccount);
     // No screen is mounted: these queries are cached, and nothing observes them, so the unlink can
-    // only clear them. The match page and the settings are not about the account's data.
+    // only clear them. The match page and the settings are not about the account's data. The review
+    // sits under the details, like the analysis of a match; the community downloads of a match and of
+    // the review are under keys of their own, which the account change has to list.
     const accountKeys = [
       ACCOUNT_QUERY_KEY,
       [...MATCHES_QUERY_KEY, 'recent'],
@@ -442,6 +446,10 @@ describe('useUnlinkAccount', () => {
       [...SYNC_QUERY_KEY, 'status'],
       DETAILS_SUMMARY_QUERY_KEY,
       [...DETAILS_QUERY_KEY, 'match', 100000001],
+      [...DETAILS_QUERY_KEY, 'analysis', 100000001],
+      REVIEW_QUERY_KEY,
+      [...ANALYSIS_COMMUNITY_QUERY_KEY, 100000001],
+      REVIEW_COMMUNITY_QUERY_KEY,
       HEROES_QUERY_KEY,
     ];
     for (const key of accountKeys) {

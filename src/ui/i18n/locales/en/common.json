@@ -6,6 +6,7 @@
     "label": "Main navigation",
     "dashboard": "Dashboard",
     "matches": "Matches",
+    "review": "Review",
     "settings": "Settings",
     "account": "Steam account: {{name}}"
   },
@@ -276,6 +277,94 @@
       "both": "Picked for your place in your rank and the gap with your habits"
     },
     "points": "{{value}} pts"
+  },
+  "review": {
+    "title": "Review",
+    "window_one": "Your last match, {{from}}",
+    "window_other": "Your last {{count}} matches, {{from}} to {{to}}",
+    "windowOneDay": "Your last {{count}} matches, on {{date}}",
+    "before_one": "Progress: against the match before",
+    "before_other": "Progress: against the {{count}} matches before",
+    "noBefore": "Not enough earlier matches to measure progress",
+    "empty": "No analysed match yet: the review fills after the next synchronisation.",
+    "tabs": {
+      "label": "Review sections",
+      "summary": "Summary",
+      "stats": "Stats",
+      "deaths": "Deaths and resistance",
+      "damage": "Damage by source",
+      "players": "Players"
+    },
+    "cohort": {
+      "tier": "Compared with Paige players in {{tier}}, the tier above yours, last 30 days",
+      "own": "Compared with Paige players in {{tier}}, your own tier (the highest), last 30 days",
+      "all": "Compared with Paige players of every rank (no rank known for you), last 30 days",
+      "fallback_one": "{{count}} match compared with every rank: too few matches in that tier",
+      "fallback_other": "{{count}} matches compared with every rank: too few matches in that tier",
+      "partial_one": "No comparison yet for {{count}} match: it will come at a next opening",
+      "partial_other": "No comparison yet for {{count}} matches: it will come at a next opening",
+      "loading": "Downloading the comparison…",
+      "unavailable": "Comparison unavailable for now",
+      "stale": "Data of {{date}}"
+    },
+    "summary": {
+      "weaknesses": "To work on",
+      "strengths": "Your strengths",
+      "noWeakness": "No recurring weakness",
+      "noStrength": "No recurring strength"
+    },
+    "columns": {
+      "you": "You",
+      "tier": "Tier above",
+      "gap": "Gap",
+      "marks": "Weak / strong",
+      "progress": "Progress"
+    },
+    "marks": "weak in {{weak}}/{{marked}} · strong in {{strong}}/{{marked}}",
+    "count_one": "{{count}} match",
+    "count_other": "{{count}} matches",
+    "compared": "You on the same stretch: {{value}}",
+    "progress": {
+      "better": "better",
+      "worse": "worse",
+      "stable": "stable"
+    },
+    "unit": {
+      "minute": "{{value}} min",
+      "place": "{{value}} of 12",
+      "topThreePlace": "{{value}} of 3",
+      "per10": "{{value}} per 10 min"
+    },
+    "deaths": {
+      "title": "Your deaths by phase",
+      "phase": "Deaths in {{phase}}",
+      "resistanceTitle": "Your resistance items",
+      "firstMinute": "Your first resistance item",
+      "deathsBefore": "Deaths before your first resistance item",
+      "bought": "Bought",
+      "boughtAt": "Bought at"
+    },
+    "damage": {
+      "title": "Your damage to heroes by source",
+      "now_one": "Last match",
+      "now_other": "Last {{count}}",
+      "before_zero": "No match before",
+      "before_one": "Match before",
+      "before_other": "{{count}} before",
+      "appears_one": "In {{count}} match",
+      "appears_other": "In {{count}} matches",
+      "empty": "No damage to heroes by source in these matches."
+    },
+    "players": {
+      "title": "Your places among the 12 players",
+      "place": "Place in {{stat}}",
+      "topThree": "In Valve's top three",
+      "topThreePlace": "Average place in Valve's top three"
+    },
+    "evidence": {
+      "match": "{{date}}: {{value}}"
+    },
+    "catalogueUnavailable": "The item names are unavailable for now."
   },
   "settings": {
     "title": "Settings",

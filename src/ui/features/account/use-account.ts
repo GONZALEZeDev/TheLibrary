@@ -6,11 +6,12 @@
  * cached under {@link ACCOUNT_QUERY_KEY}, and the service tells when it changes: the hook reads it
  * again whoever changed it (the dialog, the settings, the daily refresh of the profile).
  *
- * The match history, the synchronisation, the match details (and the analysis of a match, which sits
- * under them), the download of the community data of a match and the hero catalogue all depend on
- * the account, and the services resolve it themselves, so their query keys do not carry it. Nothing
- * in the cache tells an account's rows from another's: an account change therefore has to clear them
- * all (see {@link resetAccountData}), or the screens would show the previous account's data.
+ * The match history, the synchronisation, the match details (and the analysis of a match and the
+ * review, which sit under them), the downloads of the community data of a match and of the review
+ * and the hero catalogue all depend on the account, and the services resolve it themselves, so their
+ * query keys do not carry it. Nothing in the cache tells an account's rows from another's: an account
+ * change therefore has to clear them all (see {@link resetAccountData}), or the screens would show
+ * the previous account's data.
  *
  * @packageDocumentation
  */
@@ -24,6 +25,7 @@ import {
   MATCHES_QUERY_KEY,
   SYNC_QUERY_KEY,
 } from '../matches/use-matches';
+import { REVIEW_COMMUNITY_QUERY_KEY } from '../review/use-review';
 
 /** Key of the linked account in the TanStack Query cache. */
 export const ACCOUNT_QUERY_KEY = ['account'] as const;
@@ -44,6 +46,7 @@ const ACCOUNT_DEPENDENT_KEYS = [
   ACCOUNT_QUERY_KEY,
   HEROES_QUERY_KEY,
   ANALYSIS_COMMUNITY_QUERY_KEY,
+  REVIEW_COMMUNITY_QUERY_KEY,
 ] as const;
 
 /**
@@ -68,8 +71,8 @@ export function useLinkedAccount() {
 
 /**
  * Forget everything the screens know about the account: its matches, the state of its
- * synchronisation, the details and the analyses of its matches, the community data downloaded for
- * them, the account itself and the hero catalogue.
+ * synchronisation, the details, the analyses and the review of its matches, the community data
+ * downloaded for them, the account itself and the hero catalogue.
  *
  * The queries are reset, not just invalidated: an invalidated query keeps showing its old data until
  * the new data arrives, and those rows belong to an account that may be erased. A reset query has no

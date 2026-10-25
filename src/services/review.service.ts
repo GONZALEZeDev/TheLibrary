@@ -50,8 +50,10 @@ import {
   cohortKey,
   durationWindowOf,
   reviewCohortRank,
+  reviewComparedWith,
   type Cohort,
   type CohortRank,
+  type ComparedWith,
 } from '../core/analysis/cohort';
 import { REVIEW_MATCHES } from '../core/analysis/insights/thresholds';
 import { PROJECTION_VERSION } from '../core/analysis/registry';
@@ -116,12 +118,16 @@ type ReviewSubject =
   | { readonly kind: 'no_account' }
   /** An account is linked and none of its matches is analysed. */
   | { readonly kind: 'empty' }
-  /** The matches of the linked account, most recent first, and the rank they are compared with. */
+  /**
+   * The matches of the linked account, most recent first, the rank they are compared with and how
+   * that rank relates to the player's own.
+   */
   | {
       readonly kind: 'matches';
       readonly accountId: AccountId;
       readonly recent: readonly RecentMatch[];
       readonly rank: CohortRank;
+      readonly comparedWith: ComparedWith;
     };
 
 /** What the review reads from the catalogues, each `null` when it could not be had. */
@@ -238,7 +244,7 @@ export class ReviewService {
     if (subject.kind !== 'matches') {
       return subject;
     }
-    const { recent, rank } = subject;
+    const { recent, rank, comparedWith } = subject;
 
     // Independent of each other: the cache of the cohorts and the catalogues are read at once.
     const [cohorts, { catalogue, loadout }] = await Promise.all([
@@ -251,7 +257,15 @@ export class ReviewService {
       itemIds.length === 0 ? NO_ITEM_STATS : await this.#itemBenchmarks.read(rank, itemIds);
     return {
       kind: 'ready',
-      review: buildReview({ recent, rank, cohorts, itemBenchmark, catalogue, loadout }),
+      review: buildReview({
+        recent,
+        rank,
+        comparedWith,
+        cohorts,
+        itemBenchmark,
+        catalogue,
+        loadout,
+      }),
     };
   }
 
@@ -314,8 +328,9 @@ export class ReviewService {
    *
    * @param limit - How many matches to list, at most.
    * @returns `no_account` without a linked account, `empty` when none of its matches is projected
-   *   with the current version of the metrics, otherwise the matches (most recent first) and the
-   *   tier above the current rank of the account, or every rank when it has none.
+   *   with the current version of the metrics, otherwise the matches (most recent first), the tier
+   *   above the current rank of the account (or every rank when it has none) and how that rank
+   *   relates to the account's own: the tier above, its own tier (the highest), or every rank.
    * @throws AppError of kind `storage` when the database fails.
    */
   async #subjectOf(limit: number): Promise<ReviewSubject> {
@@ -332,7 +347,14 @@ export class ReviewService {
     }
     // Only the current rank counts, as for the analysis of a match: the review looks at the player
     // as they are now, whatever rank each of the matches was played at.
-    return { kind: 'matches', accountId, recent, rank: reviewCohortRank(rank?.badge ?? null) };
+    const badge = rank?.badge ?? null;
+    return {
+      kind: 'matches',
+      accountId,
+      recent,
+      rank: reviewCohortRank(badge),
+      comparedWith: reviewComparedWith(badge),
+    };
   }
 
   /**

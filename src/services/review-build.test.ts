@@ -227,6 +227,7 @@ function cohortsOf(
 const NOTHING: ReviewInputs = {
   recent: [],
   rank: RANK,
+  comparedWith: 'tier_above',
   cohorts: new Map(),
   itemBenchmark: { kind: 'missing' },
   catalogue: null,
@@ -430,7 +431,12 @@ describe('buildReview', () => {
         lastStartTime: LAST_START_TIME,
       });
       expect(review.before).toEqual({ count: 0, firstStartTime: null, lastStartTime: null });
-      expect(review.community).toEqual({ kind: 'missing', rank: RANK });
+      expect(review.community).toEqual({
+        kind: 'missing',
+        rank: RANK,
+        comparedWith: 'tier_above',
+        itemStatsDue: false,
+      });
       const netWorth = placeRow(review, 'netWorth');
       expect(netWorth).toMatchObject({
         value: null,
@@ -463,7 +469,12 @@ describe('buildReview', () => {
 
       expect(review.recent).toEqual({ count: 0, firstStartTime: null, lastStartTime: null });
       expect(review.before).toEqual({ count: 0, firstStartTime: null, lastStartTime: null });
-      expect(review.community).toEqual({ kind: 'missing', rank: RANK });
+      expect(review.community).toEqual({
+        kind: 'missing',
+        rank: RANK,
+        comparedWith: 'tier_above',
+        itemStatsDue: false,
+      });
       expect(review.summary).toEqual({ weaknesses: [], strengths: [] });
       expect(placeRow(review, 'netWorth')).toMatchObject({ count: 0, value: null, side: null });
     });
@@ -564,6 +575,8 @@ describe('buildReview', () => {
         expect(community).toEqual({
           kind: 'available',
           rank: RANK,
+          comparedWith: 'tier_above',
+          itemStatsDue: false,
           fallbackMatches: 2,
           missingMatches: 2,
           stale: true,
@@ -578,6 +591,8 @@ describe('buildReview', () => {
         expect(reviewOf({ recent, cohorts }).community).toEqual({
           kind: 'available',
           rank: RANK,
+          comparedWith: 'tier_above',
+          itemStatsDue: false,
           fallbackMatches: 0,
           missingMatches: 0,
           stale: false,
@@ -613,9 +628,104 @@ describe('buildReview', () => {
           expect(reviewOf({ recent: listing(4), cohorts }).community).toEqual({
             kind: 'missing',
             rank: RANK,
+            comparedWith: 'tier_above',
+            itemStatsDue: false,
           });
         }
       });
+
+      it.each(['tier_above', 'own_tier', 'every_rank'] as const)(
+        'says the rank was chosen as %s, with or without a comparison',
+        (comparedWith) => {
+          const cohorts = cohortsOf([[DURATION_S, cachedRead(DURATION_S)]]);
+
+          // The builder does not choose the rank, it tells how it was chosen: as given, for a
+          // review that is compared with the rank and for one that is not.
+          expect(reviewOf({ recent: listing(3), cohorts, comparedWith }).community).toMatchObject({
+            kind: 'available',
+            comparedWith,
+          });
+          expect(reviewOf({ recent: listing(3), comparedWith }).community).toMatchObject({
+            kind: 'missing',
+            comparedWith,
+          });
+        },
+      );
+    });
+  });
+
+  describe('says whether the item statistics are due', () => {
+    /**
+     * The item statistics of the tier, as the cache holds them.
+     *
+     * @param stale - Whether they are a day old or more.
+     * @returns What the service reads.
+     */
+    function cachedItems(stale: boolean): ItemBenchmarkRead {
+      return {
+        kind: 'cached',
+        stale,
+        data: {
+          wanted: RANK,
+          used: RANK,
+          sampleMatches: 200,
+          items: new Map(),
+          fetchedAt: FETCHED_AT,
+        },
+      };
+    }
+
+    it.each([
+      { what: 'are not cached', itemBenchmark: { kind: 'missing' }, due: true },
+      { what: 'are a day old or more', itemBenchmark: cachedItems(true), due: true },
+      { what: 'are fresh', itemBenchmark: cachedItems(false), due: false },
+    ] as const)('says $due when the item statistics $what', ({ itemBenchmark, due }) => {
+      const recent = listing(3);
+      const cohorts = cohortsOf([[DURATION_S, cachedRead(DURATION_S)]]);
+      const catalogue = fullCatalogue();
+
+      // Whether the matches are compared with the tier or not does not change it: the item
+      // statistics are cached apart from the cohorts, and the page asks for them apart.
+      expect(reviewOf({ recent, cohorts, itemBenchmark, catalogue }).community).toMatchObject({
+        kind: 'available',
+        itemStatsDue: due,
+      });
+      expect(reviewOf({ recent, itemBenchmark, catalogue }).community).toMatchObject({
+        kind: 'missing',
+        itemStatsDue: due,
+      });
+    });
+
+    it('says they are due when the catalogue knows only some of the resistance items', () => {
+      const catalogue = catalogueOf([resistanceEntry(0)]);
+
+      const { community } = reviewOf({
+        recent: listing(3),
+        itemBenchmark: { kind: 'missing' },
+        catalogue,
+      });
+
+      expect(community).toMatchObject({ itemStatsDue: true });
+    });
+
+    it('says they are not due when there is nothing to ask for', () => {
+      // Without the catalogue, or with one that knows none of the resistance items, the download
+      // finds no item to ask the statistics of: a page that asked would learn nothing.
+      const catalogues = [
+        null,
+        catalogueOf([]),
+        catalogueOf([loadoutEntry(8_001, WEAPON, 'weapon')]),
+      ];
+
+      for (const catalogue of catalogues) {
+        const { community } = reviewOf({
+          recent: listing(3),
+          itemBenchmark: { kind: 'missing' },
+          catalogue,
+        });
+
+        expect(community).toMatchObject({ itemStatsDue: false });
+      }
     });
   });
 

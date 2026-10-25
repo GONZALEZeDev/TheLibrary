@@ -422,6 +422,9 @@ describe('ReviewService.getReview', { timeout: SLOW_TEST_MS }, () => {
     expect(review.community).toMatchObject({
       kind: 'available',
       rank: TIER_ABOVE,
+      comparedWith: 'tier_above',
+      // The refresh stored the item statistics last: nothing is due.
+      itemStatsDue: false,
       fallbackMatches: 0,
       missingMatches: 0,
       stale: false,
@@ -440,7 +443,14 @@ describe('ReviewService.getReview', { timeout: SLOW_TEST_MS }, () => {
 
     // No community data was downloaded yet (the catalogues were, as they are not cached either):
     // the review is there, with no comparison with the tier above.
-    expect(review.community).toEqual({ kind: 'missing', rank: TIER_ABOVE });
+    expect(review.community).toEqual({
+      kind: 'missing',
+      rank: TIER_ABOVE,
+      comparedWith: 'tier_above',
+      // The item catalogue was just downloaded and names the resistance items, whose statistics are
+      // not cached either.
+      itemStatsDue: true,
+    });
     expect(review.recent.count).toBe(REVIEW_MATCHES);
     expect(communityRequests(context)).toEqual([]);
   });
@@ -456,12 +466,50 @@ describe('ReviewService.getReview', { timeout: SLOW_TEST_MS }, () => {
     await expect(context.review.refreshCommunity()).resolves.toBe('updated');
     const review = ready(await context.review.getReview());
 
-    expect(review.community).toMatchObject({ kind: 'available', rank: { kind: 'all' } });
+    expect(review.community).toMatchObject({
+      kind: 'available',
+      rank: { kind: 'all' },
+      comparedWith: 'every_rank',
+    });
     // No badge range: every rank is asked for.
     for (const request of communityRequests(context)) {
       expect(new URL(request.url).searchParams.has('min_average_badge'), request.url).toBe(false);
     }
     await expect(context.cache.get('analytics.items.all')).resolves.not.toBeNull();
+  });
+
+  it('compares a player of the highest tier with their own tier, and says so', async () => {
+    const fixtureApi = createApi();
+    // Eternus 6: the highest badge, in the highest tier (11), which has no tier above.
+    const context = await setUp((request) =>
+      /\/v1\/players\/\d+\/rank$/.test(request.url)
+        ? jsonResponse({ badge: 116, rank: 11, subrank: 6, last_match: null })
+        : fixtureApi(request),
+    );
+
+    // Before any download, and once the data of the tier is in the cache: the relation is the same.
+    expect(ready(await context.review.getReview()).community).toEqual({
+      kind: 'missing',
+      rank: { kind: 'tier', tier: 11 },
+      comparedWith: 'own_tier',
+      itemStatsDue: true,
+    });
+    await expect(context.review.refreshCommunity()).resolves.toBe('updated');
+    const review = ready(await context.review.getReview());
+
+    expect(review.community).toMatchObject({
+      kind: 'available',
+      rank: { kind: 'tier', tier: 11 },
+      comparedWith: 'own_tier',
+    });
+    // The whole tier is asked for: badges 111 to 116.
+    for (const request of communityRequests(context)) {
+      const query = Object.fromEntries(new URL(request.url).searchParams);
+      expect(query, request.url).toMatchObject({
+        min_average_badge: '111',
+        max_average_badge: '116',
+      });
+    }
   });
 
   it('answers the catalogue sections unavailable when the item catalogue is unavailable', async () => {

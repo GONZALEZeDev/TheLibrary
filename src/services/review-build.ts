@@ -14,7 +14,8 @@
  *   of its own duration window (`cohortKey`), when the cache holds some. A match with none is still
  *   counted, with no community mark, and the review says how many there are.
  * - **The state of the comparison.** How many matches fell back on every rank, how many have no data
- *   at all, whether the data used is stale and how old the oldest of it is.
+ *   at all, whether the data used is stale and how old the oldest of it is, and whether the item
+ *   statistics of the tier, cached apart from the cohorts, are missing or stale.
  * - **The sections that need the item catalogue.** The resistance items and the damage by source
  *   cannot be built without it (the damage needs the hero's loadout as well); they say so instead.
  * - **The summary.** Every row of the tabs that is flagged as a weakness or a strength, most often
@@ -24,7 +25,12 @@
  *
  * @packageDocumentation
  */
-import { cohortKey, durationWindowOf, type CohortRank } from '../core/analysis/cohort';
+import {
+  cohortKey,
+  durationWindowOf,
+  type CohortRank,
+  type ComparedWith,
+} from '../core/analysis/cohort';
 import { REVIEW_MATCHES } from '../core/analysis/insights/thresholds';
 import { damageShares, type DamageShareRow } from '../core/analysis/review/damage-review';
 import { RESISTANCE_ITEMS } from '../core/analysis/review/resistance-items';
@@ -62,6 +68,11 @@ export interface ReviewInputs {
   readonly recent: readonly RecentMatch[];
   /** The rank of the cohort the player is compared with: the tier above theirs, or every rank. */
   readonly rank: CohortRank;
+  /**
+   * How {@link ReviewInputs.rank} relates to the player's own rank, which the review says as it is
+   * given: the builder only reads the rank of the cohort, it does not choose it.
+   */
+  readonly comparedWith: ComparedWith;
   /**
    * What the cache holds of the community data of the rank, by cohort key (`cohortKey`): one entry
    * for each duration window the last matches are in. A window with no entry has nothing cached.
@@ -128,19 +139,29 @@ function withCommunityOf(
  * Tell how far the comparison with the tier goes, from the state of each of the last matches.
  *
  * @param rank - The rank the matches are compared with.
+ * @param comparedWith - How that rank relates to the player's own.
+ * @param itemStatsDue - Whether the item statistics of the tier are due for a download.
  * @param states - The community state of each of the last matches.
  * @returns `available` when some match is compared (with the matches that fell back on every rank,
  *   the ones with no data to compare with, whether the data used is stale, and when the oldest of it
- *   was downloaded), and `missing` when none is.
+ *   was downloaded), and `missing` when none is. Both give the rank, how it relates to the player's
+ *   own and whether the item statistics are due.
  */
-function communityStateOf(rank: CohortRank, states: readonly CommunityState[]): ReviewCommunity {
+function communityStateOf(
+  rank: CohortRank,
+  comparedWith: ComparedWith,
+  itemStatsDue: boolean,
+  states: readonly CommunityState[],
+): ReviewCommunity {
   const used = states.filter((state) => state.kind === 'available');
   if (used.length === 0) {
-    return { kind: 'missing', rank };
+    return { kind: 'missing', rank, comparedWith, itemStatsDue };
   }
   return {
     kind: 'available',
     rank,
+    comparedWith,
+    itemStatsDue,
     fallbackMatches: used.filter(({ fallback }) => fallback).length,
     missingMatches: states.length - used.length,
     stale: used.some(({ stale }) => stale),
@@ -168,6 +189,28 @@ function resistanceItemsOf(catalogue: ItemCatalogue): readonly ResistanceItemVie
       protects,
     };
   });
+}
+
+/**
+ * Tell whether the item statistics of the tier are due for a download.
+ *
+ * The statistics are asked for by the id of the resistance items, which the catalogue gives: without
+ * the catalogue, or with one that knows none of the items, a download has no item to ask for and
+ * changes nothing, so the statistics are not due however little is cached.
+ *
+ * @param catalogue - The item catalogue, or `null` when it could not be read.
+ * @param itemBenchmark - What the cache holds of the item statistics of the tier.
+ * @returns `true` when the catalogue knows at least one resistance item and the cache holds no
+ *   statistics for the items, or holds statistics a day old or more.
+ */
+function itemStatsDueOf(
+  catalogue: ItemCatalogue | null,
+  itemBenchmark: ItemBenchmarkRead,
+): boolean {
+  if (catalogue === null || resistanceItemsOf(catalogue).every(({ itemId }) => itemId === null)) {
+    return false;
+  }
+  return itemBenchmark.kind === 'missing' || itemBenchmark.stale;
 }
 
 /**
@@ -298,7 +341,7 @@ function summaryOf(
  *   loadout either).
  */
 export function buildReview(inputs: ReviewInputs): Review {
-  const { rank, cohorts, itemBenchmark, catalogue, loadout } = inputs;
+  const { rank, comparedWith, cohorts, itemBenchmark, catalogue, loadout } = inputs;
   const lastMatches = inputs.recent.slice(0, REVIEW_MATCHES);
   const earlierMatches = inputs.recent.slice(REVIEW_MATCHES);
 
@@ -316,6 +359,8 @@ export function buildReview(inputs: ReviewInputs): Review {
     before: windowOf(earlierMatches),
     community: communityStateOf(
       rank,
+      comparedWith,
+      itemStatsDueOf(catalogue, itemBenchmark),
       matchesWithCommunity.map(({ state }) => state),
     ),
     summary: summaryOf(stats, deaths, players),

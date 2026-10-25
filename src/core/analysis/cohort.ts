@@ -147,6 +147,40 @@ export function reviewCohortRank(currentBadge: number | null): CohortRank {
 }
 
 /**
+ * How the cohort the review compares the player with relates to the player's own rank:
+ *
+ * - `tier_above`: the players of the tier above the player's, the usual case;
+ * - `own_tier`: the players of the player's own tier, because it is the highest and has none above;
+ * - `every_rank`: the players of every rank, because the player has no rank to compare from.
+ *
+ * The rank of the cohort ({@link CohortRank}) cannot tell these apart by itself: the highest tier is
+ * the tier above for a player one tier under it and the own tier of a player in it.
+ */
+export type ComparedWith = 'tier_above' | 'own_tier' | 'every_rank';
+
+/**
+ * Tell how the cohort the review compares the player with relates to the player's own rank.
+ *
+ * It is the companion of {@link reviewCohortRank}, which gives the cohort itself, and is worked out
+ * from it, so that the two always fit: the cohort is the player's own tier exactly when the tier
+ * above the player's would be past the highest tier.
+ *
+ * @param currentBadge - The badge the player has now, or `null` when it is unknown.
+ * @returns `every_rank` when {@link reviewCohortRank} gives every rank (no badge, `0`, or a number
+ *   that is no badge); `own_tier` when it gives the tier of the badge itself (Eternus); `tier_above`
+ *   otherwise.
+ */
+export function reviewComparedWith(currentBadge: number | null): ComparedWith {
+  const rank = reviewCohortRank(currentBadge);
+  // `isBadge` is what `reviewCohortRank` tests too: here it only tells the compiler that there is a
+  // badge to take the tier of.
+  if (rank.kind === 'all' || !isBadge(currentBadge)) {
+    return 'every_rank';
+  }
+  return rank.tier === tierOf(currentBadge) ? 'own_tier' : 'tier_above';
+}
+
+/**
  * The badges of a tier, as the community data filters them.
  *
  * @param tier - The tier, from 0 to 11.

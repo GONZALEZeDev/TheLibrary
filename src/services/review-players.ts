@@ -103,7 +103,8 @@ const TOP_THREE_POINT: PlayerPoint = {
  */
 const TOP_THREE_PLACE_POINT: PlayerPoint = {
   subject: { kind: 'valve_top_three_place' },
-  unit: 'place',
+  // A place in the top three is out of three, not out of twelve like a place on the scoreboard.
+  unit: 'top_three_place',
   better: 'lower',
   display: 'absolute',
   center: 'mean',

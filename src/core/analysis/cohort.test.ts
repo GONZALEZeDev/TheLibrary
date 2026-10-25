@@ -1,12 +1,13 @@
 /**
  * Tests of the cohorts: the duration window and the rank a match is compared with, the rank above
- * the player's that the review compares with, the key of a cohort and of a rank, and the part of a
- * phase that the community data covers for a cohort.
+ * the player's that the review compares with and how it relates to the player's own, the key of a
+ * cohort and of a rank, and the part of a phase that the community data covers for a cohort.
  *
  * @packageDocumentation
  */
 import { describe, expect, it } from 'vitest';
 import { present } from '../../test/analysis-context';
+import { RANK_TIER_NAMES } from '../domain/rank';
 import {
   ANY_LENGTH_WINDOW,
   DURATION_WINDOWS,
@@ -18,6 +19,8 @@ import {
   durationWindowOf,
   guaranteedEndS,
   reviewCohortRank,
+  reviewComparedWith,
+  type ComparedWith,
 } from './cohort';
 import { PHASE_START_S, phaseSpans } from './phases';
 import type { PhaseSpan } from './phases';
@@ -144,6 +147,46 @@ describe('reviewCohortRank', () => {
   it('reads a number that is not a badge as no rank, never as a tier without a name', () => {
     // Past the last badge (tier 12 would have no name), negative or not a whole number.
     for (const notABadge of [117, 121, -44, 44.5, Number.NaN]) {
+      expect(reviewCohortRank(notABadge), String(notABadge)).toEqual({ kind: 'all' });
+    }
+  });
+});
+
+describe('reviewComparedWith', () => {
+  /** The highest tier: Eternus, which has no tier above. */
+  const LAST_TIER = RANK_TIER_NAMES.length - 1;
+
+  it('tells the tier above, the own tier of the highest tier and every rank apart', () => {
+    expect(reviewComparedWith(44)).toBe('tier_above');
+    // Ascendant (tier 10) is compared with Eternus, which is a tier above it.
+    expect(reviewComparedWith(106)).toBe('tier_above');
+    // Eternus has none above: it is compared with itself.
+    expect(reviewComparedWith(111)).toBe('own_tier');
+    expect(reviewComparedWith(116)).toBe('own_tier');
+    // No rank at all: the placement matches (0), an unknown rank (null).
+    expect(reviewComparedWith(0)).toBe('every_rank');
+    expect(reviewComparedWith(null)).toBe('every_rank');
+  });
+
+  it('fits the rank the review compares with, for the first and last badge of every tier', () => {
+    // Tier 0 holds the badges 1 to 9 (no sub-rank 0): its first badge is 1.
+    for (let tier = 0; tier <= LAST_TIER; tier += 1) {
+      const badges = [Math.max(tier * 10 + 1, 1), tier * 10 + 6];
+      const expected: ComparedWith = tier === LAST_TIER ? 'own_tier' : 'tier_above';
+      const comparedTier = Math.min(tier + 1, LAST_TIER);
+      for (const badge of badges) {
+        expect(reviewComparedWith(badge), `badge ${String(badge)}`).toBe(expected);
+        expect(reviewCohortRank(badge), `badge ${String(badge)}`).toEqual({
+          kind: 'tier',
+          tier: comparedTier,
+        });
+      }
+    }
+  });
+
+  it('reads a number that is not a badge as no rank, like the rank it fits', () => {
+    for (const notABadge of [117, 121, -44, 44.5, Number.NaN]) {
+      expect(reviewComparedWith(notABadge), String(notABadge)).toBe('every_rank');
       expect(reviewCohortRank(notABadge), String(notABadge)).toEqual({ kind: 'all' });
     }
   });

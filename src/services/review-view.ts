@@ -21,7 +21,7 @@
  *
  * @packageDocumentation
  */
-import type { CohortRank } from '../core/analysis/cohort';
+import type { CohortRank, ComparedWith } from '../core/analysis/cohort';
 import type { MetricFamily, MetricKey, MetricUnit } from '../core/analysis/metric';
 import type { Phase } from '../core/analysis/phases';
 import type { Difference } from '../core/analysis/references';
@@ -43,9 +43,11 @@ import type { RecentMatch } from './metrics.repository';
  * - `minute`: a minute of the match (when an item was bought);
  * - `rate`: a share of the matches, from 0 to 1 (how often an item was bought, how often the player
  *   was in Valve's top three);
- * - `place`: a place among the players of a match, 1 for the best.
+ * - `place`: a place among the players of a match, 1 for the best of twelve;
+ * - `top_three_place`: a place in Valve's top three of a match, 1 for the best of three.
  */
-export type ReviewUnit = MetricUnit | 'deaths' | 'deaths_per_10_min' | 'minute' | 'rate' | 'place';
+export type ReviewUnit =
+  MetricUnit | 'deaths' | 'deaths_per_10_min' | 'minute' | 'rate' | 'place' | 'top_three_place';
 
 /**
  * A resistance item of the review: the list of resistance items says which it is, its tier and what
@@ -192,17 +194,44 @@ export interface ReviewWindow {
  *   of the data used is a day old or more, and `fetchedAt` is when the oldest of it was downloaded
  *   (Unix ms).
  * - `missing`: none of the last matches has tier data cached.
+ *
+ * Both say which rank the review asks for (`rank`) and how it relates to the player's own
+ * (`comparedWith`), and whether the item statistics of that rank are due (`itemStatsDue`), whether or
+ * not any data of the cohorts is cached yet. The item statistics are cached apart from the cohorts
+ * and downloaded last, so one can be missing or old while the other is complete.
  */
 export type ReviewCommunity =
   | {
       readonly kind: 'available';
+      /** The rank of the players the matches are compared with. */
       readonly rank: CohortRank;
+      /**
+       * How `rank` relates to the player's own rank: the tier above it, the player's own tier (the
+       * highest has none above), or every rank (the player has none). `rank` alone cannot tell the
+       * first two apart, as the highest tier is both.
+       */
+      readonly comparedWith: ComparedWith;
+      /**
+       * Whether the item statistics of the tier, which the resistance items are compared with, are
+       * due for a download: not cached, or a day old or more. It is `false` when a download could
+       * not change that: the item catalogue cannot be read, or knows none of the resistance items,
+       * so there are no items to ask the statistics of.
+       */
+      readonly itemStatsDue: boolean;
       readonly fallbackMatches: number;
       readonly missingMatches: number;
       readonly stale: boolean;
       readonly fetchedAt: number;
     }
-  | { readonly kind: 'missing'; readonly rank: CohortRank };
+  | {
+      readonly kind: 'missing';
+      /** The rank of the players the matches would be compared with. */
+      readonly rank: CohortRank;
+      /** How `rank` relates to the player's own rank, see the `available` case. */
+      readonly comparedWith: ComparedWith;
+      /** Whether the item statistics of the tier are due for a download, see the `available` case. */
+      readonly itemStatsDue: boolean;
+    };
 
 /**
  * A part of the review that needs the item catalogue: its content, or the reason it has none (the

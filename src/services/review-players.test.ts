@@ -215,7 +215,8 @@ describe('playerRowsOf', () => {
 
     expect(topThreePlace).toMatchObject({
       subject: { kind: 'valve_top_three_place' },
-      unit: 'place',
+      // A place in the top three is out of three, not out of twelve like a place on the scoreboard.
+      unit: 'top_three_place',
       better: 'lower',
       // The mean of 1, 2, 3, 1, 2 and 3: the 0 of a match outside the top three is not a place.
       value: 2,

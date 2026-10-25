@@ -7,6 +7,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  AVOIDABLE_DEATHS_WEAK,
   DEATHS_BEFORE_RESISTANCE_WEAK,
   LANE_SOULS_CLEAR_GAP,
   MIN_PERSONAL_MATCHES,
@@ -21,6 +22,7 @@ import {
   histogramMean,
   isInValveTopThree,
   isWithinNoise,
+  markOfAvoidableDeaths,
   markOfDeathsBeforeResistance,
   markOfLaneGap,
   markOfPercentile,
@@ -96,6 +98,21 @@ describe('the marks of the other points', () => {
     expect(markOfLaneGap(LANE_SOULS_CLEAR_GAP - 1)).toBeNull();
     expect(markOfLaneGap(LANE_SOULS_CLEAR_GAP)).toBe('strong');
     expect(markOfLaneGap(LANE_SOULS_CLEAR_GAP + 1)).toBe('strong');
+  });
+});
+
+describe('markOfAvoidableDeaths', () => {
+  it('marks two avoidable deaths weak, none strong and one neither', () => {
+    // Two deaths caught alone in one match is a pattern; one can be bad luck, and none is clean.
+    expect(markOfAvoidableDeaths(AVOIDABLE_DEATHS_WEAK)).toBe('weak');
+    expect(markOfAvoidableDeaths(AVOIDABLE_DEATHS_WEAK - 1)).toBeNull();
+    expect(markOfAvoidableDeaths(1)).toBeNull();
+    expect(markOfAvoidableDeaths(0)).toBe('strong');
+  });
+
+  it('marks more than two weak', () => {
+    expect(markOfAvoidableDeaths(AVOIDABLE_DEATHS_WEAK + 1)).toBe('weak');
+    expect(markOfAvoidableDeaths(AVOIDABLE_DEATHS_WEAK + 4)).toBe('weak');
   });
 });
 

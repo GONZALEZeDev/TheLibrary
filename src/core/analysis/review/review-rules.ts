@@ -17,6 +17,7 @@
  */
 import { PERCENTILE_SCALE } from '../insights/insights';
 import {
+  AVOIDABLE_DEATHS_WEAK,
   DEATHS_BEFORE_RESISTANCE_WEAK,
   LANE_SOULS_CLEAR_GAP,
   MIN_PERSONAL_MATCHES,
@@ -123,6 +124,21 @@ export function markOfDeathsBeforeResistance(deaths: number): ReviewMark | null 
     return 'weak';
   }
   return deaths === 0 ? 'strong' : null;
+}
+
+/**
+ * Mark the avoidable deaths of the player in a match: the deaths they could have avoided, caught alone
+ * against two heroes or more with no ally near.
+ *
+ * @param count - How many of the player's deaths in the match were avoidable (0 when there were none).
+ * @returns `'weak'` from {@link AVOIDABLE_DEATHS_WEAK} avoidable deaths, `'strong'` for none at all,
+ *   and `null` in between.
+ */
+export function markOfAvoidableDeaths(count: number): ReviewMark | null {
+  if (count >= AVOIDABLE_DEATHS_WEAK) {
+    return 'weak';
+  }
+  return count === 0 ? 'strong' : null;
 }
 
 /**

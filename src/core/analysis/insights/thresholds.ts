@@ -15,9 +15,12 @@
  * new one: it needs a bump of `PROJECTION_VERSION` (`../registry`), so that every match is projected
  * again.
  *
- * The thresholds of the review of the player's last matches are at the end of the file. They all
- * act when the review is shown, on the values already stored, and none of them is applied when a
- * match is projected: changing one takes effect at once and needs no new projection.
+ * The thresholds of the review of the player's last matches are at the end of the file. Most of
+ * them act when the review is shown, on the values already stored: changing one takes effect at
+ * once and needs no new projection. Two do not: {@link NEARBY_DISTANCE} and
+ * {@link AVOIDABLE_MIN_ENEMIES} decide which deaths of the tracked player are avoidable, and the
+ * count of those deaths is projected and stored with each match. Changing either needs a bump of
+ * `PROJECTION_VERSION` too.
  *
  * @packageDocumentation
  */
@@ -159,7 +162,8 @@ export const CURVE_WELL_Z = 1;
 export const INSIGHTS_PER_SIDE = 3;
 
 // The thresholds of the review. They act when the review is shown, not at projection (see the
-// header of this file): the stored values do not depend on any of them.
+// header of this file): the stored values do not depend on them, but for NEARBY_DISTANCE and
+// AVOIDABLE_MIN_ENEMIES, which decide the stored count of avoidable deaths.
 
 /**
  * How many of the player's most recent analysed matches the review covers, and how many it compares
@@ -223,3 +227,35 @@ export const REVIEW_MIN_FLAGGED_SHARE = 0.25;
  * set since the review has few matches to tell with.
  */
 export const PROGRESS_MIN_Z = 1;
+
+/**
+ * The distance, in world units, within which another player counts as near the tracked player when
+ * they died. It is measured on the map (2D) from where they died, and a player exactly at it is
+ * near. On the matches it was measured on, nearly every killer (98 %) is within it of their victim,
+ * so it takes in the fight around the death; and about a third of the deaths (32 %) come out
+ * avoidable, a share that leaves the player something to work on without blaming every death.
+ *
+ * It changes a projected value, the count of avoidable deaths: a change of it needs a bump of
+ * `PROJECTION_VERSION` (see the header of this file).
+ */
+export const NEARBY_DISTANCE = 1500;
+
+/**
+ * The fewest enemies near the tracked player, the killer always among them, from which a death with
+ * no ally near is avoidable: alone against two heroes or more is a fight the player should not have
+ * been in, while one against one is an even duel that can go either way.
+ *
+ * It changes a projected value, the count of avoidable deaths: a change of it needs a bump of
+ * `PROJECTION_VERSION` (see the header of this file).
+ */
+export const AVOIDABLE_MIN_ENEMIES = 2;
+
+/**
+ * The number of avoidable deaths in a match from which the match is weak for that point: two deaths
+ * caught alone in one match is a pattern, while one can be bad luck. No avoidable death at all is
+ * clean (the strong end of the point), and one is neither.
+ *
+ * It acts when the review is shown, on the stored count, so it takes effect at once: no bump of
+ * `PROJECTION_VERSION` is needed.
+ */
+export const AVOIDABLE_DEATHS_WEAK = 2;

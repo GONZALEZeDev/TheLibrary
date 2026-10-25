@@ -529,13 +529,19 @@ describe('MatchDetailService.runQueue', () => {
         archive.files.get(archivePath(ACCOUNT, matchOf(row))) ??
         expect.unreachable('the archive exists');
       const envelope = decodeArchiveEnvelope(await compressor.decompress(bytes));
-      // The archive holds the pruned detail: all the players, and the path of the tracked one only.
+      // The archive holds the pruned detail: all the players, and the paths of all twelve of them.
       expect(envelope.prunedForAccountId).toBe(ACCOUNT);
       expect(envelope.payload.match_info.match_id).toBe(row.match_id);
       expect(envelope.payload.match_info.players).toHaveLength(12);
-      expect(
-        envelope.payload.match_info.match_paths?.paths.map((path) => path.player_slot),
-      ).toEqual([(row.match_id % 12) + 1]);
+      const pathSlots = envelope.payload.match_info.match_paths?.paths.map(
+        (path) => path.player_slot,
+      );
+      expect(pathSlots?.toSorted((a, b) => a - b)).toEqual(
+        envelope.payload.match_info.players
+          .map((player) => player.player_slot)
+          .toSorted((a, b) => a - b),
+      );
+      expect(pathSlots).toHaveLength(12);
       await expect(storedDetail(repository, row)).resolves.toEqual({
         status: 'ready',
         attempts: 0,

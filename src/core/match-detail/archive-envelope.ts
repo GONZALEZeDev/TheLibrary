@@ -20,18 +20,28 @@ import { parseMatchMetadata } from '../deadlock-api/match-metadata.schema';
 import type { RawMatchMetadata } from '../deadlock-api/match-metadata.schema';
 
 /**
- * The format of the archive files this version writes and reads.
+ * The format of the archive files this version writes.
  *
- * A file of another format (written by a newer version of the app, for instance) is refused
- * rather than guessed at: bump this number whenever the envelope changes in a way an older reader
- * could not cope with.
+ * Format 2 keeps the movement paths of all twelve players; format 1 kept only the tracked
+ * player's. A file of a format this version does not know (written by a newer version of the app,
+ * for instance) is refused rather than guessed at: bump this number, and widen
+ * {@link ArchiveFormat}, whenever the envelope changes in a way an older reader could not cope with.
  */
-export const ARCHIVE_FORMAT = 1;
+export const ARCHIVE_FORMAT = 2;
+
+/**
+ * The formats of archive file this version can read: the current one and the one before it, whose
+ * files stay readable (they only lack the paths of the other players).
+ */
+export type ArchiveFormat = 1 | 2;
 
 /** What an archive file holds. */
 export interface ArchiveEnvelope {
-  /** The format of the file, always {@link ARCHIVE_FORMAT} for an envelope this version knows. */
-  readonly archiveFormat: typeof ARCHIVE_FORMAT;
+  /**
+   * The format of the file: {@link ARCHIVE_FORMAT} for an envelope this version created, the
+   * file's own format for one it decoded (so a format-1 file is never passed off as a current one).
+   */
+  readonly archiveFormat: ArchiveFormat;
   /** The tracked account the payload was pruned for: the player the archive is about. */
   readonly prunedForAccountId: AccountId;
   /** When the detail was fetched from the API, in Unix milliseconds. */
@@ -77,7 +87,8 @@ export function encodeArchiveEnvelope(envelope: ArchiveEnvelope): Uint8Array {
  * Decode and validate the bytes of an archive file.
  *
  * The format is checked before anything else, so that a file of a later format is reported as such
- * whatever its other fields hold. The payload goes through the same schema as a fresh API response,
+ * whatever its other fields hold. Formats 1 and 2 are both read, and the envelope keeps the format
+ * of the file it came from. The payload goes through the same schema as a fresh API response,
  * except the match id: the reader only has bytes, and the match id belongs to the file name.
  *
  * @param bytes - The UTF-8 bytes of the envelope.
@@ -87,7 +98,7 @@ export function encodeArchiveEnvelope(envelope: ArchiveEnvelope): Uint8Array {
  *   - `archive_utf8`: the bytes are not valid UTF-8;
  *   - `archive_json`: the text is not JSON (an empty or truncated file included);
  *   - `archive_shape`: the JSON is not an object;
- *   - `archive_format`: the `archiveFormat` is not {@link ARCHIVE_FORMAT};
+ *   - `archive_format`: the `archiveFormat` is not 1 or 2 (missing, another number, or not a number);
  *   - `prunedForAccountId: invalid_value` or `fetchedAt: invalid_value`: that field is not valid;
  *   - `payload.<path>: <code>`: the payload is not a match detail (or `payload: <code>` when it is
  *     missing or not an object), `<path>: <code>` being the first problem found by the schema.
@@ -97,7 +108,9 @@ export function decodeArchiveEnvelope(bytes: Uint8Array): ArchiveEnvelope {
   if (!isRecord(value)) {
     throw unreadableArchive('archive_shape');
   }
-  if (value.archiveFormat !== ARCHIVE_FORMAT) {
+  // Checking both values (rather than a range) lets the compiler narrow the field to `ArchiveFormat`.
+  const { archiveFormat } = value;
+  if (archiveFormat !== 1 && archiveFormat !== 2) {
     throw unreadableArchive('archive_format');
   }
   const accountId = parseAccountId(value.prunedForAccountId);
@@ -109,7 +122,14 @@ export function decodeArchiveEnvelope(bytes: Uint8Array): ArchiveEnvelope {
   if (typeof fetchedAt !== 'number' || !Number.isSafeInteger(fetchedAt) || fetchedAt < 0) {
     throw unreadableArchive('fetchedAt: invalid_value');
   }
-  return createArchiveEnvelope(parsePayload(value.payload), accountId, fetchedAt);
+  // Built here, not through `createArchiveEnvelope`, which stamps the current format: this one
+  // carries the format the file was written in.
+  return {
+    archiveFormat,
+    prunedForAccountId: accountId,
+    fetchedAt,
+    payload: parsePayload(value.payload),
+  };
 }
 
 /**

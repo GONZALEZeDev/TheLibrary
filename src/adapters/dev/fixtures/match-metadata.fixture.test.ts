@@ -943,9 +943,8 @@ describe('createMatchMetadataFixture', () => {
       const pruned = pruneForPlayer(metadata, tracked.playerSlot);
 
       expect(tracked).toEqual({ playerSlot: (row.match_id % 12) + 1, team: row.player_team });
-      expect(pruned.match_info.match_paths?.paths.map((path) => path.player_slot)).toEqual([
-        tracked.playerSlot,
-      ]);
+      // The paths of all twelve players are kept.
+      expect(pruned.match_info.match_paths?.paths).toHaveLength(12);
       // Every damage entry left involves the tracked player as the dealer or as the target.
       for (const dealer of pruned.match_info.damage_matrix?.damage_dealers ?? []) {
         for (const source of dealer.damage_sources) {

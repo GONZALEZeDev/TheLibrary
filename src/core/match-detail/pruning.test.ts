@@ -210,20 +210,41 @@ describe('findTrackedPlayer', () => {
 });
 
 describe('pruneForPlayer', () => {
-  it('keeps only the path of the tracked player', () => {
+  it('keeps the paths of all twelve players', () => {
     const detail = metadata();
     expect(detail.match_info.match_paths?.paths).toHaveLength(12);
 
     const pruned = pruneForPlayer(detail, TRACKED_SLOT);
 
-    expect(pruned.match_info.match_paths?.paths).toEqual([
-      {
-        player_slot: TRACKED_SLOT,
-        x_pos: [100, 200, 300],
-        y_pos: [400, 500, 600],
-        health: [550, 540, 530],
-      },
-    ]);
+    expect(pruned.match_info.match_paths?.paths).toHaveLength(12);
+    expect(pruned.match_info.match_paths?.paths).toEqual(detail.match_info.match_paths?.paths);
+    expect(pruned.match_info.match_paths?.paths).toContainEqual({
+      player_slot: TRACKED_SLOT,
+      x_pos: [100, 200, 300],
+      y_pos: [400, 500, 600],
+      health: [550, 540, 530],
+    });
+  });
+
+  it('still prunes the damage of other dealers', () => {
+    const pruned = pruneForPlayer(metadata(), TRACKED_SLOT);
+
+    // The enemy hitting only other players is gone; the teammate keeps only what hits the tracked
+    // player.
+    const dealerSlots = pruned.match_info.damage_matrix?.damage_dealers.map(
+      (dealer) => dealer.dealer_player_slot,
+    );
+    expect(dealerSlots).toEqual([0, TRACKED_SLOT, 8]);
+    for (const dealer of pruned.match_info.damage_matrix?.damage_dealers ?? []) {
+      for (const source of dealer.damage_sources) {
+        for (const target of source.damage_to_players) {
+          expect(
+            dealer.dealer_player_slot === TRACKED_SLOT ||
+              target.target_player_slot === TRACKED_SLOT,
+          ).toBe(true);
+        }
+      }
+    }
   });
 
   it('keeps the damage the tracked player deals and takes, and nothing else', () => {

@@ -2,10 +2,11 @@
  * User-centric pruning of a match detail.
  *
  * A match detail weighs about 1 MB, most of it the movement paths of the twelve players and the
- * damage matrix. The app only analyses the tracked player, so before a detail is compressed and
+ * damage matrix. The app mostly analyses the tracked player, so before a detail is compressed and
  * archived it is reduced to what concerns them (see `docs/adr/0003-user-centric-archive-zstd.md`):
- * the movement paths and the damage of the other players that do not involve them are dropped,
- * and everything else is kept exactly as the API sent it.
+ * the damage of the other players that does not involve them is dropped, and everything else is
+ * kept exactly as the API sent it. The movement paths of all twelve players are kept (archive
+ * format 2): they tell who was near the tracked player when they died.
  *
  * Both functions are pure: they never modify their input.
  *
@@ -76,17 +77,16 @@ export function findTrackedPlayer(metadata: RawMatchMetadata, accountId: Account
 /**
  * Reduce a match detail to what concerns the tracked player.
  *
- * These are the only things dropped:
- * - the movement paths of the other players (`match_info.match_paths.paths`);
- * - in the damage matrix, the damage that involves neither the tracked player as dealer nor as
- *   target: every damage entry of another dealer that does not target them, then the damage sources
- *   and the dealers that are left empty.
+ * This is the only thing dropped: in the damage matrix, the damage that involves neither the
+ * tracked player as dealer nor as target (every damage entry of another dealer that does not target
+ * them, then the damage sources and the dealers that are left empty).
  *
- * Everything else is copied unchanged: all the players, `sample_time_s` and `source_details` (the
- * damage sources refer to `source_details` by index, so it must stay whole), and every field the
- * schema does not name. The non-player dealer (slot `0`) is treated like any other dealer: what it
- * does to the tracked player is kept, and the tracked player's damage to a non-player target (slot
- * `0`) is kept with the rest of their damage.
+ * Everything else is copied unchanged: all the players, the movement paths of all twelve of them
+ * (`match_info.match_paths`, whole), `sample_time_s` and `source_details` (the damage sources refer
+ * to `source_details` by index, so it must stay whole), and every field the schema does not name.
+ * The non-player dealer (slot `0`) is treated like any other dealer: what it does to the tracked
+ * player is kept, and the tracked player's damage to a non-player target (slot `0`) is kept with
+ * the rest of their damage.
  *
  * The input is never modified. The result shares the parts that are kept as they are (such as the
  * players) with the input, which is safe because neither is ever mutated.
@@ -97,21 +97,14 @@ export function findTrackedPlayer(metadata: RawMatchMetadata, accountId: Account
  */
 export function pruneForPlayer(metadata: RawMatchMetadata, trackedSlot: number): RawMatchMetadata {
   const matchInfo = metadata.match_info;
-  const { match_paths: matchPaths, damage_matrix: damageMatrix } = matchInfo;
+  const { damage_matrix: damageMatrix } = matchInfo;
   return {
     ...metadata,
     match_info: {
       ...matchInfo,
-      // Paths and damage matrix are optional in the payload: an absent part stays absent (no key
-      // is added), so the archive still describes what the API sent.
-      ...(matchPaths === undefined
-        ? {}
-        : {
-            match_paths: {
-              ...matchPaths,
-              paths: matchPaths.paths.filter((path) => path.player_slot === trackedSlot),
-            },
-          }),
+      // The paths stay whole (they come with `...matchInfo`). The damage matrix is optional in the
+      // payload: an absent part stays absent (no key is added), so the archive still describes what
+      // the API sent.
       ...(damageMatrix === undefined
         ? {}
         : {

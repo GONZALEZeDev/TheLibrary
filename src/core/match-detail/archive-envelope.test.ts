@@ -73,7 +73,7 @@ function utf8(text: string): Uint8Array {
 function envelopeBytes(overrides: Record<string, unknown> = {}): Uint8Array {
   return utf8(
     JSON.stringify({
-      archiveFormat: 1,
+      archiveFormat: 2,
       prunedForAccountId: 1_000_009,
       fetchedAt: FETCHED_AT,
       payload: payload(),
@@ -173,7 +173,11 @@ describe('createArchiveEnvelope', () => {
       fetchedAt: FETCHED_AT,
       payload: detail,
     });
-    expect(ARCHIVE_FORMAT).toBe(1);
+  });
+
+  it('stamps format 2 on a new envelope', () => {
+    expect(ARCHIVE_FORMAT).toBe(2);
+    expect(createArchiveEnvelope(payload(), ACCOUNT, FETCHED_AT).archiveFormat).toBe(2);
   });
 });
 
@@ -199,7 +203,7 @@ describe('encodeArchiveEnvelope and decodeArchiveEnvelope', () => {
 
     const text = new TextDecoder().decode(encodeArchiveEnvelope(envelope));
 
-    expect(text.startsWith('{"archiveFormat":1,"prunedForAccountId":1000009,"fetchedAt":')).toBe(
+    expect(text.startsWith('{"archiveFormat":2,"prunedForAccountId":1000009,"fetchedAt":')).toBe(
       true,
     );
     expect(JSON.parse(text)).toEqual(envelope);
@@ -224,17 +228,52 @@ describe('encodeArchiveEnvelope and decodeArchiveEnvelope', () => {
     expect(envelope).toEqual(before);
   });
 
-  it('refuses an archive of an unknown format', () => {
-    const error = catchAppError(() => decodeArchiveEnvelope(envelopeBytes({ archiveFormat: 2 })));
+  it('decodes a format-1 archive and keeps its format', () => {
+    // A file written before the paths of all twelve players were kept: still readable, and it must
+    // not be passed off as a current one.
+    const decoded = decodeArchiveEnvelope(envelopeBytes({ archiveFormat: 1 }));
+
+    expect(decoded.archiveFormat).toBe(1);
+    expect(decoded.prunedForAccountId).toBe(ACCOUNT);
+    expect(decoded.fetchedAt).toBe(FETCHED_AT);
+    expect(decoded.payload).toEqual(payload());
+  });
+
+  it('decodes a format-2 archive', () => {
+    const decoded = decodeArchiveEnvelope(envelopeBytes({ archiveFormat: 2 }));
+
+    expect(decoded.archiveFormat).toBe(2);
+    expect(decoded.payload).toEqual(payload());
+  });
+
+  it('refuses format 3 with the archive_format issue', () => {
+    const error = catchAppError(() => decodeArchiveEnvelope(envelopeBytes({ archiveFormat: 3 })));
 
     expect(error.kind).toBe('invalid_payload');
     expect(error.message).toBe('The archive is unreadable');
     expect(error.context.issue).toBe('archive_format');
   });
 
+  it.each([
+    ['zero', 0],
+    ['a later format', 3],
+    ['negative', -1],
+    ['a decimal', 1.5],
+    ['text', '2'],
+    ['null', null],
+    ['missing', undefined],
+  ])('refuses an archive whose format is %s', (_name, value) => {
+    const error = catchAppError(() =>
+      decodeArchiveEnvelope(envelopeBytes({ archiveFormat: value })),
+    );
+
+    expect(error.kind).toBe('invalid_payload');
+    expect(error.context.issue).toBe('archive_format');
+  });
+
   it('refuses an archive of an unknown format whatever its other fields hold', () => {
     // A later format may change every other field: the format is checked first.
-    const bytes = utf8(JSON.stringify({ archiveFormat: 2, somethingElse: true }));
+    const bytes = utf8(JSON.stringify({ archiveFormat: 3, somethingElse: true }));
 
     const error = catchAppError(() => decodeArchiveEnvelope(bytes));
 

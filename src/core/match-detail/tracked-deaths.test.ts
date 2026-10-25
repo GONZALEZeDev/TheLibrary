@@ -13,7 +13,7 @@ import { parseMatchMetadata } from '../deadlock-api/match-metadata.schema';
 import { testAccountId } from '../../test/test-data';
 import { createArchiveEnvelope } from './archive-envelope';
 import type { ArchiveEnvelope } from './archive-envelope';
-import { readTrackedDeathTimes } from './tracked-deaths';
+import { readTrackedDeaths, readTrackedDeathTimes } from './tracked-deaths';
 
 /** The slot of the tracked player (their team is 1: slots 7 to 12). */
 const TRACKED_SLOT = 9;
@@ -36,6 +36,25 @@ type Overrides = Readonly<Record<string, unknown>>;
  */
 function rawDeath(gameTimeS: number, killerPlayerSlot = 1) {
   return { game_time_s: gameTimeS, killer_player_slot: killerPlayerSlot, death_duration_s: 20 };
+}
+
+/**
+ * One death detail with everything the detailed reading needs, in the shape of the API.
+ *
+ * @param gameTimeS - When the player died, in seconds since the start of the match.
+ * @param fields - Fields to change (an `undefined` value removes the field).
+ * @returns The raw death detail.
+ */
+function rawPlacedDeath(gameTimeS: number, fields: Overrides = {}) {
+  return {
+    game_time_s: gameTimeS,
+    killer_player_slot: 4,
+    time_to_kill_s: 7.5,
+    death_duration_s: 20,
+    death_pos: { x: 1_200.5, y: -3_400.25, z: 255.9 },
+    killer_pos: { x: 1_300, y: -3_300, z: 250 },
+    ...fields,
+  };
 }
 
 /**
@@ -211,5 +230,171 @@ describe('readTrackedDeathTimes', () => {
     expect(JSON.stringify({ message: error.message, context: error.context })).not.toContain(
       'S3CR3T',
     );
+  });
+});
+
+describe('readTrackedDeaths', () => {
+  it("reads the tracked player's deaths with killer, time to kill and position", () => {
+    // Listed out of order: the result is sorted, and carries the fields of each death.
+    const deaths = readTrackedDeaths(
+      archive({
+        deaths: 2,
+        death_details: [
+          rawPlacedDeath(900, {
+            killer_player_slot: 2,
+            time_to_kill_s: 3.25,
+            death_duration_s: 31,
+            death_pos: { x: -50.5, y: 80, z: 12 },
+          }),
+          rawPlacedDeath(120),
+        ],
+      }),
+    );
+
+    expect(deaths).toEqual([
+      {
+        timeS: 120,
+        killerSlot: 4,
+        timeToKillS: 7.5,
+        respawnS: 20,
+        position: { x: 1_200.5, y: -3_400.25 },
+      },
+      {
+        timeS: 900,
+        killerSlot: 2,
+        timeToKillS: 3.25,
+        respawnS: 31,
+        position: { x: -50.5, y: 80 },
+      },
+    ]);
+  });
+
+  it('answers null for time to kill and respawn when absent', () => {
+    // Left out or sent as null: unknown, which is not zero.
+    const deaths = readTrackedDeaths(
+      archive({
+        deaths: 2,
+        death_details: [
+          rawPlacedDeath(100, { time_to_kill_s: undefined, death_duration_s: undefined }),
+          rawPlacedDeath(200, { time_to_kill_s: null, death_duration_s: null }),
+        ],
+      }),
+    );
+
+    expect(deaths).toEqual([
+      expect.objectContaining({ timeS: 100, timeToKillS: null, respawnS: null }),
+      expect.objectContaining({ timeS: 200, timeToKillS: null, respawnS: null }),
+    ]);
+  });
+
+  it('keeps a death to troopers with killer slot 0', () => {
+    const deaths = readTrackedDeaths(
+      archive({ deaths: 1, death_details: [rawPlacedDeath(100, { killer_player_slot: 0 })] }),
+    );
+
+    expect(deaths).toEqual([expect.objectContaining({ timeS: 100, killerSlot: 0 })]);
+  });
+
+  it('answers an empty list for a player who never died', () => {
+    for (const deathDetails of [undefined, null, []]) {
+      const deaths = readTrackedDeaths(archive({ deaths: 0, death_details: deathDetails }));
+
+      expect(deaths, String(deathDetails)).toEqual([]);
+    }
+  });
+
+  it('answers null when the death details are incomplete', () => {
+    // Fewer or more details than deaths, or none at all: some may be missing, so none is trusted.
+    expect(
+      readTrackedDeaths(
+        archive({ deaths: 3, death_details: [rawPlacedDeath(100), rawPlacedDeath(200)] }),
+      ),
+    ).toBeNull();
+    expect(
+      readTrackedDeaths(
+        archive({ deaths: 1, death_details: [rawPlacedDeath(100), rawPlacedDeath(200)] }),
+      ),
+    ).toBeNull();
+    expect(readTrackedDeaths(archive({ deaths: 2, death_details: [] }))).toBeNull();
+    for (const deathDetails of [undefined, null]) {
+      expect(
+        readTrackedDeaths(archive({ deaths: 3, death_details: deathDetails })),
+        String(deathDetails),
+      ).toBeNull();
+    }
+  });
+
+  it('refuses a death position without coordinates with the field path only', () => {
+    const error = catchAppError(() =>
+      readTrackedDeaths(
+        archive({
+          deaths: 2,
+          death_details: [
+            rawPlacedDeath(100),
+            rawPlacedDeath(200, { death_pos: { x: 'S3CR3T', z: 5 } }),
+          ],
+        }),
+      ),
+    );
+
+    expect(error.kind).toBe('invalid_payload');
+    // The tracked player is the fourth of the list (index 3), the broken death the second (index 1).
+    expect(error.context.issue).toBe('players.3.death_details.1.death_pos.x: invalid_type');
+    expect(JSON.stringify({ message: error.message, context: error.context })).not.toContain(
+      'S3CR3T',
+    );
+  });
+
+  it('refuses a death without a position', () => {
+    const error = catchAppError(() =>
+      readTrackedDeaths(
+        archive({
+          deaths: 1,
+          death_details: [rawPlacedDeath(100, { death_pos: undefined })],
+        }),
+      ),
+    );
+
+    expect(error.kind).toBe('invalid_payload');
+    expect(error.context.issue).toBe('players.3.death_details.0.death_pos: invalid_type');
+  });
+
+  it('refuses a death without a killer slot', () => {
+    const error = catchAppError(() =>
+      readTrackedDeaths(
+        archive({
+          deaths: 1,
+          death_details: [rawPlacedDeath(100, { killer_player_slot: undefined })],
+        }),
+      ),
+    );
+
+    expect(error.kind).toBe('invalid_payload');
+    expect(error.context.issue).toBe('players.3.death_details.0.killer_player_slot: invalid_type');
+  });
+
+  it('does not modify the envelope', () => {
+    const envelope = archive({
+      deaths: 2,
+      death_details: [rawPlacedDeath(500), rawPlacedDeath(100)],
+    });
+    const before = structuredClone(envelope);
+
+    readTrackedDeaths(envelope);
+
+    expect(envelope).toEqual(before);
+  });
+
+  it('refuses an archive without the tracked player', () => {
+    const envelope = createArchiveEnvelope(
+      archive().payload,
+      testAccountId(987_654_321),
+      FETCHED_AT,
+    );
+
+    const error = catchAppError(() => readTrackedDeaths(envelope));
+
+    expect(error.kind).toBe('invalid_payload');
+    expect(error.context.issue).toBe('tracked_player_missing');
   });
 });

@@ -30,10 +30,10 @@ export default defineConfig({
     // Explicit imports (`import { describe } from 'vitest'`) instead of injected globals.
     globals: false,
     include: ['src/test/canary/**/*.canary.ts'],
-    // The worst case is 8 requests of 15 s each (REQUEST_TIMEOUT_MS), i.e. 120 s, plus the level 19
-    // compression: three minutes let a slow API finish with time left for the compression, while a
+    // The worst case is 10 requests of 15 s each (REQUEST_TIMEOUT_MS), i.e. 150 s, plus the level 19
+    // compression: four minutes let a slow API finish with time left for the compression, while a
     // hung run still ends well before the 10 minutes of the workflow.
-    testTimeout: 180_000,
+    testTimeout: 240_000,
     // The verbose reporter prints the annotations of the canary (its request counts and sizes),
     // which the default reporter hides when a run passes. On GitHub Actions the reporter that
     // Vitest adds by default to the default one (failure annotations on the run) is kept.

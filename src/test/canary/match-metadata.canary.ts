@@ -7,7 +7,8 @@
  * check of the data source. It runs only with `pnpm canary` (see vitest.canary.config.ts) and by the
  * weekly workflow `API canary`, never with `pnpm test` nor `pnpm check`.
  *
- * Requests (at most eight per run, well under the limits of the API):
+ * Requests (at most ten per run, well under the limits of the API; a run whose first detail answers
+ * makes six):
  * 1. the list of the most recent normal-mode Paige matches (match-level fields only: no player, so
  *    no account id);
  * 2. the detail of those matches, in order, until one answers 200 (at most five). The API does not
@@ -16,9 +17,17 @@
  *    `disable_steam=true` is always sent, as in the app, and `force_refetch` never is;
  * 3. the hero catalogue, for Paige's loadout;
  * 4. the item catalogue (about 6.5 MB, the largest answer the app downloads), for the ids, class
- *    names and kinds the damage tab and the build are joined on.
- * The two catalogues are the last requests, sent once the checks that need no network have passed.
- * They follow the same rule: a 429 or a 503 ends the run at once.
+ *    names and kinds the damage tab and the build are joined on, and for the ids of the twelve
+ *    resistance items of the review;
+ * 5. the purchases of the items by minute among the Paige players of tier 7 (Emissary) over the last
+ *    30 days, whatever the length of the match: the figures the review places the resistance items
+ *    on;
+ * 6. the performance curve of the same players in the matches of 1,800 to 2,099 seconds, for its
+ *    `deaths` series: the figures the review places the deaths of a phase on.
+ * The last four are the last requests, sent once the checks that need no network have passed. They
+ * follow the same rule: a 429 or a 503 ends the run at once. The two community requests (5 and 6)
+ * are built by the functions of the app, and carry a hero, a period, a duration window and a badge
+ * range: no account id, no match id.
  *
  * The requests are the ones of the app: they go through its HTTP client (`TauriHttpClient`, given
  * Node's `fetch` instead of the Tauri plugin's) with the headers of its service, and the responses
@@ -28,7 +37,9 @@
  * death details it reads, and the metrics projected from it), and what the match detail page reads
  * (the damage matrix and the damage sources projected from it, the tracked player's items, the
  * scoreboard, Paige's loadout in the hero catalogue, and the item catalogue that names the build,
- * the ability unlocks and the loadout by id and by class name).
+ * the ability unlocks and the loadout by id and by class name). The review is checked on what it
+ * takes from the API besides: the twelve resistance items by class name in the item catalogue, and
+ * the readers of the app (`parseItemStats`, `parsePerformanceCurve`) on the two community answers.
  *
  * Privacy: the detail holds the account ids of the twelve players, and this repository is public,
  * and so are its workflow logs. No message of this file contains a value of a payload, an account id
@@ -44,10 +55,12 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { TauriHttpClient } from '../../adapters/tauri/tauri-http-client.adapter';
+import { ANY_LENGTH_WINDOW, type Cohort } from '../../core/analysis/cohort';
 import { readDamageMatrix } from '../../core/analysis/damage-matrix';
 import { damageSourceKey, projectDamageSources } from '../../core/analysis/damage-sources';
 import { SNAPSHOT_STATS, buildMatchContext } from '../../core/analysis/match-context';
 import { MATCH_METRICS, projectMetrics } from '../../core/analysis/registry';
+import { RESISTANCE_ITEMS } from '../../core/analysis/review/resistance-items';
 import type { ApiOutcome } from '../../core/deadlock-api/api-response';
 import { interpretResponse } from '../../core/deadlock-api/api-response';
 import { parseItemCatalogue, type CatalogueItem } from '../../core/deadlock-api/assets.schema';
@@ -57,12 +70,16 @@ import {
   MAX_RESPONSE_BYTES,
   REQUEST_TIMEOUT_MS,
   heroesRequest,
+  itemStatsRequest,
   itemsRequest,
   matchMetadataRequest,
+  performanceCurveRequest,
   userAgent,
 } from '../../core/deadlock-api/endpoints';
 import { parseHeroAssets } from '../../core/deadlock-api/heroes.schema';
+import { parseItemStats } from '../../core/deadlock-api/item-stats.schema';
 import { parseMatchMetadata } from '../../core/deadlock-api/match-metadata.schema';
+import { parsePerformanceCurve } from '../../core/deadlock-api/performance-curve.schema';
 import { parseAccountId } from '../../core/domain/account';
 import type { HeroAsset } from '../../core/domain/hero';
 import { PAIGE_HERO_ID } from '../../core/domain/hero';
@@ -80,6 +97,7 @@ import { ARCHIVED_GAME_MODE } from '../../core/match-detail/detail-status';
 import { findTrackedPlayer, pruneForPlayer } from '../../core/match-detail/pruning';
 import { readScoreboard } from '../../core/match-detail/scoreboard';
 import { finalBuildOf, readTrackedItems } from '../../core/match-detail/tracked-items';
+import { cohortQuery, communityPeriodStartS } from '../../services/benchmark.service';
 import { compressBytes, decompressBytes } from '../../workers/zstd-codec';
 
 /** Replaced by Vite with the version of package.json (see `define` in vitest.canary.config.ts). */
@@ -137,6 +155,56 @@ const MIN_MVP_PLAYERS = 1;
  * turns the canary red while there is still time to raise the limit.
  */
 const MAX_ITEM_CATALOGUE_SHARE = 0.8;
+
+/**
+ * The tier the two community requests are made for: Emissary (7), a tier in the middle of the
+ * ladder, so that the community holds enough Paige matches for an answer that is never empty.
+ */
+const COMMUNITY_TIER = 7;
+
+/**
+ * The cohort of the item purchases: the players of {@link COMMUNITY_TIER}, in matches of any length
+ * ({@link ANY_LENGTH_WINDOW}). The review asks for the purchases once for the tier, not once per
+ * duration window.
+ */
+const ITEM_STATS_COHORT: Cohort = {
+  rank: { kind: 'tier', tier: COMMUNITY_TIER },
+  window: ANY_LENGTH_WINDOW,
+};
+
+/**
+ * The cohort of the performance curve: the players of {@link COMMUNITY_TIER}, in matches of 1,800 to
+ * 2,099 seconds (30 to 35 minutes), one of the duration windows of the app. The window is written
+ * out rather than looked up, so that a change of the windows of the app, which is no change of the
+ * API, does not turn the canary red.
+ */
+const CURVE_COHORT: Cohort = {
+  rank: { kind: 'tier', tier: COMMUNITY_TIER },
+  window: { minS: 1_800, maxS: 2_099 },
+};
+
+/**
+ * The fewest of the twelve resistance items that must have purchases in the item statistics (half
+ * of them). A patch that makes one of them rare may leave it with no purchase for a while, so the
+ * canary does not ask for all of them; an answer where fewer than half are bought is one whose ids
+ * or rows are no longer read.
+ */
+const MIN_RESISTANCE_ITEMS_BOUGHT = 6;
+
+/**
+ * The last minute of the match a purchase of a resistance item can be in: the end of the longest
+ * match the request covers ({@link ANY_LENGTH_WINDOW}, 7,000 seconds, so minute 117). The rows keep
+ * every minute something was bought in, and a long match buys late, so no shorter bound holds. A
+ * minute past it means that the `bucket` of a row is no longer a minute of the game (seconds, or a
+ * share of the match).
+ */
+const MAX_PURCHASE_MINUTE = Math.ceil(ANY_LENGTH_WINDOW.maxS / 60);
+
+/**
+ * The fewest points a performance curve must hold. The check that the deaths never go down proves
+ * nothing on fewer than two points.
+ */
+const MIN_CURVE_POINTS = 2;
 
 /**
  * The list of the most recent normal-mode Paige matches. It is the bulk endpoint of deadlock-api:
@@ -291,9 +359,9 @@ async function fetchFirstAvailableDetail(
 /**
  * Ask the API for the hero catalogue and read it the way the app does.
  *
- * It is the next to last request of a run. A 429 or a 503 (a pause), like any other answer that is
- * not a success, ends the run at once: the catalogue is a single request, with no other one to move
- * on to.
+ * It is the first of the four last requests of a run. A 429 or a 503 (a pause), like any other answer
+ * that is not a success, ends the run at once: the catalogue is a single request, with no other one
+ * to move on to.
  *
  * @param api - The sender of the run.
  * @returns The playable heroes with their portrait and loadout, sorted by id.
@@ -311,7 +379,8 @@ async function fetchHeroCatalogue(api: CountingApi): Promise<HeroAsset[]> {
 /**
  * Ask the API for the item catalogue and read it the way the app does.
  *
- * It is the last request of a run, under the same rule as the hero catalogue.
+ * It comes after the hero catalogue, under the same rule, and before the community requests, which
+ * rest on the ids it gives.
  *
  * @param api - The sender of the run.
  * @returns The readable entries, in the order of the body, and the size of the answer in bytes
@@ -328,6 +397,41 @@ async function fetchItemCatalogue(
   }
   const bodyBytes = api.lastBodyBytes();
   return { items: inStep('item catalogue', () => parseItemCatalogue(outcome.json)), bodyBytes };
+}
+
+/**
+ * Ask the API for an answer of the community data and read it the way the app does.
+ *
+ * The community request is built by the app, from a cohort, so it is the very URL the review sends.
+ * The readers of the app are lenient: a row they cannot read is left out and the others stay usable,
+ * so the count of the rows of the body is returned too, for the caller to tell whether any was left
+ * out. A 429 or a 503 (a pause), like any other answer that is not a success, ends the run at once,
+ * as for the catalogues.
+ *
+ * @param api - The sender of the run.
+ * @param request - The community request.
+ * @param what - What the answer is, for the messages.
+ * @param read - The reader of the app for that answer.
+ * @returns The rows the reader kept, how many rows the body holds (0 when it is not a list), and
+ *   the size of the answer in bytes (what `MAX_RESPONSE_BYTES` is checked against).
+ * @throws Error when the request does not answer 200, or when the body is not what the app
+ *   expects. The message holds a kind, a status or a path and a code, never a value of the body.
+ */
+async function fetchCommunityAnswer<Row>(
+  api: CountingApi,
+  request: ApiRequest,
+  what: string,
+  read: (body: unknown) => readonly Row[],
+): Promise<{ rows: readonly Row[]; bodyRows: number; bodyBytes: number }> {
+  const outcome = await api.get(request);
+  if (outcome.kind !== 'success') {
+    throw requestFailure(`${what} request`, outcome);
+  }
+  return {
+    rows: inStep(what, () => read(outcome.json)),
+    bodyRows: Array.isArray(outcome.json) ? outcome.json.length : 0,
+    bodyBytes: api.lastBodyBytes(),
+  };
 }
 
 /**
@@ -415,8 +519,27 @@ function damageTotalsAgree(matrixTotal: number, snapshotDamage: number): boolean
   return Math.abs(matrixTotal - snapshotDamage) <= margin;
 }
 
+/**
+ * Count the steps of a series where the value is lower than the one before.
+ *
+ * @param values - The series, in order.
+ * @returns How many values are lower than their predecessor: 0 for a series that never goes down
+ *   (equal values included), and for an empty one.
+ */
+function decreasingSteps(values: readonly number[]): number {
+  let steps = 0;
+  let previous = Number.NEGATIVE_INFINITY;
+  for (const value of values) {
+    if (value < previous) {
+      steps += 1;
+    }
+    previous = value;
+  }
+  return steps;
+}
+
 describe('deadlock-api match detail', () => {
-  it('still goes through the archive pipeline of the app', async ({ annotate }) => {
+  it('still goes through the archive pipeline and the review of the app', async ({ annotate }) => {
     const api = createCountingApi();
 
     // --- 1. A recent Paige match the API holds ---
@@ -594,7 +717,7 @@ describe('deadlock-api match detail', () => {
       'players with an mvpRank (the top three of the match, at most)',
     ).toBeLessThanOrEqual(MAX_MVP_PLAYERS);
 
-    // --- 9. The catalogues the match page names and classifies everything with ---
+    // --- 9. The catalogues the match page and the review name and classify everything with ---
     // The hero catalogue, for the loadout of Paige. The weapon of the loadout is looked up by the
     // key of its damage source in the projection, which holds a key only for a source that dealt
     // damage to enemy heroes (its critical hits are merged into it).
@@ -613,10 +736,11 @@ describe('deadlock-api match detail', () => {
       'the weapon of the loadout of Paige is a damage source of the match',
     ).toBe(true);
 
-    // The item catalogue, the last request of the run. The damage tab rests on three joins with it,
-    // which fail quietly when the API changes (an unknown id or kind is shown unnamed, or as another
-    // source, with no error): the items of the build by id, the ability unlocks by the ids of the
-    // abilities of the loadout, and the loadout by class name.
+    // The item catalogue. The damage tab rests on three joins with it, which fail quietly when the
+    // API changes (an unknown id or kind is shown unnamed, or as another source, with no error): the
+    // items of the build by id, the ability unlocks by the ids of the abilities of the loadout, and
+    // the loadout by class name. The review rests on a fourth: its twelve resistance items are found
+    // by class name, and the community requests that follow are read on their ids.
     const { items, bodyBytes } = await fetchItemCatalogue(api);
     const itemsById = new Map(items.map((item) => [item.id, item]));
     const itemsByClassName = new Map(items.map((item) => [item.className, item]));
@@ -635,13 +759,22 @@ describe('deadlock-api match detail', () => {
     const loadoutClassNamesMissing = loadoutClassNames.filter(
       (className) => !itemsByClassName.has(className),
     ).length;
+    // The resistance items, as the review finds them. One that the catalogue lacks (a patch renamed
+    // it) or that is no longer an upgrade is left out by the review without an error.
+    const resistanceIds = RESISTANCE_ITEMS.flatMap(({ className }) => {
+      const item = itemsByClassName.get(className);
+      return item?.kind === 'upgrade' ? [item.id] : [];
+    });
     const responseShare = bodyBytes / MAX_RESPONSE_BYTES;
     // Counts and a percentage only: no id, class name or value of the catalogue.
     await annotate(
       `item catalogue: ${String(items.length)} entries, answer at ${(responseShare * 100).toFixed(0)} % of MAX_RESPONSE_BYTES`,
     );
     await annotate(
-      `item joins: ${String(finalBuild.length - buildItemsNotUpgrades)} of ${String(finalBuild.length)} build items are catalogue upgrades, ${String(abilityEntries.length - abilityEntriesOutsideLoadout)} of ${String(abilityEntries.length)} ability entries are abilities of the loadout, ${String(loadoutClassNames.length - loadoutClassNamesMissing)} of ${String(loadoutClassNames.length)} loadout class names in the catalogue; ${String(api.requestCount())} requests in all`,
+      `item joins: ${String(finalBuild.length - buildItemsNotUpgrades)} of ${String(finalBuild.length)} build items are catalogue upgrades, ${String(abilityEntries.length - abilityEntriesOutsideLoadout)} of ${String(abilityEntries.length)} ability entries are abilities of the loadout, ${String(loadoutClassNames.length - loadoutClassNamesMissing)} of ${String(loadoutClassNames.length)} loadout class names in the catalogue`,
+    );
+    await annotate(
+      `resistance items: ${String(resistanceIds.length)} of ${String(RESISTANCE_ITEMS.length)} found by class name as upgrades of the catalogue`,
     );
     expect(
       buildItemsNotUpgrades,
@@ -656,8 +789,76 @@ describe('deadlock-api match detail', () => {
       'class names of the loadout of Paige missing from the item catalogue',
     ).toBe(0);
     expect(
+      resistanceIds.length,
+      `resistance items (of ${String(RESISTANCE_ITEMS.length)}) found by class name as upgrades of the item catalogue`,
+    ).toBe(RESISTANCE_ITEMS.length);
+    expect(
       responseShare <= MAX_ITEM_CATALOGUE_SHARE,
       'the answer of the item catalogue takes at most 80 % of MAX_RESPONSE_BYTES',
     ).toBe(true);
+
+    // --- 10. The item purchases of tier 7 by minute: what the resistance items are placed on ---
+    // The community requests are built by the functions of the app, from a cohort and the period of
+    // its downloads (30 days before today's UTC midnight): the very URLs the review sends.
+    const sinceUnixS = communityPeriodStartS(Date.now());
+    const itemStats = await fetchCommunityAnswer(
+      api,
+      itemStatsRequest(cohortQuery(ITEM_STATS_COHORT, sinceUnixS)),
+      'item statistics',
+      parseItemStats,
+    );
+    // The rows of the resistance items, found in the catalogue of this run: no id is written here.
+    const resistanceIdSet = new Set(resistanceIds);
+    const resistanceRows = itemStats.rows.filter((row) => resistanceIdSet.has(row.itemId));
+    const resistanceItemsBought = new Set(
+      resistanceRows.filter((row) => row.purchases > 0).map((row) => row.itemId),
+    ).size;
+    // The reader already refuses a negative minute; both bounds are written so that the check states
+    // the whole range.
+    const purchasesOutsideMinutes = resistanceRows.filter(
+      (row) => row.minute < 0 || row.minute > MAX_PURCHASE_MINUTE,
+    ).length;
+    // Counts and a percentage only: no id, minute or number of purchases of the answer.
+    await annotate(
+      `item statistics: ${String(itemStats.bodyRows)} rows, ${String(itemStats.rows.length)} (item, minute) pairs read, answer at ${((itemStats.bodyBytes / MAX_RESPONSE_BYTES) * 100).toFixed(0)} % of MAX_RESPONSE_BYTES`,
+    );
+    await annotate(
+      `resistance purchases: ${String(resistanceItemsBought)} of ${String(resistanceIds.length)} resistance items bought, ${String(purchasesOutsideMinutes)} of ${String(resistanceRows.length)} (item, minute) pairs outside minutes 0 to ${String(MAX_PURCHASE_MINUTE)}`,
+    );
+    expect(
+      resistanceItemsBought,
+      `resistance items (of ${String(RESISTANCE_ITEMS.length)}) with purchases in the item statistics of tier ${String(COMMUNITY_TIER)}`,
+    ).toBeGreaterThanOrEqual(MIN_RESISTANCE_ITEMS_BOUGHT);
+    expect(
+      purchasesOutsideMinutes,
+      `(item, minute) pairs of the resistance items outside minutes 0 to ${String(MAX_PURCHASE_MINUTE)}`,
+    ).toBe(0);
+
+    // --- 11. The deaths of tier 7 over the match: what the deaths of a phase are placed on ---
+    const curve = await fetchCommunityAnswer(
+      api,
+      performanceCurveRequest(cohortQuery(CURVE_COHORT, sinceUnixS)),
+      'performance curve',
+      parsePerformanceCurve,
+    );
+    // The reader leaves out a point whose deaths (or another counter it reads) is no finite number,
+    // and a time given twice: none of the points of the answer may be left out. The reader gives
+    // the points sorted by time, so the averages are in the order of the match.
+    const pointsLeftOut = curve.bodyRows - curve.rows.length;
+    const deathsGoingDown = decreasingSteps(curve.rows.map((point) => point.avg.deaths));
+    await annotate(
+      `performance curve: ${String(curve.rows.length)} of ${String(curve.bodyRows)} points read, ${String(deathsGoingDown)} steps where the average deaths goes down; ${String(api.requestCount())} requests in all`,
+    );
+    expect(curve.rows.length, 'points of the performance curve (at least)').toBeGreaterThanOrEqual(
+      MIN_CURVE_POINTS,
+    );
+    expect(
+      pointsLeftOut,
+      'points of the performance curve the reader leaves out (a counter that is no finite number, or a time given twice)',
+    ).toBe(0);
+    expect(
+      deathsGoingDown,
+      'points of the performance curve whose average deaths is lower than the one before',
+    ).toBe(0);
   });
 });

@@ -12,13 +12,16 @@ import { METRICS } from '../../../core/analysis/registry';
 import { AppError } from '../../../core/errors/app-error';
 import { createI18n } from '../../i18n/i18n';
 import {
+  formatDecimalIfNeeded,
   formatDifference,
   formatGameTime,
   formatMedian,
   formatMetricValue,
+  formatOneDecimal,
   formatPhaseTotal,
   formatShare,
   formatShareGap,
+  formatSignedPercent,
   INSIGHT_STYLE,
   metricLabel,
   NO_VALUE,
@@ -215,6 +218,84 @@ describe('formatMedian', () => {
   }[])('writes a median of $value ($unit), which rounds to zero, without a minus', (input) => {
     expect(plain(formatMedian(input.value, input.unit, 'en'))).toBe(input.en);
     expect(plain(formatMedian(input.value, input.unit, 'fr'))).toBe(input.fr);
+  });
+});
+
+describe('formatOneDecimal', () => {
+  it.each([
+    // The decimal is always there, so that a column of numbers lines up.
+    { value: 5, en: '5.0', fr: '5,0' },
+    { value: 12.46, en: '12.5', fr: '12,5' },
+    { value: 1187.44, en: '1,187.4', fr: '1 187,4' },
+    { value: -0.3, en: `${MINUS}0.3`, fr: `${MINUS}0,3` },
+    // A number that rounds to zero has no minus.
+    { value: -0.04, en: '0.0', fr: '0,0' },
+  ])('writes $value with one decimal as $en, $fr', ({ value, en, fr }) => {
+    expect(plain(formatOneDecimal(value, 'en'))).toBe(en);
+    expect(plain(formatOneDecimal(value, 'fr'))).toBe(fr);
+  });
+
+  it.each([
+    { value: 0.34, en: '+0.3', fr: '+0,3' },
+    { value: -0.34, en: `${MINUS}0.3`, fr: `${MINUS}0,3` },
+    { value: 2, en: '+2.0', fr: '+2,0' },
+    // Zero, and a number that rounds to it, have no sign at all.
+    { value: 0, en: '0.0', fr: '0,0' },
+    { value: -0.04, en: '0.0', fr: '0,0' },
+    { value: 0.04, en: '0.0', fr: '0,0' },
+  ])('writes $value with its sign as $en, $fr', ({ value, en, fr }) => {
+    expect(plain(formatOneDecimal(value, 'en', { signed: true }))).toBe(en);
+    expect(plain(formatOneDecimal(value, 'fr', { signed: true }))).toBe(fr);
+  });
+});
+
+describe('formatDecimalIfNeeded', () => {
+  it.each([
+    // A decimal only when the number is not whole: one place is whole, a mean of places is not.
+    { value: 3, en: '3', fr: '3' },
+    { value: 5.67, en: '5.7', fr: '5,7' },
+    { value: 5.04, en: '5', fr: '5' },
+    { value: 0, en: '0', fr: '0' },
+    { value: -2.5, en: `${MINUS}2.5`, fr: `${MINUS}2,5` },
+    { value: -0.04, en: '0', fr: '0' },
+  ])('writes $value as $en, $fr', ({ value, en, fr }) => {
+    expect(plain(formatDecimalIfNeeded(value, 'en'))).toBe(en);
+    expect(plain(formatDecimalIfNeeded(value, 'fr'))).toBe(fr);
+  });
+
+  it.each([
+    { value: 1, en: '+1', fr: '+1' },
+    { value: 1.52, en: '+1.5', fr: '+1,5' },
+    { value: -0.82, en: `${MINUS}0.8`, fr: `${MINUS}0,8` },
+    { value: 0, en: '0', fr: '0' },
+    { value: 0.04, en: '0', fr: '0' },
+  ])('writes $value with its sign as $en, $fr', ({ value, en, fr }) => {
+    expect(plain(formatDecimalIfNeeded(value, 'en', { signed: true }))).toBe(en);
+    expect(plain(formatDecimalIfNeeded(value, 'fr', { signed: true }))).toBe(fr);
+  });
+});
+
+describe('formatSignedPercent', () => {
+  it.each([
+    { ratio: 0.12, en: '+12%', fr: '+12 %' },
+    { ratio: -0.25, en: `${MINUS}25%`, fr: `${MINUS}25 %` },
+    { ratio: 1.5, en: '+150%', fr: '+150 %' },
+    // Exactly zero has no sign either.
+    { ratio: 0, en: '0%', fr: '0 %' },
+    // A share that rounds to zero has no sign, plus or minus.
+    { ratio: 0.004, en: '0%', fr: '0 %' },
+    { ratio: -0.004, en: '0%', fr: '0 %' },
+  ])('writes a share of $ratio as $en, $fr', ({ ratio, en, fr }) => {
+    expect(plain(formatSignedPercent(ratio, 'en'))).toBe(en);
+    expect(plain(formatSignedPercent(ratio, 'fr'))).toBe(fr);
+  });
+
+  it('writes the relative difference of formatDifference the same way, whatever the unit', async () => {
+    const t = await translatorOf('en');
+
+    expect(formatDifference({ kind: 'relative', ratio: 0.12 }, 'amount', 'en', t)).toBe(
+      formatSignedPercent(0.12, 'en'),
+    );
   });
 });
 

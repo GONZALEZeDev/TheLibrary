@@ -36,14 +36,10 @@
 import type { TFunction } from 'i18next';
 import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
-import type {
-  DamageBreakdown,
-  DamageSourceRow,
-  SourceKind,
-} from '../../../core/analysis/damage-breakdown';
+import type { DamageBreakdown, DamageSourceRow } from '../../../core/analysis/damage-breakdown';
 import type { MatchId } from '../../../core/domain/match';
 import { toAppError } from '../../../core/errors/app-error';
-import { GamePicture } from '../../components/GamePicture';
+import { ShareBar } from '../../components/ShareBar';
 import {
   formatMetricValue,
   formatShare,
@@ -51,6 +47,7 @@ import {
   INSIGHT_STYLE,
   NO_VALUE,
 } from './analysis-format';
+import { DamageSourceCell, SOURCE_CELL } from './DamageSourceCell';
 import { EvidencePanel } from './EvidencePanel';
 import { FinalBuild } from './FinalBuild';
 import { useDamageTab } from './use-match-breakdown';
@@ -60,10 +57,6 @@ export interface DamageTabProps {
   /** The match whose damage and build the tab shows. */
   readonly matchId: MatchId;
 }
-
-/** The two ends of a bar, as a percentage. */
-const BAR_START = 0;
-const BAR_END = 100;
 
 /**
  * The marks of a source that stands out: used more than usual is a strength, less than usual a
@@ -81,9 +74,6 @@ const FLAG_STYLE = { above: INSIGHT_STYLE.strength, below: INSIGHT_STYLE.weaknes
 /** The columns of the header and of every row. */
 const GRID = 'grid grid-cols-[minmax(0,1fr)_minmax(0,11rem)_5rem_minmax(0,9.5rem)]';
 
-/** The cell of the source, at the start of a row: the picture beside the name. */
-const SOURCE_CELL = 'flex items-center gap-2.5 px-3 py-2';
-
 /** The other cells of a row: the rule at their left, and the room around their figures. */
 const FIGURE_CELL = 'border-l border-border px-3 py-2';
 
@@ -96,69 +86,6 @@ const EMPHASIS_CLASSES: Readonly<Record<Emphasis, string>> = {
   normal: 'text-sm tabular-nums',
   muted: 'text-sm tabular-nums text-fg-muted',
 };
-
-/**
- * The position of a share on a bar, as a CSS percentage.
- *
- * @param share - The share, from 0 to 1.
- * @returns The percentage, with one decimal at most. A share outside the bar (the data never gives
- *   one) is held to its ends, or the mark would be drawn outside the box.
- */
-function barPosition(share: number): string {
-  const percent = Math.min(BAR_END, Math.max(BAR_START, share * BAR_END));
-  return `${String(Math.round(percent * 10) / 10)}%`;
-}
-
-/**
- * The word that says what a source is, beside its name.
- *
- * @param kind - What the source is.
- * @param t - Translation function.
- * @returns The word for the weapon, the melee attack and an item; `null` for an ability, which needs
- *   none, and for any other source.
- */
-function kindWordOf(kind: SourceKind, t: TFunction): string | null {
-  switch (kind) {
-    case 'weapon':
-    case 'melee':
-    case 'item':
-      return t(`damage.kind.${kind}`);
-    case 'ability':
-    case 'other':
-      return null;
-  }
-}
-
-/**
- * The bar of a share, with a mark where the habit stands.
- *
- * @param share - The share the bar draws, from 0 to 1.
- * @param habit - The usual share on the same scale as the bar, or `null` when there is none to mark:
- *   the player has no habit for the source, or the habit is on another scale (an item's). The bar
- *   then has no mark.
- * @returns The bar. It is for the eye: the figures are in the cells.
- */
-function renderBar(share: number, habit: number | null) {
-  return (
-    <div
-      aria-hidden="true"
-      className="relative mt-1.5 h-2 w-full rounded-full border border-border bg-surface-raised"
-    >
-      <span
-        className="absolute inset-y-0 left-0 rounded-full bg-accent"
-        // The one value that no class can hold: how far the share goes.
-        style={{ width: barPosition(share) }}
-      />
-      {habit !== null && (
-        <span
-          className="absolute -top-1 h-3.5 w-1 -translate-x-1/2 rounded-sm bg-secondary"
-          // The one value that no class can hold: where the habit stands.
-          style={{ left: barPosition(habit) }}
-        />
-      )}
-    </div>
-  );
-}
 
 /**
  * A figure of a row, with the name of its column for assistive technologies: a bare "44%" would not
@@ -239,7 +166,10 @@ function renderFigures(row: DamageSourceRow, t: TFunction, language: string) {
         {owned !== null && <p className="text-xs text-fg-muted">{owned}</p>}
         {/* An item's habit is on its share while owned, not on the share of the match the bar draws:
             the mark would stand in the wrong place. */}
-        {renderBar(row.share, row.kind === 'item' ? null : (row.habit?.median ?? null))}
+        <ShareBar
+          share={row.share}
+          mark={row.kind === 'item' ? null : (row.habit?.median ?? null)}
+        />
       </div>
       <div className={FIGURE_CELL}>
         {renderFigure(
@@ -297,20 +227,11 @@ function renderNotUnlocked(t: TFunction) {
  *   pointer; an ability that was not unlocked has nothing to give, and is a plain row.
  */
 function renderRow(row: DamageSourceRow, t: TFunction, language: string) {
-  const kindWord = kindWordOf(row.kind, t);
   // A source that stands out has the faint colour of its flag on the whole row.
   const tint = row.flag === null ? '' : ` ${FLAG_STYLE[row.flag].tint}`;
   const cells = (
     <div className={`${GRID} rounded-lg${tint}`}>
-      <div className={SOURCE_CELL}>
-        {/* A source with no picture, or whose picture cannot be loaded (offline, say), keeps a neutral
-            square: the names of the rows stay lined up. */}
-        <GamePicture src={row.imageUrl} size="medium" fit="contain" fallback="square" />
-        <div className="min-w-0">
-          <p className="text-sm font-medium">{row.name}</p>
-          {kindWord !== null && <p className="text-xs text-fg-muted">{kindWord}</p>}
-        </div>
-      </div>
+      <DamageSourceCell name={row.name} kind={row.kind} imageUrl={row.imageUrl} />
       {row.unlocked ? renderFigures(row, t, language) : renderNotUnlocked(t)}
     </div>
   );

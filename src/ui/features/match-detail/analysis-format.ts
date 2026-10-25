@@ -114,6 +114,72 @@ function writeNumber(
   return format.format(value).replace(HYPHEN_MINUS, MINUS_SIGN);
 }
 
+/** How the number shapes written for a unit of their own (`formatOneDecimal`…) show the sign. */
+export interface SignOptions {
+  /**
+   * Write the sign of a number that is not zero, plus included (a difference: `+0.3`). By default
+   * only the minus of a negative number is written (a value).
+   */
+  readonly signed?: boolean;
+}
+
+/**
+ * The sign display of a number shape.
+ *
+ * @param options - How the shape shows the sign.
+ * @returns The sign display of `Intl.NumberFormat`.
+ */
+function signDisplayOf(options: SignOptions): 'negative' | 'exceptZero' {
+  return options.signed === true ? 'exceptZero' : 'negative';
+}
+
+/**
+ * Write a number with exactly one decimal (`5.0`, `12.5`), so that a column of them lines up. A
+ * ratio and a number of deaths have this shape.
+ *
+ * @param value - The number.
+ * @param language - The language of the interface.
+ * @param options - How to show the sign.
+ * @returns The text, with a real minus sign. A number that rounds to zero has no sign.
+ */
+export function formatOneDecimal(
+  value: number,
+  language: string,
+  options: SignOptions = {},
+): string {
+  return writeNumber(value, 'decimal', language, signDisplayOf(options));
+}
+
+/**
+ * Write a number with a decimal only when it is not whole (`3`, `5.7`): the figure of one match is
+ * often whole where the mean of many is not. A count, a minute and a place have this shape.
+ *
+ * @param value - The number.
+ * @param language - The language of the interface.
+ * @param options - How to show the sign.
+ * @returns The text, with a real minus sign. A number that rounds to zero has no sign.
+ */
+export function formatDecimalIfNeeded(
+  value: number,
+  language: string,
+  options: SignOptions = {},
+): string {
+  return writeNumber(value, 'fraction', language, signDisplayOf(options));
+}
+
+/**
+ * Write a share of a figure as a signed percentage (`+12%` in English, `+12 %` in French): how much
+ * higher or lower a value is than the figure it is compared with. The number held is a ratio (0.12 is
+ * 12 %), and it may be over 1.
+ *
+ * @param ratio - The difference as a share of the figure compared with.
+ * @param language - The language of the interface.
+ * @returns The text, with a real minus sign. A share that rounds to zero is written without sign.
+ */
+export function formatSignedPercent(ratio: number, language: string): string {
+  return writeNumber(ratio, 'percent', language, 'exceptZero');
+}
+
 /**
  * Write the value of a metric.
  *
@@ -154,7 +220,7 @@ export function formatDifference(
   t: TFunction,
 ): string {
   if (difference.kind === 'relative') {
-    return writeNumber(difference.ratio, 'percent', language, 'exceptZero');
+    return formatSignedPercent(difference.ratio, language);
   }
   if (unit === 'percent') {
     // A percentage is held from 0 to 1: 0.04 is four points.

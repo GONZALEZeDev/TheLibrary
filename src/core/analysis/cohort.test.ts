@@ -218,7 +218,7 @@ describe('cohortKey', () => {
     ).toBe('tier11.2700-7000');
   });
 
-  it('keeps the cohort keys of M4a', () => {
+  it('keeps the cohort keys of the match page', () => {
     // These keys name the entries of the cache of the community data: a change would orphan them.
     expect(
       cohortKey({ rank: { kind: 'tier', tier: 4 }, window: { minS: 1_500, maxS: 1_799 } }),

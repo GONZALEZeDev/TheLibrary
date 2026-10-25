@@ -20,6 +20,7 @@ import {
   flaggedSide,
   histogramMean,
   isInValveTopThree,
+  isWithinNoise,
   markOfDeathsBeforeResistance,
   markOfLaneGap,
   markOfPercentile,
@@ -279,6 +280,29 @@ describe('progressOf', () => {
   });
 });
 
+describe('isWithinNoise', () => {
+  it('weighs a gap against the standard error of the mean of the values', () => {
+    // Five values of sample variance 10: the standard error of their mean is √(10 / 5) = √2.
+    const values = windowAround(4);
+    const standardError = Math.SQRT2;
+    expect(isWithinNoise(0, values)).toBe(true);
+    expect(isWithinNoise(-1, values)).toBe(true);
+    expect(isWithinNoise(PROGRESS_MIN_Z * standardError * 0.99, values)).toBe(true);
+    expect(isWithinNoise(-PROGRESS_MIN_Z * standardError * 0.99, values)).toBe(true);
+    // A gap of the standard error or more is no longer noise, on either side.
+    expect(isWithinNoise(PROGRESS_MIN_Z * standardError * 1.01, values)).toBe(false);
+    expect(isWithinNoise(-2, values)).toBe(false);
+  });
+
+  it('has no noise to weigh against under two values or with no spread', () => {
+    // One value has no spread to measure: there is no rule, and so no gap is called noise.
+    expect(isWithinNoise(0, [4])).toBe(false);
+    expect(isWithinNoise(0, [])).toBe(false);
+    // Values that are all the same have no noise either: any gap at all is one.
+    expect(isWithinNoise(0.1, [3, 3, 3, 3, 3])).toBe(false);
+  });
+});
+
 describe('flaggedSide', () => {
   it('flags a weakness from a quarter of the marked matches', () => {
     // 5 of 20 is a quarter exactly: it counts. 4 of 20 is not enough.
@@ -297,6 +321,21 @@ describe('flaggedSide', () => {
     expect(flaggedSide(10, 0, 10)).toBe('weakness');
     // And it needs the share too: 4 weak against 3 strong of 20 wins the count but not the share.
     expect(flaggedSide(4, 3, 20)).toBeNull();
+  });
+
+  it('flags nothing from fewer marked matches than a figure needs', () => {
+    // An item bought once, and weak that once, is one match and not a habit.
+    expect(flaggedSide(1, 0, 1)).toBeNull();
+    expect(flaggedSide(0, 1, 1)).toBeNull();
+    // Four marked matches are one too few, however one-sided they are.
+    const fewest = MIN_PERSONAL_MATCHES;
+    expect(flaggedSide(fewest - 1, 0, fewest - 1)).toBeNull();
+    expect(flaggedSide(0, fewest - 1, fewest - 1)).toBeNull();
+    // Five are enough, and the other rules apply as usual.
+    expect(flaggedSide(fewest, 0, fewest)).toBe('weakness');
+    expect(flaggedSide(0, fewest, fewest)).toBe('strength');
+    expect(flaggedSide(2, 0, fewest)).toBe('weakness');
+    expect(flaggedSide(1, 0, fewest)).toBeNull();
   });
 });
 

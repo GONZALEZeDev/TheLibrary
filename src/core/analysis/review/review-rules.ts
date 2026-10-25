@@ -1,8 +1,8 @@
 /**
  * The rules every row of the review of the player's last matches applies: when a match is weak or
  * strong for a point, where a buy minute stands among the purchases of a tier, whether a figure
- * progressed between the last matches and the ones before, and on which side of the summary a point
- * is listed.
+ * progressed between the last matches and the ones before, whether its gap with the tier is within
+ * the noise of the matches, and on which side of the summary a point is listed.
  *
  * They are pure arithmetic on numbers the rest of the review already computed, kept apart from the
  * code that gathers those numbers so that each rule is stated once, with its threshold, and read the
@@ -311,13 +311,38 @@ export function progressOf(
 }
 
 /**
+ * Tell whether the gap between the player's figure and the tier's is within the noise of the
+ * player's matches: smaller than {@link PROGRESS_MIN_Z} standard errors of the player's figure.
+ *
+ * The standard error is `s / √n`, with `s²` the sample variance (`n − 1`) of the player's figures of
+ * the compared matches and `n` their count; the tier's figure is made of many more matches and counts
+ * as exact. It is the rule of {@link progressOf} with one window instead of two, and like it, it
+ * serves the median as well as the mean. Such a gap is not worth its decimal: the luck of the draw
+ * explains it.
+ *
+ * @param gap - The player's figure minus the tier's, in the unit of the row.
+ * @param values - The player's figures of the matches compared with the tier, finite numbers.
+ * @returns Whether the gap is within the noise. `false` under two values, which have no spread to
+ *   measure, and when every value is the same (the error is then 0, and any gap is one).
+ */
+export function isWithinNoise(gap: number, values: readonly number[]): boolean {
+  if (values.length < 2) {
+    return false;
+  }
+  const standardError = Math.sqrt(sampleVarianceOf(values) / values.length);
+  return Math.abs(gap) < PROGRESS_MIN_Z * standardError;
+}
+
+/**
  * Decide on which side of the summary a point is listed, from how many of the matches that have a
  * mark are weak and how many are strong for it.
  *
  * A point is a weakness when it is weak in more matches than it is strong **and** in at least
  * {@link REVIEW_MIN_FLAGGED_SHARE} of the matches that have a mark: fewer than that is more likely
  * a few games than a habit. A strength is the mirror. A point that is flagged equally often on
- * both sides is on neither.
+ * both sides is on neither. And neither side is given under {@link MIN_PERSONAL_MATCHES} matches
+ * with a mark, as a figure is not: an item bought once, weak that once, is one match and not a
+ * habit.
  *
  * @param weak - How many matches are weak for the point.
  * @param strong - How many matches are strong for it.
@@ -330,7 +355,7 @@ export function flaggedSide(
   strong: number,
   marked: number,
 ): 'weakness' | 'strength' | null {
-  if (marked <= 0) {
+  if (marked < MIN_PERSONAL_MATCHES) {
     return null;
   }
   const minimum = REVIEW_MIN_FLAGGED_SHARE * marked;

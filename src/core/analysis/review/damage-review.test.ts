@@ -19,6 +19,7 @@ import { testAccountId } from '../../../test/test-data';
 import { buildDamageBreakdown } from '../damage-breakdown';
 import { CRIT_SUFFIX, DAMAGE_STAT_TYPE, readDamageMatrix } from '../damage-matrix';
 import { damageSourceKey, itemOwnedDamageKey, projectDamageSources } from '../damage-sources';
+import { MIN_PERSONAL_MATCHES } from '../insights/thresholds';
 import { damageShares } from './damage-review';
 import type { DamageShareRow } from './damage-review';
 
@@ -95,6 +96,19 @@ function matchOf(damage: Readonly<Record<string, number | null>>): Stored {
       value,
     ]),
   );
+}
+
+/**
+ * A window of matches before, filled up with matches that dealt no damage by source to the fewest
+ * that give a share before ({@link MIN_PERSONAL_MATCHES}). Such a match adds nothing to the damage of
+ * the window, so the shares are those of the matches given.
+ *
+ * @param matches - The matches that dealt damage.
+ * @returns The window.
+ */
+function enoughBefore(matches: readonly Stored[]): readonly Stored[] {
+  const filler = Array.from({ length: MIN_PERSONAL_MATCHES - matches.length }, () => matchOf({}));
+  return [...matches, ...filler];
 }
 
 /**
@@ -189,8 +203,8 @@ describe('damageShares', () => {
       matchOf({ [WEAPON]: 3_000, [MELEE]: 1_000 }),
       matchOf({ [WEAPON]: 1_000, [BOOKWYRM]: 5_000 }),
     ];
-    // Before: one match of 4 000, half weapon and half melee.
-    const before = [matchOf({ [WEAPON]: 2_000, [MELEE]: 2_000 })];
+    // Before: one match of 4 000, half weapon and half melee, among matches with no damage.
+    const before = enoughBefore([matchOf({ [WEAPON]: 2_000, [MELEE]: 2_000 })]);
 
     const rows = run(now, before);
 
@@ -208,7 +222,7 @@ describe('damageShares', () => {
       [MELEE, 0.1, 0.5, 1, 1],
     ]);
     const sum = (shares: readonly number[]) => shares.reduce((total, share) => total + share, 0);
-    expect(sum(rows.map((row) => row.shareNow))).toBeCloseTo(1, 12);
+    expect(sum(rows.map((row) => row.shareNow ?? 0))).toBeCloseTo(1, 12);
     expect(sum(rows.map((row) => row.shareBefore ?? 0))).toBeCloseTo(1, 12);
   });
 
@@ -274,7 +288,7 @@ describe('damageShares', () => {
     // Now: the weapon alone. Before: the weapon and Express Shot, 500 each.
     const rows = run(
       [matchOf({ [WEAPON]: 2_000 })],
-      [matchOf({ [WEAPON]: 500, [EXPRESS_SHOT]: 500 })],
+      enoughBefore([matchOf({ [WEAPON]: 500, [EXPRESS_SHOT]: 500 })]),
     );
 
     expect(
@@ -295,10 +309,10 @@ describe('damageShares', () => {
     const now = [matchOf({ [WEAPON]: 750, [MELEE]: 250 })];
     // No earlier match at all, then earlier matches without any damage by source: only damage
     // dealt while an item was owned, and a damage that is not known.
-    const withoutDamage = [
+    const withoutDamage = enoughBefore([
       new Map<string, number | null>([[itemOwnedDamageKey(9_001), 4_000]]),
       matchOf({ [WEAPON]: null }),
-    ];
+    ]);
 
     for (const before of [[], withoutDamage]) {
       const rows = run(now, before);
@@ -311,12 +325,45 @@ describe('damageShares', () => {
     }
   });
 
-  it('gives a share of 0 now when the last matches dealt no damage', () => {
-    const rows = run([matchOf({})], [matchOf({ [WEAPON]: 100, [MELEE]: 300 })]);
+  it('answers no share before under five earlier matches', () => {
+    const now = [matchOf({ [WEAPON]: 750, [MELEE]: 250 })];
+    const damage = matchOf({ [WEAPON]: 100, [MELEE]: 300 });
+
+    // Four earlier matches, all of them with damage, are one too few: a share of so few says little.
+    const four = Array.from({ length: MIN_PERSONAL_MATCHES - 1 }, () => damage);
+    expect(
+      run(now, four).map((row) => [row.className, row.shareBefore, row.appearsBefore]),
+    ).toEqual([
+      [WEAPON, null, MIN_PERSONAL_MATCHES - 1],
+      [MELEE, null, MIN_PERSONAL_MATCHES - 1],
+    ]);
+    // Five are enough.
+    const five = Array.from({ length: MIN_PERSONAL_MATCHES }, () => damage);
+    expect(run(now, five).map((row) => [row.className, row.shareBefore])).toEqual([
+      [WEAPON, 0.25],
+      [MELEE, 0.75],
+    ]);
+  });
+
+  it('answers no share now when the last matches dealt no damage', () => {
+    // There is nothing to share, so no share to show: never a 0.
+    const rows = run([matchOf({})], enoughBefore([matchOf({ [WEAPON]: 100, [MELEE]: 300 })]));
 
     expect(rows.map((row) => [row.className, row.shareNow, row.shareBefore])).toEqual([
+      [MELEE, null, 0.75],
+      [WEAPON, null, 0.25],
+    ]);
+  });
+
+  it('gives a share of 0 now to a source the last matches did not use', () => {
+    const rows = run(
+      [matchOf({ [WEAPON]: 100 })],
+      enoughBefore([matchOf({ [WEAPON]: 100, [MELEE]: 300 })]),
+    );
+
+    expect(rows.map((row) => [row.className, row.shareNow, row.shareBefore])).toEqual([
+      [WEAPON, 1, 0.25],
       [MELEE, 0, 0.75],
-      [WEAPON, 0, 0.25],
     ]);
   });
 
@@ -348,9 +395,9 @@ describe('damageShares', () => {
       matchOf({ [WEAPON]: 3_000, [MELEE]: 3_000, [BOOKWYRM]: 2_000, [EXPRESS_SHOT]: 2_000 }),
     ];
     // Before (10 000): the weapon 5 000, the melee and Express Shot 2 000 each, Bookwyrm 1 000.
-    const before = [
+    const before = enoughBefore([
       matchOf({ [WEAPON]: 5_000, [MELEE]: 2_000, [EXPRESS_SHOT]: 2_000, [BOOKWYRM]: 1_000 }),
-    ];
+    ]);
 
     // The weapon and the melee tie now, and the weapon had the larger share before, although its
     // class name comes after the melee's. The same goes for Express Shot and Bookwyrm.

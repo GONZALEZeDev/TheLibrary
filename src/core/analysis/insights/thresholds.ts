@@ -207,7 +207,8 @@ export const LANE_SOULS_CLEAR_GAP = 500;
  * review, as a weakness or as a strength: a quarter (5 of 20). A point flagged in fewer matches
  * than that is more likely an accident of a few games than a habit, and it stays in its own tab.
  * It is a share and not a count, so it holds when the review covers fewer than
- * {@link REVIEW_MATCHES} matches.
+ * {@link REVIEW_MATCHES} matches. A point also needs {@link MIN_PERSONAL_MATCHES} matches with a
+ * mark before it is listed at all (`flaggedSide`): one or two matches are not a habit.
  */
 export const REVIEW_MIN_FLAGGED_SHARE = 0.25;
 

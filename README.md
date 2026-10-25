@@ -10,6 +10,7 @@ TheLibrary is a free, open-source fan project (MIT). It is **not affiliated with
 
 - **Dashboard** — your average stats over 7, 30 or 90 days, compared with Paige players of your rank and with your own history.
 - **Matches** — your match history and a detailed view of every match: timeline, events, strengths and areas to improve.
+- **Review** — your last 20 matches summed up: the weak and strong points that recur, every stat compared with the Paige players of the tier above and with the 20 matches before, your deaths by phase and when you buy your resistance items.
 - **Private by design** — your history and analysis stay on your computer; only public match data is downloaded. No TheLibrary account, no telemetry.
 - **French and English** interface.
 
@@ -20,7 +21,7 @@ The first version is built in six milestones:
 1. **M1 Foundations** — tooling, CI, the desktop shell and its screens, the theme, French and English.
 2. **M2 Data** — synchronisation of your match history (M2a), then the local archive of your Paige matches (M2b).
 3. **M3 Account** — Steam sign-in and onboarding.
-4. **M4 Analysis** — metrics compared with your rank and your own history, strengths and weaknesses on the match page (M4a); the rest of the match in tabs, with your damage by source compared with your habits, your final build and the 12 players (M4b); summaries over 7, 30 and 90 days (M4c).
+4. **M4 Analysis** — metrics compared with your rank and your own history, strengths and weaknesses on the match page (M4a); the rest of the match in tabs, with your damage by source compared with your habits, your final build and the 12 players (M4b); the review of your last 20 matches, compared with the players of the tier above and with the 20 matches before (M4c).
 5. **M5 Screens** — dashboard, match history, match detail and settings.
 6. **M6 Delivery** — signed installer, automatic updates and the release workflow.
 

@@ -2,14 +2,35 @@
 
 ## Structure
 
-| Folder                | Purpose                                                                                                     |
-| --------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `app/`                | App shell, router, providers, query client, route error screen                                              |
-| `features/<feature>/` | Screens and components of one feature (account, dashboard, matches, match-detail, settings) and their hooks |
-| `components/`         | Shared presentational components, the shared button styles and the focus helper                             |
-| `format/`             | Display formatters shared by several features (durations)                                                   |
-| `i18n/`               | i18next setup and the `en`/`fr` catalogues                                                                  |
-| `theme/`              | `theme.css` only (design tokens); Inter comes from `@fontsource-variable/inter`                             |
+| Folder                | Purpose                                                                                                             |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `app/`                | App shell, router, providers, query client, route error screen                                                      |
+| `features/<feature>/` | Screens and components of one feature (account, dashboard, matches, match-detail, review, settings) and their hooks |
+| `components/`         | Shared presentational components, the shared button styles and the focus helper                                     |
+| `format/`             | Display formatters shared by several features (durations)                                                           |
+| `i18n/`               | i18next setup and the `en`/`fr` catalogues                                                                          |
+| `theme/`              | `theme.css` only (design tokens); Inter comes from `@fontsource-variable/inter`                                     |
+
+## The review
+
+The review page (`/review`, opened from the sidebar) sums up the player's last 20 analysed matches, compared with the players of the tier above their rank and with the 20 matches before. Its five tabs (`?tab=summary|stats|deaths|damage|players`, the summary by default) are kept in the address, and opening another replaces the entry of the history instead of adding one. The review comes from `ReviewService`, through the hooks of `use-review.ts`.
+
+| File                                         | Role                                                                                                                                                                                                                                                                                                                             |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `features/review/ReviewPage.tsx`             | The screen: the three lines under the title (the matches covered, the matches the progress is measured against, the comparison with the tier above), the tabs, and the states without a review (no account, no analysed match, a read that failed)                                                                               |
+| `features/review/ReviewSummary.tsx`          | The summary tab: every point flagged as a weakness, then every point flagged as a strength                                                                                                                                                                                                                                       |
+| `features/review/ReviewStats.tsx`            | The stats tab: the 24 metrics of the match page, by family, then the 11 metrics of a phase                                                                                                                                                                                                                                       |
+| `features/review/ReviewDeaths.tsx`           | The deaths and resistance tab: the deaths of each phase, then the minute of the first resistance item and the deaths before it, and the minute and the rate of each of the twelve items                                                                                                                                          |
+| `features/review/ReviewDamage.tsx`           | The damage tab: the share of the damage each source dealt over the last matches and over the ones before, with no judgement (the tier above has no figure for it)                                                                                                                                                                |
+| `features/review/ReviewPlayers.tsx`          | The players tab: the place among the twelve players on five figures of the scoreboard, how often the player is in Valve's top three and their place in it                                                                                                                                                                        |
+| `features/review/ReviewRow.tsx`              | One row, the same on every tab: the player's figure, the tier's figure and the gap, the weak and strong counts, the progress, and the panel of the matches behind it; a figure that is not known is a dash                                                                                                                       |
+| `features/review/ReviewRowList.tsx`          | The box every tab lists its rows in, with the header of the columns above them; it never sorts, filters or cuts the rows                                                                                                                                                                                                         |
+| `features/review/ReviewRowHeader.tsx`        | The names of the columns, on the grid of the rows                                                                                                                                                                                                                                                                                |
+| `features/review/review-layout.ts`           | What the pieces above share: the grid of a row and of the header, the box of a list and the title of a section                                                                                                                                                                                                                   |
+| `features/review/review-format.ts`           | How the review is written, in the language of the interface: a figure and its gap, the weak and strong counts, the progress, the name of a point, and the key that tells the rows of a list apart                                                                                                                                |
+| `features/review/use-review.ts`              | The TanStack Query hooks: `useReview` reads the review and never downloads community data; `useReviewCommunityRefresh` downloads it when the page finds the comparison lacking or old (the cohorts or the item statistics), and reads the review again. The key of the download is cleared with the account (`resetAccountData`) |
+| `components/ShareBar.tsx`                    | The bar of a share, with a mark for a second share when asked; the damage table of the match page and the damage tab of the review both draw their shares with it                                                                                                                                                                |
+| `features/match-detail/DamageSourceCell.tsx` | The cell of a damage source (its picture, its name and what it is for the weapon, the melee attack and an item), which the damage table of the match page and the damage tab of the review both start a row with                                                                                                                 |
 
 ## Rules
 

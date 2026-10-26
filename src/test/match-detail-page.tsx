@@ -159,6 +159,10 @@ export const STRINGS: Record<Language, PageStrings> = {
     notEligible:
       'Match details are archived for your normal-mode Paige matches of the last 90 days.',
     waiting: 'Waiting for the match detail.',
+    /**
+     * @param time - When the next attempt is due, as the page writes it.
+     * @returns The line of the next attempt.
+     */
     nextAttempt: (time) => `Next attempt: ${time}.`,
     unavailable: 'deadlock-api could not give the detail of this match after several attempts.',
     invalid: 'The detail of this match could not be read.',
@@ -171,6 +175,10 @@ export const STRINGS: Record<Language, PageStrings> = {
       duration: 'Duration',
       kda: 'K / D / A',
       souls: 'Souls',
+      /**
+       * @param heroId - The id of a hero the catalogue does not know.
+       * @returns The name the page gives that hero.
+       */
       unknownHero: (heroId) => `Hero #${String(heroId)}`,
     },
     matchTypes: {
@@ -179,6 +187,13 @@ export const STRINGS: Record<Language, PageStrings> = {
       street_brawl: 'Street Brawl',
       custom: 'Custom',
     },
+    /**
+     * @param snapshots - The number of snapshots, as the page writes it.
+     * @param items - The number of items bought, as the page writes it.
+     * @param size - The size of the archive in kilobytes, as the page writes it.
+     * @param date - The day the detail was downloaded, as the page writes it.
+     * @returns The line about the archive of the match.
+     */
     archiveLine: (snapshots, items, size, date) =>
       `Archive: ${snapshots} snapshots, ${items} items bought, ${size} KB, downloaded ${date}`,
   },
@@ -186,6 +201,10 @@ export const STRINGS: Record<Language, PageStrings> = {
     notEligible:
       'Le détail est archivé pour tes parties Paige en mode normal des 90 derniers jours.',
     waiting: 'Détail en attente.',
+    /**
+     * @param time - When the next attempt is due, as the page writes it.
+     * @returns The line of the next attempt.
+     */
     nextAttempt: (time) => `Prochaine tentative : ${time}.`,
     unavailable:
       "deadlock-api n'a pas pu fournir le détail de cette partie après plusieurs tentatives.",
@@ -199,6 +218,10 @@ export const STRINGS: Record<Language, PageStrings> = {
       duration: 'Durée',
       kda: 'K / D / A',
       souls: 'Âmes',
+      /**
+       * @param heroId - The id of a hero the catalogue does not know.
+       * @returns The name the page gives that hero.
+       */
       unknownHero: (heroId) => `Héros n°${String(heroId)}`,
     },
     matchTypes: {
@@ -207,6 +230,13 @@ export const STRINGS: Record<Language, PageStrings> = {
       street_brawl: 'Street Brawl',
       custom: 'Personnalisée',
     },
+    /**
+     * @param snapshots - The number of snapshots, as the page writes it.
+     * @param items - The number of items bought, as the page writes it.
+     * @param size - The size of the archive in kilobytes, as the page writes it.
+     * @param date - The day the detail was downloaded, as the page writes it.
+     * @returns The line about the archive of the match.
+     */
     archiveLine: (snapshots, items, size, date) =>
       `Archive : ${snapshots} instantanés, ${items} objets achetés, ${size} Ko, téléchargée le ${date}`,
   },

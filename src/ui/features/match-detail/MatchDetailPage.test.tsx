@@ -18,11 +18,11 @@
  * its archive. The header does not wait for the detail, and the page goes on working when the row
  * or the hero catalogue cannot be read.
  *
- * An archived match has three tabs (the analysis, the damage and build, the players), the one open
- * kept in the address of the page: the tests open the page at an address that names a tab, or none,
- * and look at the router to see what the address says. What each tab shows is tested with the tab;
- * here, that the right one shows, and that the analysis of a match not analysed yet runs whatever the
- * tab open, the damage tab showing the damage once it is done.
+ * An archived match has four tabs (the analysis, the timeline, the damage and build, the players),
+ * the one open kept in the address of the page: the tests open the page at an address that names a
+ * tab, or none, and look at the router to see what the address says. What each tab shows is tested
+ * with the tab; here, that the right one shows, and that the analysis of a match not analysed yet
+ * runs whatever the tab open, the damage tab showing the damage once it is done.
  *
  * @packageDocumentation
  */
@@ -108,6 +108,7 @@ const UNKNOWN_MODE_ID = testMatchId(100_000_002);
 /** The names of the tabs of an archived match, in English, by the id the address gives them. */
 const TAB_NAMES: Readonly<Record<MatchTab, string>> = {
   analysis: 'Analysis',
+  timeline: 'Timeline',
   damage: 'Damage and build',
   players: 'Players',
 };
@@ -1039,9 +1040,10 @@ describe('MatchDetailPage tabs', () => {
       analysisTab.focus();
     });
 
-    await user.keyboard('{ArrowRight}');
+    // The timeline is the next tab, and the damage and build the one after it.
+    await user.keyboard('{ArrowRight}{ArrowRight}');
 
-    // The next tab takes the focus and the selection, and shows its panel.
+    // The tab takes the focus and the selection, and shows its panel.
     const damageTab = screen.getByRole('tab', { name: TAB_NAMES.damage });
     expect(damageTab).toHaveFocus();
     await waitFor(() => {
@@ -1052,7 +1054,7 @@ describe('MatchDetailPage tabs', () => {
     ).toBeInTheDocument();
     expect(router.state.location.search).toEqual({ tab: 'damage' });
 
-    await user.keyboard('{ArrowLeft}');
+    await user.keyboard('{ArrowLeft}{ArrowLeft}');
 
     // And back to the analysis.
     expect(analysisTab).toHaveFocus();

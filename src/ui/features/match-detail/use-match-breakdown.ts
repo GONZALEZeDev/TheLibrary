@@ -17,13 +17,14 @@ import { useServices } from '../../app/ServicesContext';
 import { DETAILS_QUERY_KEY } from '../matches/use-matches';
 
 /**
- * The prefix of the queries of the tabs of one match, {@link useDamageTab} and {@link usePlayersTab}.
+ * The prefix of the queries of the tabs of one match that break it down, {@link useDamageTab} and
+ * {@link usePlayersTab}, and of the timeline tab (`useTimelineTab`, in `./use-match-timeline`).
  *
  * It sits under {@link DETAILS_QUERY_KEY}, deliberately unlike the community queries (see
  * `useMatchAnalysis`): whatever refreshes the match details (a synchronisation, which may have
- * projected the match again, an account change) reads both tabs again, and `resetAccountData` forgets
- * them with the rest of the account. It is exported so that the page can address the two tabs of one
- * match together (to read them again, say) without spelling the key itself.
+ * projected the match again, an account change) reads the three tabs again, and `resetAccountData`
+ * forgets them with the rest of the account. It is exported so that the page can address the three
+ * tabs of one match together (to read them again, say) without spelling the key itself.
  *
  * @param matchId - The match.
  * @returns The query key prefix.

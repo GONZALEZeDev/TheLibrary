@@ -6,9 +6,11 @@
  * is the same whatever the state of the detail. It is part of the title block of the page, close
  * under the title it describes. A match with no row has no header.
  *
- * An archived match then shows three tabs, and only the open one is built:
+ * An archived match then shows four tabs, and only the open one is built:
  * - the analysis (`AnalysisSection`): the strengths and weaknesses, the phase table and the metrics
  *   by family, then one line about the archive of the match;
+ * - the timeline (`TimelineTab`): the souls of the player over the match with their deaths, kills and
+ *   purchases, and the list of their deaths, with the ones that were avoidable;
  * - the damage and build (`DamageTab`): the damage by source compared with the player's habits, and
  *   the final build;
  * - the players (`PlayersTab`): the twelve players of the match and the player's places among them.
@@ -59,6 +61,7 @@ import { AnalysisSection } from './AnalysisSection';
 import { DamageTab } from './DamageTab';
 import { MatchHeader } from './MatchHeader';
 import { PlayersTab } from './PlayersTab';
+import { TimelineTab } from './TimelineTab';
 import { useMatchDetail, useRetryDetail } from './use-match-detail';
 
 /**
@@ -72,13 +75,14 @@ type ReadyView = Extract<MatchDetailView, { kind: 'ready' }>;
 
 /**
  * Translation key of the name of each tab of an archived match, in display order: the analysis, the
- * damage and build, the players. The `satisfies` clause makes the compiler reject this table as soon
- * as a tab is added to {@link MatchTab} without a name here, or a name is given to a tab that does
- * not exist. (The router validates the `tab` of the address against the same ids; this page does not
- * read them from `router.ts`, which imports the page.)
+ * timeline, the damage and build, the players. The `satisfies` clause makes the compiler reject this
+ * table as soon as a tab is added to {@link MatchTab} without a name here, or a name is given to a
+ * tab that does not exist. (The router validates the `tab` of the address against the same ids; this
+ * page does not read them from `router.ts`, which imports the page.)
  */
 const TAB_LABEL_KEYS = {
   analysis: 'matchDetail.tabs.analysis',
+  timeline: 'matchDetail.tabs.timeline',
   damage: 'matchDetail.tabs.damage',
   players: 'matchDetail.tabs.players',
 } as const satisfies Readonly<Record<MatchTab, string>>;
@@ -211,7 +215,7 @@ function renderArchiveLine(
  * @param matchId - The match.
  * @param t - Translation function.
  * @param format - How to write dates and sizes.
- * @returns The analysis then the archive line, the damage and build, or the players.
+ * @returns The analysis then the archive line, the timeline, the damage and build, or the players.
  */
 function renderTabPanel(
   tab: MatchTab,
@@ -228,6 +232,8 @@ function renderTabPanel(
           {renderArchiveLine(view.facts, view.archivedBytes, t, format)}
         </div>
       );
+    case 'timeline':
+      return <TimelineTab matchId={matchId} />;
     case 'damage':
       return <DamageTab matchId={matchId} />;
     case 'players':

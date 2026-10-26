@@ -48,7 +48,7 @@ export const matchesSearchSchema = z.object({
  * The tabs the match route accepts: the `tab` of the URL is one of these ids. The page decides their
  * order and their names (`MatchDetailPage`).
  */
-export const MATCH_TABS = ['analysis', 'damage', 'players'] as const;
+export const MATCH_TABS = ['analysis', 'timeline', 'damage', 'players'] as const;
 
 /** The id of a tab of the match page. */
 export type MatchTab = (typeof MATCH_TABS)[number];

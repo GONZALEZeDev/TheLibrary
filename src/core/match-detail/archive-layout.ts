@@ -8,7 +8,7 @@
  * @packageDocumentation
  */
 import type { AccountId } from '../domain/account';
-import type { MatchId } from '../domain/match';
+import { parseMatchId, type MatchId } from '../domain/match';
 
 /** The folder that holds everything the app archives. */
 export const ARCHIVE_ROOT = 'archive';
@@ -74,6 +74,16 @@ export function quarantineFolder(accountId: AccountId): string {
 }
 
 /**
+ * The name of the archive file of a match, in the folder of its account.
+ *
+ * @param matchId - The match.
+ * @returns The file name, e.g. `100000001.json.zst`.
+ */
+export function archiveFileName(matchId: MatchId): string {
+  return `${String(matchId)}${ARCHIVE_EXTENSION}`;
+}
+
+/**
  * The archive of a match.
  *
  * @param accountId - The account the archive is pruned for.
@@ -81,7 +91,31 @@ export function quarantineFolder(accountId: AccountId): string {
  * @returns The path of the archive, e.g. `archive/123456789/100000001.json.zst`.
  */
 export function archivePath(accountId: AccountId, matchId: MatchId): string {
-  return `${archiveFolder(accountId)}/${String(matchId)}${ARCHIVE_EXTENSION}`;
+  return `${archiveFolder(accountId)}/${archiveFileName(matchId)}`;
+}
+
+/**
+ * What {@link archiveFileName} builds: the digits of the match id, then the archive extension. The
+ * digits are captured so that {@link matchIdOfArchiveName} can read the id back. It is the one copy
+ * of that shape outside the function itself.
+ */
+const ARCHIVE_NAME = /^(\d+)\.json\.zst$/;
+
+/**
+ * The match an archive file name belongs to, the reverse of {@link archiveFileName}.
+ *
+ * The stores list the folder of an account by name, and the files that are not archives sit in the
+ * same folder: a temporary file of an interrupted write (`….json.zst.tmp`), and whatever else a
+ * user or another program put there. Those, and any name whose digits are no match id, give `null`.
+ *
+ * @param name - A file name from the folder of an account.
+ * @returns The match id, or `null` when the name is not the one {@link archiveFileName} gives.
+ */
+export function matchIdOfArchiveName(name: string): MatchId | null {
+  const digits = ARCHIVE_NAME.exec(name)?.[1];
+  // The shape only tells digits from other text: `parseMatchId` decides what a match id is (no
+  // zero, no leading zero, nothing past a safe integer).
+  return digits === undefined ? null : parseMatchId(digits);
 }
 
 /**

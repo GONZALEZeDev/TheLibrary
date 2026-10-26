@@ -40,6 +40,35 @@ export interface ArchiveStore {
   read(accountId: AccountId, matchId: MatchId): Promise<Uint8Array | null>;
 
   /**
+   * Delete the archive of a match.
+   *
+   * A match that has no archive is not an error: there is nothing to remove, as when the account
+   * has no folder yet. The temporary file of a write, the quarantine and the archives of the other
+   * matches and accounts are never touched.
+   *
+   * @param accountId - The account the archive is pruned for.
+   * @param matchId - The match.
+   * @returns A promise resolved once the archive is gone.
+   * @throws Whatever the platform rejects with when the archive exists but cannot be removed (a
+   *   file held open by another program, say).
+   */
+  remove(accountId: AccountId, matchId: MatchId): Promise<void>;
+
+  /**
+   * List the matches an account has an archive for.
+   *
+   * Only the files named like an archive (`matchIdOfArchiveName` in `archive-layout.ts`) count: the
+   * temporary files of interrupted writes, the quarantine folder and any other entry of the
+   * account's folder are left out, as are names that carry no match id. What an archive holds is
+   * not read.
+   *
+   * @param accountId - The account the archives are pruned for.
+   * @returns The match ids, sorted ascending; empty when the account has no folder yet.
+   * @throws Whatever the platform rejects with when the folder exists but cannot be listed.
+   */
+  list(accountId: AccountId): Promise<readonly MatchId[]>;
+
+  /**
    * Delete the temporary files an interrupted write left in the folder of an account.
    *
    * Archives, the quarantine folder that the account folder holds and the files of other accounts

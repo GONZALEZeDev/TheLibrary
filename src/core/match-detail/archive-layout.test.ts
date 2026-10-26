@@ -7,12 +7,14 @@ import { describe, expect, it } from 'vitest';
 import { testAccountId, testMatchId } from '../../test/test-data';
 import {
   accountFolderName,
+  archiveFileName,
   archiveFolder,
   archivePath,
   isArchiveEntryName,
   isQuarantineFileName,
   isTemporaryArchiveName,
   LEGACY_QUARANTINE_ENTRY,
+  matchIdOfArchiveName,
   quarantineFileName,
   quarantineFolder,
   quarantinePath,
@@ -49,6 +51,35 @@ describe('archive layout', () => {
   it('recognises a temporary archive file by its name', () => {
     expect(isTemporaryArchiveName('100000001.json.zst.tmp')).toBe(true);
     expect(isTemporaryArchiveName('100000001.json.zst')).toBe(false);
+  });
+
+  it('reads the match id of an archive file name and refuses others', () => {
+    expect(matchIdOfArchiveName('100000001.json.zst')).toBe(MATCH);
+    // The file name that the layout builds is the one it reads back.
+    expect(archiveFileName(MATCH)).toBe('100000001.json.zst');
+    expect(matchIdOfArchiveName(archiveFileName(MATCH))).toBe(MATCH);
+
+    for (const name of [
+      // A temporary file and a quarantined response are not archives.
+      '100000001.json.zst.tmp',
+      quarantineFileName(MATCH, 1_792_154_119_000),
+      // Not a match id: no digits, a sign, a decimal, zero, a leading zero, more than a safe integer.
+      '.json.zst',
+      'abc.json.zst',
+      '-1.json.zst',
+      '1.5.json.zst',
+      '0.json.zst',
+      '007.json.zst',
+      '99999999999999999999.json.zst',
+      // Not the extension, or something around the name.
+      '100000001.json',
+      '100000001.zst',
+      'x100000001.json.zst',
+      '100000001.json.zst\n',
+      '',
+    ]) {
+      expect(matchIdOfArchiveName(name), name).toBeNull();
+    }
   });
 
   it('pads the time of a quarantine file name to 15 digits', () => {

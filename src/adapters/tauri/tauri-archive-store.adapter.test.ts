@@ -424,6 +424,96 @@ describe('TauriArchiveStore', () => {
     ]);
   });
 
+  it('removes one archive and ignores a missing one', async () => {
+    const fake = createFakeFs();
+    const store = new TauriArchiveStore(fake.functions);
+    await store.write(ACCOUNT, MATCH, new Uint8Array([1]));
+    await store.write(ACCOUNT, OTHER_MATCH, new Uint8Array([2]));
+    await store.write(LONGER_ACCOUNT, MATCH, new Uint8Array([3]));
+    fake.calls.length = 0;
+
+    await store.remove(ACCOUNT, MATCH);
+
+    // The plugin errors on a missing path, so the adapter asks `exists` first.
+    expect(callLines(fake)).toEqual([
+      `exists ${archivePath(ACCOUNT, MATCH)}`,
+      `remove ${archivePath(ACCOUNT, MATCH)}`,
+    ]);
+    // Only that archive is gone: the other match of the account and the same match of another
+    // account (whose id starts with the same digits) stay.
+    expect([...fake.files.keys()].sort()).toEqual(
+      [archivePath(ACCOUNT, OTHER_MATCH), archivePath(LONGER_ACCOUNT, MATCH)].sort(),
+    );
+
+    // The archive is gone now, and an account with no folder has none either: nothing to do.
+    fake.calls.length = 0;
+    await expect(store.remove(ACCOUNT, MATCH)).resolves.toBeUndefined();
+    await expect(store.remove(testAccountId(99), MATCH)).resolves.toBeUndefined();
+    expect(callLines(fake)).toEqual([
+      `exists ${archivePath(ACCOUNT, MATCH)}`,
+      `exists ${archivePath(testAccountId(99), MATCH)}`,
+    ]);
+  });
+
+  it('rejects when an archive that exists cannot be removed', async () => {
+    const fake = createFakeFs();
+    const store = new TauriArchiveStore(fake.functions);
+    await store.write(ACCOUNT, MATCH, new Uint8Array([1]));
+    const failure = new Error('file in use');
+    fake.failNext('remove', failure);
+
+    await expect(store.remove(ACCOUNT, MATCH)).rejects.toBe(failure);
+
+    // The archive is still there.
+    expect([...fake.files.keys()]).toEqual([archivePath(ACCOUNT, MATCH)]);
+  });
+
+  it("lists the match ids of an account's archives only", async () => {
+    const fake = createFakeFs();
+    const store = new TauriArchiveStore(fake.functions);
+
+    // An account with no folder has no archive; `readDir` (which throws on a missing folder) is
+    // never called.
+    await expect(store.list(ACCOUNT)).resolves.toEqual([]);
+    expect(callLines(fake)).toEqual([`exists ${archiveFolder(ACCOUNT)}`]);
+
+    // Written out of order, and with an id that sorts differently as text and as a number.
+    const small = testMatchId(9);
+    await store.write(ACCOUNT, OTHER_MATCH, new Uint8Array([1]));
+    await store.write(ACCOUNT, small, new Uint8Array([2]));
+    await store.write(ACCOUNT, MATCH, new Uint8Array([3]));
+    // What is not an archive of this account: the files of another account (one whose id starts
+    // with the same digits), a leftover of a write, a quarantined response, and strangers.
+    await store.write(LONGER_ACCOUNT, testMatchId(100000009), new Uint8Array([4]));
+    seedFile(fake, temporaryArchivePath(ACCOUNT, testMatchId(100000003)));
+    await store.quarantine(ACCOUNT, MATCH, QUARANTINE_START, new Uint8Array([5]));
+    seedFile(fake, `${archiveFolder(ACCOUNT)}/notes.txt`);
+    seedFile(fake, `${archiveFolder(ACCOUNT)}/0.json.zst`);
+    // A folder named like an archive is not one.
+    seedFolder(fake, `${archiveFolder(ACCOUNT)}/100000004.json.zst`);
+    fake.calls.length = 0;
+
+    const matches = await store.list(ACCOUNT);
+
+    // Sorted ascending as numbers, whatever order the plugin lists the names in.
+    expect(matches).toEqual([small, MATCH, OTHER_MATCH]);
+    // Only the folder of the account is listed, and nothing is read or removed.
+    expect(callLines(fake)).toEqual([
+      `exists ${archiveFolder(ACCOUNT)}`,
+      `readDir ${archiveFolder(ACCOUNT)}`,
+    ]);
+  });
+
+  it('rejects when the folder of an account cannot be listed', async () => {
+    const fake = createFakeFs();
+    const store = new TauriArchiveStore(fake.functions);
+    await store.write(ACCOUNT, MATCH, new Uint8Array([1]));
+    const failure = new Error('access denied');
+    fake.failNext('readDir', failure);
+
+    await expect(store.list(ACCOUNT)).rejects.toBe(failure);
+  });
+
   it('removes only temporary files', async () => {
     const fake = createFakeFs();
     const store = new TauriArchiveStore(fake.functions);
@@ -716,7 +806,8 @@ describe('TauriArchiveStore', () => {
     const fake = createFakeFs();
     const store = new TauriArchiveStore(fake.functions);
     // Every function of the plugin gets called: writing, reading, cleaning, quarantining
-    // (twenty-one responses, so that the trim removes one), listing and removing an entry.
+    // (twenty-one responses, so that the trim removes one), listing and removing an entry, then
+    // listing the archives of an account and removing one.
     await store.write(ACCOUNT, MATCH, new Uint8Array([1]));
     await store.read(ACCOUNT, MATCH);
     await store.read(ACCOUNT, OTHER_MATCH);
@@ -726,6 +817,8 @@ describe('TauriArchiveStore', () => {
       await store.quarantine(ACCOUNT, MATCH, QUARANTINE_START + index, new Uint8Array([index]));
     }
     await store.listEntries();
+    await store.list(ACCOUNT);
+    await store.remove(ACCOUNT, MATCH);
     await store.removeEntry(String(ACCOUNT));
 
     const names = new Set(fake.calls.map((call) => call.name));

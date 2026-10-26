@@ -32,6 +32,7 @@ import {
   isArchiveEntryName,
   isQuarantineFileName,
   isTemporaryArchiveName,
+  matchIdOfArchiveName,
   quarantineFolder,
   quarantinePath,
   QUARANTINE_LIMIT,
@@ -120,6 +121,51 @@ export class TauriArchiveStore implements ArchiveStore {
       return null;
     }
     return this.#fs.readFile(path, AT_LOCAL_DATA);
+  }
+
+  /**
+   * Delete the archive of a match.
+   *
+   * @param accountId - The account the archive is pruned for.
+   * @param matchId - The match.
+   * @returns A promise resolved once the archive is gone.
+   * @throws Whatever the plugin rejects with when the archive exists but cannot be removed.
+   */
+  async remove(accountId: AccountId, matchId: MatchId): Promise<void> {
+    const path = archivePath(accountId, matchId);
+    // The plugin's `remove` throws on a missing path, which the port treats as "nothing to do".
+    if (!(await this.#fs.exists(path, AT_LOCAL_DATA))) {
+      return;
+    }
+    await this.#fs.remove(path, AT_LOCAL_DATA);
+  }
+
+  /**
+   * List the matches an account has an archive for.
+   *
+   * Only the folder of the account is listed, and only its files named like an archive count: a
+   * temporary file, the quarantine folder, a folder or a file of another name is left out.
+   *
+   * @param accountId - The account the archives are pruned for.
+   * @returns The match ids, sorted ascending; empty when the account has no folder yet.
+   * @throws Whatever the plugin rejects with when the folder exists but cannot be listed.
+   */
+  async list(accountId: AccountId): Promise<readonly MatchId[]> {
+    const folder = archiveFolder(accountId);
+    // `readDir` throws on a missing folder; before the first archive there is nothing to list.
+    if (!(await this.#fs.exists(folder, AT_LOCAL_DATA))) {
+      return [];
+    }
+    const matches: MatchId[] = [];
+    for (const entry of await this.#fs.readDir(folder, AT_LOCAL_DATA)) {
+      // A folder or a link that happens to be named like an archive is not one.
+      const matchId = entry.isFile ? matchIdOfArchiveName(entry.name) : null;
+      if (matchId !== null) {
+        matches.push(matchId);
+      }
+    }
+    // The plugin promises no order; the port promises ascending ids (numbers, not text: `9` first).
+    return matches.sort((a, b) => a - b);
   }
 
   /**

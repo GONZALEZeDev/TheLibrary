@@ -17,6 +17,7 @@ import {
   isArchiveEntryName,
   isQuarantineFileName,
   isTemporaryArchiveName,
+  matchIdOfArchiveName,
   quarantineFolder,
   quarantinePath,
   QUARANTINE_LIMIT,
@@ -93,6 +94,42 @@ export class MemoryArchiveStore implements ArchiveStore {
   read(accountId: AccountId, matchId: MatchId): Promise<Uint8Array | null> {
     const bytes = this.#stored.get(archivePath(accountId, matchId));
     return Promise.resolve(bytes === undefined ? null : bytes.slice());
+  }
+
+  /**
+   * Delete the archive of a match; a match without one is left as it is.
+   *
+   * @param accountId - The account the archive is pruned for.
+   * @param matchId - The match.
+   * @returns A promise resolved once the archive is gone.
+   */
+  remove(accountId: AccountId, matchId: MatchId): Promise<void> {
+    this.#stored.delete(archivePath(accountId, matchId));
+    return Promise.resolve();
+  }
+
+  /**
+   * List the matches an account has an archive for: the files directly in its folder that are
+   * named like an archive. The temporary files, the quarantine and the other accounts are left out.
+   *
+   * @param accountId - The account the archives are pruned for.
+   * @returns The match ids, sorted ascending; empty when the account has no archive.
+   */
+  list(accountId: AccountId): Promise<readonly MatchId[]> {
+    const folderPrefix = `${archiveFolder(accountId)}/`;
+    const matches: MatchId[] = [];
+    for (const path of this.#stored.keys()) {
+      if (!path.startsWith(folderPrefix)) {
+        continue;
+      }
+      // A name with a `/` is a file of a folder below (the quarantine), which `matchIdOfArchiveName`
+      // refuses on its own; the prefix keeps `archive/1234` from matching `archive/12345/…`.
+      const matchId = matchIdOfArchiveName(path.slice(folderPrefix.length));
+      if (matchId !== null) {
+        matches.push(matchId);
+      }
+    }
+    return Promise.resolve(matches.sort((a, b) => a - b));
   }
 
   /**

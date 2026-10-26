@@ -10,6 +10,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  archiveFolder,
   archivePath,
   ARCHIVE_ROOT,
   LEGACY_QUARANTINE_ENTRY,
@@ -74,6 +75,52 @@ describe('MemoryArchiveStore', () => {
 
     const secondRead = await store.read(ACCOUNT, MATCH);
     expect(secondRead === null ? null : Array.from(secondRead)).toEqual([1, 2, 3]);
+  });
+
+  it('removes one archive and ignores a missing one', async () => {
+    const store = new MemoryArchiveStore();
+    await store.write(ACCOUNT, MATCH, new Uint8Array([1]));
+    await store.write(ACCOUNT, OTHER_MATCH, new Uint8Array([2]));
+    await store.write(OTHER_ACCOUNT, MATCH, new Uint8Array([3]));
+
+    await store.remove(ACCOUNT, MATCH);
+
+    // Only that archive is gone: the other match of the account and the same match of another
+    // account stay.
+    expect([...store.files.keys()].sort()).toEqual(
+      [archivePath(ACCOUNT, OTHER_MATCH), archivePath(OTHER_ACCOUNT, MATCH)].sort(),
+    );
+    await expect(store.read(ACCOUNT, MATCH)).resolves.toBeNull();
+
+    // Nothing to remove: the archive is gone already, or the account has no folder.
+    await expect(store.remove(ACCOUNT, MATCH)).resolves.toBeUndefined();
+    await expect(store.remove(testAccountId(99), MATCH)).resolves.toBeUndefined();
+    expect(store.files.size).toBe(2);
+  });
+
+  it("lists the match ids of an account's archives only", async () => {
+    const store = new MemoryArchiveStore();
+
+    // An account with no archive has an empty list.
+    await expect(store.list(ACCOUNT)).resolves.toEqual([]);
+
+    // Written out of order, and with an id that sorts differently as text and as a number.
+    const small = testMatchId(9);
+    await store.write(ACCOUNT, OTHER_MATCH, new Uint8Array([1]));
+    await store.write(ACCOUNT, small, new Uint8Array([2]));
+    await store.write(ACCOUNT, MATCH, new Uint8Array([3]));
+    // What is not an archive of this account: the files of another account (one whose id starts
+    // with the same digits), a leftover of a write, a quarantined response, and strangers.
+    await store.write(testAccountId(1234567890), testMatchId(100000009), new Uint8Array([4]));
+    await store.write(OTHER_ACCOUNT, testMatchId(100000008), new Uint8Array([5]));
+    store.addTemporaryFile(ACCOUNT, testMatchId(100000003));
+    await store.quarantine(ACCOUNT, MATCH, QUARANTINE_START, new Uint8Array([6]));
+    store.addFile(`${archiveFolder(ACCOUNT)}/notes.txt`);
+    store.addFile(`${archiveFolder(ACCOUNT)}/0.json.zst`);
+
+    // Sorted ascending as numbers, whatever order the files were stored in.
+    await expect(store.list(ACCOUNT)).resolves.toEqual([small, MATCH, OTHER_MATCH]);
+    await expect(store.list(OTHER_ACCOUNT)).resolves.toEqual([testMatchId(100000008)]);
   });
 
   it('removes the temporary files of an account only', async () => {

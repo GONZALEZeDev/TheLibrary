@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { PROJECTION_VERSION } from '../core/analysis/registry';
 import type { AccountId } from '../core/domain/account';
 import type { MatchId } from '../core/domain/match';
+import { ARCHIVE_FORMAT } from '../core/match-detail/archive-envelope';
 import type { AccountSource } from '../ports/account-source.port';
 import { createTestDatabase, matchSummary, testAccountId, testMatchId } from '../test/test-data';
 import {
@@ -109,7 +110,7 @@ async function createSeededFixture(
   const details = new MatchDetailRepository(database);
   for (const match of matches) {
     if (match.archived) {
-      await details.markReady(ACCOUNT_ID, matchId(match.n), 1_024);
+      await details.markReady(ACCOUNT_ID, matchId(match.n), 1_024, ARCHIVE_FORMAT);
     }
   }
   const metrics = new MetricsRepository(database);

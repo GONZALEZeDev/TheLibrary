@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { PAIGE_HERO_ID } from '../core/domain/hero';
 import type { MatchId, MatchSummary } from '../core/domain/match';
+import { ARCHIVE_FORMAT } from '../core/match-detail/archive-envelope';
 import {
   DETAIL_WINDOW_MS,
   isDetailEligible,
@@ -115,6 +116,7 @@ describe('MatchDetailRepository', () => {
       nextAttemptAt: null,
       lastError: null,
       archivedBytes: null,
+      archiveFormat: null,
       match: eligibilityFieldsOf(match),
     });
     // A match that was never synchronised has no detail state, and neither has another player's.
@@ -245,7 +247,7 @@ describe('MatchDetailRepository', () => {
       matchSummary({ matchId: 2, startTime: daysAgo(2) }),
       matchSummary({ matchId: 3, startTime: daysAgo(3) }),
     ]);
-    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(1), 1_024);
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(1), 1_024, ARCHIVE_FORMAT);
     await repository.saveState(TEST_ACCOUNT_ID, testMatchId(2), {
       status: 'unavailable',
       attempts: 6,
@@ -290,7 +292,7 @@ describe('MatchDetailRepository', () => {
     // The match failed twice before: archiving it forgets the failures.
     await repository.saveState(TEST_ACCOUNT_ID, testMatchId(1), retryState(2, NOW + 60_000));
 
-    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(1), 52_431);
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(1), 52_431, ARCHIVE_FORMAT);
 
     await expect(repository.getDetail(TEST_ACCOUNT_ID, testMatchId(1))).resolves.toEqual({
       status: 'ready',
@@ -298,6 +300,7 @@ describe('MatchDetailRepository', () => {
       nextAttemptAt: null,
       lastError: null,
       archivedBytes: 52_431,
+      archiveFormat: ARCHIVE_FORMAT,
       match: eligibilityFieldsOf(match),
     });
     await expect(repository.nextDue(TEST_ACCOUNT_ID, NOW + DAY_MS, NONE)).resolves.toBeNull();
@@ -314,6 +317,7 @@ describe('MatchDetailRepository', () => {
       nextAttemptAt: NOW + 7_200_000,
       lastError: 'http_404',
       archivedBytes: null,
+      archiveFormat: null,
       match: eligibilityFieldsOf(match),
     });
 
@@ -334,7 +338,7 @@ describe('MatchDetailRepository', () => {
     const first = matchSummary({ matchId: 1, startTime: daysAgo(1) });
     const second = matchSummary({ matchId: 2, startTime: daysAgo(2) });
     const { repository } = await createRepositories([first, second]);
-    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(1), 52_431);
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(1), 52_431, ARCHIVE_FORMAT);
     await repository.saveState(TEST_ACCOUNT_ID, testMatchId(2), retryState(4, NOW + 60_000));
 
     await repository.resetToPending(TEST_ACCOUNT_ID, testMatchId(1));
@@ -346,6 +350,7 @@ describe('MatchDetailRepository', () => {
       nextAttemptAt: null,
       lastError: null,
       archivedBytes: null,
+      archiveFormat: null,
     };
     await expect(repository.getDetail(TEST_ACCOUNT_ID, testMatchId(1))).resolves.toEqual({
       ...pending,
@@ -357,6 +362,156 @@ describe('MatchDetailRepository', () => {
     });
     // Both are due again.
     await expect(takeAllDue(repository, NOW)).resolves.toEqual([1, 2].map(testMatchId));
+  });
+
+  it('records the archive format with a ready match', async () => {
+    const { repository } = await createRepositories([
+      matchSummary({ matchId: 1, startTime: daysAgo(1) }),
+      matchSummary({ matchId: 2, startTime: daysAgo(2) }),
+    ]);
+
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(1), 100, 1);
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(2), 200, ARCHIVE_FORMAT);
+
+    await expect(repository.getDetail(TEST_ACCOUNT_ID, testMatchId(1))).resolves.toMatchObject({
+      status: 'ready',
+      archivedBytes: 100,
+      archiveFormat: 1,
+    });
+    await expect(repository.getDetail(TEST_ACCOUNT_ID, testMatchId(2))).resolves.toMatchObject({
+      status: 'ready',
+      archivedBytes: 200,
+      archiveFormat: ARCHIVE_FORMAT,
+    });
+  });
+
+  it('forgets the format when a match goes back to pending', async () => {
+    const { repository } = await createRepositories([
+      matchSummary({ matchId: 1, startTime: daysAgo(1) }),
+    ]);
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(1), 100, ARCHIVE_FORMAT);
+
+    await repository.resetToPending(TEST_ACCOUNT_ID, testMatchId(1));
+
+    await expect(repository.getDetail(TEST_ACCOUNT_ID, testMatchId(1))).resolves.toMatchObject({
+      status: 'pending',
+      archiveFormat: null,
+    });
+  });
+
+  describe('matches to refresh', () => {
+    /**
+     * Archive the given matches the way an older version did: ready, with no format recorded.
+     *
+     * @param database - The database.
+     * @param repository - The repository under test.
+     * @param ids - The ids of the matches (of the tracked player).
+     */
+    async function archiveWithoutFormat(
+      database: Database,
+      repository: MatchDetailRepository,
+      ids: readonly number[],
+    ): Promise<void> {
+      for (const id of ids) {
+        await repository.markReady(TEST_ACCOUNT_ID, testMatchId(id), 100, ARCHIVE_FORMAT);
+      }
+      // A file written before the column existed has a NULL format.
+      await database.execute('UPDATE matches SET archive_format = NULL');
+    }
+
+    /**
+     * Take the matches to refresh one after the other, as the queue does, until none is left.
+     *
+     * @param repository - The repository under test.
+     * @returns The ids of the matches, in the order they were taken.
+     */
+    async function takeAllStale(repository: MatchDetailRepository): Promise<MatchId[]> {
+      const taken = new Set<MatchId>();
+      let stale = await repository.nextStale(TEST_ACCOUNT_ID, NOW, taken);
+      while (stale !== null) {
+        // No attempt is counted for a refresh.
+        expect(stale.attempts).toBe(0);
+        taken.add(stale.matchId);
+        stale = await repository.nextStale(TEST_ACCOUNT_ID, NOW, taken);
+      }
+      return [...taken];
+    }
+
+    it('lists the ready matches of an unknown format, most recent first, within 90 days', async () => {
+      const { database, repository } = await createRepositories([
+        matchSummary({ matchId: 1, startTime: daysAgo(5) }),
+        matchSummary({ matchId: 2, startTime: daysAgo(1) }),
+        // Two matches that started at the same second: the highest id comes first.
+        matchSummary({ matchId: 3, startTime: daysAgo(3) }),
+        matchSummary({ matchId: 4, startTime: daysAgo(3) }),
+        // Ready and of an unknown format, but older than 90 days, of another hero or of another
+        // player: none is listed.
+        matchSummary({ matchId: 5, startTime: daysAgo(91) }),
+        matchSummary({ matchId: 6, startTime: daysAgo(1), heroId: PAIGE_HERO_ID + 1 }),
+        matchSummary({ matchId: 7, startTime: daysAgo(1), accountId: testAccountId(42) }),
+        // Not archived yet: the pending pass's, not this one's.
+        matchSummary({ matchId: 8, startTime: daysAgo(1) }),
+      ]);
+      await archiveWithoutFormat(database, repository, [1, 2, 3, 4, 5, 6]);
+      await repository.markReady(testAccountId(42), testMatchId(7), 100, ARCHIVE_FORMAT);
+      await database.execute('UPDATE matches SET archive_format = NULL');
+
+      await expect(takeAllStale(repository)).resolves.toEqual([2, 4, 3, 1].map(testMatchId));
+    });
+
+    it('skips the matches being processed', async () => {
+      const { database, repository } = await createRepositories([
+        matchSummary({ matchId: 1, startTime: daysAgo(2) }),
+        matchSummary({ matchId: 2, startTime: daysAgo(1) }),
+      ]);
+      await archiveWithoutFormat(database, repository, [1, 2]);
+
+      await expect(
+        repository.nextStale(TEST_ACCOUNT_ID, NOW, new Set([testMatchId(2)])),
+      ).resolves.toMatchObject({ matchId: testMatchId(1) });
+      // An empty set skips nothing (and is still valid SQL).
+      await expect(repository.nextStale(TEST_ACCOUNT_ID, NOW, NONE)).resolves.toMatchObject({
+        matchId: testMatchId(2),
+      });
+      await expect(
+        repository.nextStale(TEST_ACCOUNT_ID, NOW, new Set([1, 2].map(testMatchId))),
+      ).resolves.toBeNull();
+    });
+
+    it('never lists a match marked final or of format 2', async () => {
+      const { database, repository } = await createRepositories([
+        matchSummary({ matchId: 1, startTime: daysAgo(1) }),
+        matchSummary({ matchId: 2, startTime: daysAgo(2) }),
+        matchSummary({ matchId: 3, startTime: daysAgo(3) }),
+      ]);
+      await archiveWithoutFormat(database, repository, [1, 2, 3]);
+      await repository.markRefreshFinal(TEST_ACCOUNT_ID, testMatchId(1));
+      await repository.markReady(TEST_ACCOUNT_ID, testMatchId(2), 100, ARCHIVE_FORMAT);
+
+      // Only the match that was never judged is left.
+      await expect(takeAllStale(repository)).resolves.toEqual([testMatchId(3)]);
+
+      await repository.markRefreshFinal(TEST_ACCOUNT_ID, testMatchId(3));
+
+      await expect(takeAllStale(repository)).resolves.toEqual([]);
+    });
+
+    it('keeps the status and the size when a refresh is marked final', async () => {
+      const { database, repository } = await createRepositories([
+        matchSummary({ matchId: 1, startTime: daysAgo(1) }),
+      ]);
+      await archiveWithoutFormat(database, repository, [1]);
+      const before = await repository.getDetail(TEST_ACCOUNT_ID, testMatchId(1));
+      expect(before).toMatchObject({ status: 'ready', archivedBytes: 100, archiveFormat: null });
+
+      await repository.markRefreshFinal(TEST_ACCOUNT_ID, testMatchId(1));
+
+      // Only the format changed.
+      await expect(repository.getDetail(TEST_ACCOUNT_ID, testMatchId(1))).resolves.toEqual({
+        ...before,
+        archiveFormat: 1,
+      });
+    });
   });
 
   it('counts the eligible matches by status', async () => {
@@ -377,8 +532,8 @@ describe('MatchDetailRepository', () => {
       matchSummary({ matchId: 11, startTime: daysAgo(1), accountId: testAccountId(42) }),
     ]);
     await repository.saveState(TEST_ACCOUNT_ID, testMatchId(3), retryState(1, NOW + 60_000));
-    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(4), 100);
-    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(5), 100);
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(4), 100, ARCHIVE_FORMAT);
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(5), 100, ARCHIVE_FORMAT);
     await repository.saveState(TEST_ACCOUNT_ID, testMatchId(6), {
       status: 'unavailable',
       attempts: 6,
@@ -391,8 +546,8 @@ describe('MatchDetailRepository', () => {
       nextAttemptAt: null,
       lastError: 'invalid_payload',
     });
-    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(8), 100);
-    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(9), 100);
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(8), 100, ARCHIVE_FORMAT);
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(9), 100, ARCHIVE_FORMAT);
 
     await expect(repository.summary(TEST_ACCOUNT_ID, NOW)).resolves.toEqual({
       archived: 2,
@@ -421,7 +576,7 @@ describe('MatchDetailRepository', () => {
       matchSummary({ matchId: 11, startTime: daysAgo(91), accountId: testAccountId(42) }),
     ]);
     for (const matchId of [1, 2, 3]) {
-      await repository.markReady(TEST_ACCOUNT_ID, testMatchId(matchId), 100);
+      await repository.markReady(TEST_ACCOUNT_ID, testMatchId(matchId), 100, ARCHIVE_FORMAT);
     }
     await repository.saveState(TEST_ACCOUNT_ID, testMatchId(5), retryState(1, NOW + 60_000));
     await repository.saveState(TEST_ACCOUNT_ID, testMatchId(6), {
@@ -437,9 +592,9 @@ describe('MatchDetailRepository', () => {
       lastError: 'invalid_payload',
     });
     for (const matchId of [8, 9, 10]) {
-      await repository.markReady(TEST_ACCOUNT_ID, testMatchId(matchId), 100);
+      await repository.markReady(TEST_ACCOUNT_ID, testMatchId(matchId), 100, ARCHIVE_FORMAT);
     }
-    await repository.markReady(testAccountId(42), testMatchId(11), 100);
+    await repository.markReady(testAccountId(42), testMatchId(11), 100, ARCHIVE_FORMAT);
 
     await expect(repository.summary(TEST_ACCOUNT_ID, NOW)).resolves.toEqual({
       archived: 3,
@@ -464,7 +619,7 @@ describe('MatchDetailRepository', () => {
     const { history, repository } = await createRepositories([
       matchSummary({ matchId: 1, kills: 1 }),
     ]);
-    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(1), 52_431);
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(1), 52_431, ARCHIVE_FORMAT);
 
     const resynchronised = matchSummary({ matchId: 1, kills: 9 });
     await history.upsertMany([resynchronised]);
@@ -477,6 +632,7 @@ describe('MatchDetailRepository', () => {
       nextAttemptAt: null,
       lastError: null,
       archivedBytes: 52_431,
+      archiveFormat: ARCHIVE_FORMAT,
       match: eligibilityFieldsOf(resynchronised),
     });
   });
@@ -559,7 +715,9 @@ describe('MatchDetailRepository', () => {
       const calls = [
         repository.nextDue(TEST_ACCOUNT_ID, NOW, NONE),
         repository.getDetail(TEST_ACCOUNT_ID, matchId),
-        repository.markReady(TEST_ACCOUNT_ID, matchId, 1),
+        repository.markReady(TEST_ACCOUNT_ID, matchId, 1, ARCHIVE_FORMAT),
+        repository.nextStale(TEST_ACCOUNT_ID, NOW, NONE),
+        repository.markRefreshFinal(TEST_ACCOUNT_ID, matchId),
         repository.saveState(TEST_ACCOUNT_ID, matchId, state),
         repository.resetToPending(TEST_ACCOUNT_ID, matchId),
         repository.summary(TEST_ACCOUNT_ID, NOW),
@@ -633,12 +791,14 @@ describe('MatchDetailRepository', () => {
 
     await repository.nextDue(TEST_ACCOUNT_ID, NOW, new Set([testMatchId(987_654_322)]));
     await repository.getDetail(TEST_ACCOUNT_ID, matchId);
-    await repository.markReady(TEST_ACCOUNT_ID, matchId, 4_242_424);
+    await repository.markReady(TEST_ACCOUNT_ID, matchId, 4_242_424, ARCHIVE_FORMAT);
     await repository.saveState(TEST_ACCOUNT_ID, matchId, retryState(1, NOW + 5_555_555));
     await repository.resetToPending(TEST_ACCOUNT_ID, matchId);
     await repository.summary(TEST_ACCOUNT_ID, NOW);
+    await repository.nextStale(TEST_ACCOUNT_ID, NOW, new Set([testMatchId(987_654_322)]));
+    await repository.markRefreshFinal(TEST_ACCOUNT_ID, matchId);
 
-    expect(statements).toHaveLength(6);
+    expect(statements).toHaveLength(8);
     for (const sql of statements) {
       for (const value of [TEST_ACCOUNT_ID, 987_654_321, 987_654_322, NOW, 4_242_424, 5_555_555]) {
         expect(sql).not.toContain(String(value));

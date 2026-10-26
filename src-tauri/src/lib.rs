@@ -198,6 +198,12 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../../migrations/0004_analysis.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 5,
+            description: "archive format",
+            sql: include_str!("../../migrations/0005_archive_format.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

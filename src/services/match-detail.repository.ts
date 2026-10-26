@@ -20,6 +20,7 @@ import type { AccountId } from '../core/domain/account';
 import { PAIGE_HERO_ID } from '../core/domain/hero';
 import { matchIdSchema, type MatchId, type MatchSummary } from '../core/domain/match';
 import { AppError } from '../core/errors/app-error';
+import type { ArchiveFormat } from '../core/match-detail/archive-envelope';
 import {
   ARCHIVED_GAME_MODE,
   ARCHIVED_MATCH_MODES,
@@ -62,6 +63,12 @@ export interface StoredDetail {
   /** Size of the archive file in bytes; `null` unless the detail is `ready`. */
   readonly archivedBytes: number | null;
   /**
+   * Format of the archive file: `2` for a current one, `1` for a format-1 file whose refresh
+   * failed for good, and `null` for a file written before the format was recorded (a format-1 file
+   * that was never tried for a refresh) or when the detail is not `ready`.
+   */
+  readonly archiveFormat: ArchiveFormat | null;
+  /**
    * The fields of the match that `isDetailEligible` reads, as the history synchronisation stored
    * them: they tell whether the queue archives this match, whatever its status says.
    */
@@ -83,6 +90,9 @@ export interface DetailSummary {
 /** Schema of a counter of attempts. */
 const attemptsSchema = z.int().nonnegative();
 
+/** Schema of the format of an archive file: the formats the app reads, or none recorded. */
+const archiveFormatSchema = z.union([z.literal(1), z.literal(2)]).nullable();
+
 /** Schema of the row `nextDue` reads. */
 const dueRowSchema = z.object({ match_id: matchIdSchema, detail_attempts: attemptsSchema });
 
@@ -97,6 +107,7 @@ const detailRowSchema = z.object({
   detail_next_attempt_at: z.int().nullable(),
   detail_last_error: z.string().nullable(),
   archived_bytes: z.int().nonnegative().nullable(),
+  archive_format: archiveFormatSchema,
   hero_id: z.int(),
   game_mode: z.int(),
   match_mode: z.int(),
@@ -281,7 +292,7 @@ export class MatchDetailRepository {
   async getDetail(accountId: AccountId, matchId: MatchId): Promise<StoredDetail | null> {
     const params = new SqlParams();
     const sql = `SELECT detail_status, detail_attempts, detail_next_attempt_at, detail_last_error,
-              archived_bytes, hero_id, game_mode, match_mode, start_time
+              archived_bytes, archive_format, hero_id, game_mode, match_mode, start_time
        FROM matches WHERE ${matchCondition(params, accountId, matchId)}`;
     const rows = await this.#run(
       () => this.#database.select(sql, params.values),
@@ -298,6 +309,7 @@ export class MatchDetailRepository {
       nextAttemptAt: stored.detail_next_attempt_at,
       lastError: stored.detail_last_error,
       archivedBytes: stored.archived_bytes,
+      archiveFormat: stored.archive_format,
       match: {
         heroId: stored.hero_id,
         gameMode: stored.game_mode,
@@ -308,20 +320,72 @@ export class MatchDetailRepository {
   }
 
   /**
+   * The most recent archived match whose file is of an unknown format: written before the format
+   * was recorded, so a format 1 that was never tried for a refresh.
+   *
+   * A match qualifies when it is eligible (`isDetailEligible`, so within the 90 days) and `ready`
+   * with no format recorded. A match marked final ({@link MatchDetailRepository.markRefreshFinal})
+   * or archived in the current format has one, so it never comes back. Among them, the most recent
+   * one comes first, and the one with the highest id when two started at the same second.
+   *
+   * @param accountId - The player.
+   * @param now - The current time, in Unix milliseconds.
+   * @param excluding - Matches to skip, such as the ones being downloaded already.
+   * @returns The match, with no attempt counted (a refresh never counts one), or `null` when none
+   *   is left to refresh.
+   * @throws AppError of kind `storage` when the database fails or returns an invalid row.
+   */
+  async nextStale(
+    accountId: AccountId,
+    now: number,
+    excluding: ReadonlySet<MatchId>,
+  ): Promise<DueMatch | null> {
+    const params = new SqlParams();
+    // `IN ()` is not valid SQL: without matches to skip, the condition is left out.
+    const skip = (): string =>
+      excluding.size === 0 ? '' : `AND match_id NOT IN (${params.bindAll(excluding)})`;
+    // The placeholders are numbered as the text is read, so each part is written after the one
+    // that precedes it.
+    const sql = `SELECT match_id, detail_attempts FROM matches
+       WHERE ${eligibleConditions(params, accountId, now)}
+         AND detail_status = ${params.bind(READY)}
+         AND archive_format IS NULL
+         ${skip()}
+       ORDER BY start_time DESC, match_id DESC LIMIT 1`;
+    const rows = await this.#run(
+      () => this.#database.select(sql, params.values),
+      'Could not read the next match to refresh',
+    );
+    const [row] = rows;
+    if (row === undefined) {
+      return null;
+    }
+    const stale = parseRow(dueRowSchema, row, 'A stored detail state is invalid');
+    return { matchId: stale.match_id, attempts: stale.detail_attempts };
+  }
+
+  /**
    * Record that the detail of a match is archived. The failures counted before are forgotten.
    * Nothing happens when the match is not stored.
    *
    * @param accountId - The player.
    * @param matchId - The match.
    * @param archivedBytes - Size of the archive file, in bytes.
+   * @param archiveFormat - Format of the archive file.
    * @throws AppError of kind `storage` when the database fails.
    */
-  async markReady(accountId: AccountId, matchId: MatchId, archivedBytes: number): Promise<void> {
+  async markReady(
+    accountId: AccountId,
+    matchId: MatchId,
+    archivedBytes: number,
+    archiveFormat: ArchiveFormat,
+  ): Promise<void> {
     const params = new SqlParams();
     const sql = `UPDATE matches
        SET detail_status = ${params.bind(READY)}, detail_attempts = 0,
            detail_next_attempt_at = NULL, detail_last_error = NULL,
-           archived_bytes = ${params.bind(archivedBytes)}
+           archived_bytes = ${params.bind(archivedBytes)},
+           archive_format = ${params.bind(archiveFormat)}
        WHERE ${matchCondition(params, accountId, matchId)}`;
     await this.#run(
       () => this.#database.execute(sql, params.values),
@@ -354,8 +418,28 @@ export class MatchDetailRepository {
   }
 
   /**
-   * Put a match back in the queue as if it was never tried: its failures and its archive size are
-   * forgotten. Nothing happens when the match is not stored.
+   * Record that the refresh of a format-1 archive failed for good, so that it is never tried
+   * again: the match stays `ready`, with its file and its size, and only its format changes.
+   * Nothing happens when the match is not stored.
+   *
+   * @param accountId - The player.
+   * @param matchId - The match.
+   * @throws AppError of kind `storage` when the database fails.
+   */
+  async markRefreshFinal(accountId: AccountId, matchId: MatchId): Promise<void> {
+    const params = new SqlParams();
+    const sql = `UPDATE matches
+       SET archive_format = ${params.bind(1)}
+       WHERE ${matchCondition(params, accountId, matchId)}`;
+    await this.#run(
+      () => this.#database.execute(sql, params.values),
+      'Could not record a refresh that failed for good',
+    );
+  }
+
+  /**
+   * Put a match back in the queue as if it was never tried: its failures, its archive size and its
+   * archive format are forgotten. Nothing happens when the match is not stored.
    *
    * @param accountId - The player.
    * @param matchId - The match.
@@ -365,7 +449,8 @@ export class MatchDetailRepository {
     const params = new SqlParams();
     const sql = `UPDATE matches
        SET detail_status = ${params.bind(PENDING)}, detail_attempts = 0,
-           detail_next_attempt_at = NULL, detail_last_error = NULL, archived_bytes = NULL
+           detail_next_attempt_at = NULL, detail_last_error = NULL, archived_bytes = NULL,
+           archive_format = NULL
        WHERE ${matchCondition(params, accountId, matchId)}`;
     await this.#run(
       () => this.#database.execute(sql, params.values),

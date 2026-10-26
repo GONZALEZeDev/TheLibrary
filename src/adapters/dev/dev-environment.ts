@@ -12,10 +12,12 @@ import initSqlJs from 'sql.js';
 import sqlWasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
 import type { ArchiveStore } from '../../ports/archive-store.port';
 import type { Database } from '../../ports/database.port';
+import type { Diagnostics } from '../../ports/diagnostics.port';
 import type { HttpClient } from '../../ports/http-client.port';
 import type { Logger } from '../../ports/logger.port';
 import type { SettingsStore } from '../../ports/settings-store.port';
 import type { SignInGateway } from '../../ports/sign-in-gateway.port';
+import { DevDiagnostics } from './dev-diagnostics.adapter';
 import { createFixtureApi, FixtureHttpClient } from './fixture-http-client.adapter';
 import { FixtureSignInGateway } from './fixture-sign-in-gateway.adapter';
 import { LocalStorageSettingsStore } from './local-storage-settings-store.adapter';
@@ -45,6 +47,8 @@ export interface BrowserDevAdapters {
    */
   readonly signInGateway: SignInGateway;
   readonly archiveStore: ArchiveStore;
+  /** No log file and no log folder: the logger keeps every line and mirrors it to the console. */
+  readonly diagnostics: Diagnostics;
 }
 
 /**
@@ -70,5 +74,6 @@ export function createBrowserDevAdapters(): BrowserDevAdapters {
     signInGateway: new FixtureSignInGateway({ delayMs: 800 }),
     // Like the database, it is empty at every reload of the page.
     archiveStore: new MemoryArchiveStore(),
+    diagnostics: new DevDiagnostics(),
   };
 }

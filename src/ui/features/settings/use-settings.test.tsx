@@ -87,7 +87,12 @@ describe('settings hooks', () => {
 
     // First launch: no language chosen yet.
     await waitFor(() => {
-      expect(result.current.settings.data).toEqual({ schemaVersion: 1, language: null });
+      expect(result.current.settings.data).toEqual({
+        schemaVersion: 1,
+        language: null,
+        storageCapMb: 500,
+        debugLogging: false,
+      });
     });
 
     act(() => {
@@ -98,7 +103,12 @@ describe('settings hooks', () => {
       expect(result.current.settings.data?.language).toBe('fr');
     });
     expect(i18n.language).toBe('fr');
-    await expect(services.settings.get()).resolves.toEqual({ schemaVersion: 1, language: 'fr' });
+    await expect(services.settings.get()).resolves.toEqual({
+      schemaVersion: 1,
+      language: 'fr',
+      storageCapMb: 500,
+      debugLogging: false,
+    });
   });
 
   it('keep the cached settings in step with the file when switching the UI language fails', async () => {
@@ -118,7 +128,12 @@ describe('settings hooks', () => {
     });
 
     // The language was saved before the switch failed: the cache must not still say otherwise.
-    await expect(services.settings.get()).resolves.toEqual({ schemaVersion: 1, language: 'fr' });
+    await expect(services.settings.get()).resolves.toEqual({
+      schemaVersion: 1,
+      language: 'fr',
+      storageCapMb: 500,
+      debugLogging: false,
+    });
     expect(result.current.settings.data?.language).toBe('fr');
     expect(i18n.language).toBe('en');
   });
@@ -161,7 +176,12 @@ describe('settings hooks', () => {
     });
 
     // The file, the cache and the displayed language all agree on the last pick.
-    await expect(services.settings.get()).resolves.toEqual({ schemaVersion: 1, language: 'en' });
+    await expect(services.settings.get()).resolves.toEqual({
+      schemaVersion: 1,
+      language: 'en',
+      storageCapMb: 500,
+      debugLogging: false,
+    });
     expect(result.current.settings.data?.language).toBe('en');
     expect(i18n.language).toBe('en');
   });

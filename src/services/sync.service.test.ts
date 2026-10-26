@@ -31,6 +31,7 @@ import { MatchDetailService } from './match-detail.service';
 import { MetricsRepository } from './metrics.repository';
 import { PlayerRankService, RANK_MAX_AGE_MS } from './player-rank.service';
 import { ProjectionService, type ProjectionReport } from './projection.service';
+import { StorageService } from './storage.service';
 import { isSuspensionRefusal, SYNC_INTERVAL_MS, type SyncService } from './sync.service';
 
 const START = Date.UTC(2026, 9, 14, 12, 0, 0);
@@ -1596,6 +1597,74 @@ describe('SyncService and the analysis', () => {
     );
     // Nothing was projected, so nothing more is told than the history saved.
     expect(states).toEqual([true, true, false]);
+  });
+});
+
+describe('SyncService and the archive size limit', () => {
+  it('enforces the limit after the queue and before the projection', async () => {
+    const order: string[] = [];
+    // Several requests of the queue in a row make one step.
+    const record = (step: string): void => {
+      if (order.at(-1) !== step) {
+        order.push(step);
+      }
+    };
+    vi.spyOn(ProjectionService.prototype, 'catchUp').mockImplementation(() => {
+      record('catch-up');
+      return Promise.resolve(NOTHING_PROJECTED);
+    });
+    const enforceCap = vi.spyOn(StorageService.prototype, 'enforceCap').mockImplementation(() => {
+      record('cap');
+      return Promise.resolve({ evicted: 0 });
+    });
+    fakeRankRefresh();
+    const fixtures = smallHistoryApi();
+    const { sync } = setUp({
+      handler: (request) => {
+        if (isMetadataRequest(request)) {
+          record('details');
+        }
+        return fixtures(request);
+      },
+    });
+
+    await sync.syncNow('manual');
+
+    expect(order).toEqual(['details', 'cap', 'catch-up']);
+    expect(enforceCap).toHaveBeenCalledWith(FIXTURE_ACCOUNT_ID);
+  });
+
+  it('logs a failed enforcement and still projects, without failing the run', async () => {
+    const catchUp = fakeCatchUp(FIVE_PROJECTED);
+    fakeRankRefresh();
+    vi.spyOn(StorageService.prototype, 'enforceCap').mockRejectedValue(
+      new AppError('storage', 'Could not read the archives to evict'),
+    );
+    const { sync, logger } = setUp({ handler: smallHistoryApi() });
+
+    await expect(sync.syncNow('manual')).resolves.toBeUndefined();
+
+    // The projection ran all the same, and the run ended as it would have.
+    expect(catchUp).toHaveBeenCalledTimes(1);
+    await expect(sync.getStatus()).resolves.toMatchObject({ lastSync: { outcome: 'synced' } });
+    expect(endedLines(logger).at(-1)?.context).toMatchObject({ outcome: 'synced', projected: 5 });
+    // One error line, with the kind of the failure and the id of the run only.
+    const started = logger.entries.find((entry) => entry.message === 'Synchronisation started');
+    expect(
+      logger.entries.filter(
+        (entry) => entry.message === 'The archive size limit could not be enforced',
+      ),
+    ).toEqual([
+      {
+        level: 'error',
+        scope: 'sync',
+        message: 'The archive size limit could not be enforced',
+        context: { kind: 'storage', syncRunId: started?.context.syncRunId },
+      },
+    ]);
+    expect(logger.entries.filter((entry) => entry.message === 'Synchronisation failed')).toEqual(
+      [],
+    );
   });
 });
 

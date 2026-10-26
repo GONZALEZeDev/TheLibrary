@@ -7,6 +7,7 @@
  *
  * @packageDocumentation
  */
+import type { Diagnostics } from '../ports/diagnostics.port';
 import type { Logger } from '../ports/logger.port';
 import type { AccountService } from './account.service';
 import type { AnalysisService } from './analysis.service';
@@ -17,6 +18,7 @@ import type { MatchTimelineService } from './match-timeline.service';
 import type { MatchesService } from './matches.service';
 import type { ReviewService } from './review.service';
 import type { SettingsService } from './settings.service';
+import type { StorageService } from './storage.service';
 import type { SyncService } from './sync.service';
 
 /** Services available to the UI. */
@@ -46,4 +48,8 @@ export interface AppServices {
   readonly timeline: MatchTimelineService;
   /** Review of the last Paige matches: the comparison with the tier above and with the matches before. */
   readonly review: ReviewService;
+  /** Size of the archive folder: what the archives take, and the limit the player chose. */
+  readonly storage: StorageService;
+  /** The detailed log switch and the log folder, for the diagnostics of the settings page. */
+  readonly diagnostics: Diagnostics;
 }

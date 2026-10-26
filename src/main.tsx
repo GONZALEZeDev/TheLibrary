@@ -3,11 +3,11 @@
  *
  * It picks the adapters for the current environment — Tauri plugins in the desktop app, the
  * development adapters (synthetic data, in-memory database) in the browser dev mode (`pnpm dev`) —
- * builds the services, initialises i18n with the saved (or system) language, renders the
- * application, then starts the account service: its `start()` runs the startup cleanup (data left
- * by an interrupted unlink or switch) with the synchronisation suspended, and only then starts the
- * synchronisation. It also logs every error nothing else reports: errors outside a route,
- * unhandled promise rejections, uncaught render errors.
+ * builds the services, applies the saved detailed log switch, initialises i18n with the saved (or
+ * system) language, renders the application, then starts the account service: its `start()` runs
+ * the startup cleanup (data left by an interrupted unlink or switch) with the synchronisation
+ * suspended, and only then starts the synchronisation. It also logs every error nothing else
+ * reports: errors outside a route, unhandled promise rejections, uncaught render errors.
  *
  * Development-only code (the browser adapters, with their in-memory archive store, and the TanStack
  * devtools) is only reached through dynamic `import()`s guarded by `import.meta.env.DEV`. Vite
@@ -23,12 +23,14 @@ import { createRoot } from 'react-dom/client';
 import { WorkerCompressor } from './adapters/browser/worker-compressor.adapter';
 import { TauriArchiveStore } from './adapters/tauri/tauri-archive-store.adapter';
 import { TauriDatabase } from './adapters/tauri/tauri-database.adapter';
+import { TauriDiagnostics } from './adapters/tauri/tauri-diagnostics.adapter';
 import { TauriHttpClient } from './adapters/tauri/tauri-http-client.adapter';
 import { TauriLogger } from './adapters/tauri/tauri-logger.adapter';
 import { TauriSettingsStore } from './adapters/tauri/tauri-settings-store.adapter';
 import { TauriSignInGateway } from './adapters/tauri/tauri-sign-in-gateway.adapter';
 import { errorLogContext, toAppError } from './core/errors/app-error';
-import { resolveInitialLanguage, type Language } from './core/settings/language';
+import { resolveInitialLanguage } from './core/settings/language';
+import { DEFAULT_SETTINGS, type Settings } from './core/settings/settings.schema';
 import type { LogLevel } from './ports/logger.port';
 import type { AppServices } from './services/app-services';
 import { createAppServices, type AppAdapters } from './services/create-app-services';
@@ -61,8 +63,11 @@ async function createAdapters(desktop: boolean): Promise<AppAdapters> {
   // the adapters below turn out to be unavailable.
   const compressor = new WorkerCompressor();
   if (desktop) {
+    // One logger, which the diagnostics switch between dropping and writing the `debug` lines.
+    const logger = new TauriLogger();
     return {
-      logger: new TauriLogger(),
+      logger,
+      diagnostics: new TauriDiagnostics(logger),
       settingsStore: new TauriSettingsStore(),
       http: new TauriHttpClient(),
       database: new TauriDatabase(),
@@ -84,15 +89,15 @@ async function createAdapters(desktop: boolean): Promise<AppAdapters> {
 }
 
 /**
- * Read the language saved by the user. A storage failure must not prevent the app from starting:
- * it is logged and the system language is used instead.
+ * Read the settings saved by the user. A storage failure must not prevent the app from starting:
+ * it is logged and the defaults are used instead (the system language, the detailed log off).
  *
  * @param services - The application services.
- * @returns The saved language, or `null` when none is saved or the settings cannot be read.
+ * @returns The saved settings, or the defaults when the settings cannot be read.
  */
-async function loadSavedLanguage(services: AppServices): Promise<Language | null> {
+async function loadSavedSettings(services: AppServices): Promise<Settings> {
   try {
-    return (await services.settings.get()).language;
+    return await services.settings.get();
   } catch (error) {
     services.logger.log(
       'error',
@@ -100,7 +105,7 @@ async function loadSavedLanguage(services: AppServices): Promise<Language | null
       'Could not read the settings, using the defaults',
       errorLogContext(toAppError(error)),
     );
-    return null;
+    return DEFAULT_SETTINGS;
   }
 }
 
@@ -189,8 +194,12 @@ async function bootstrap(
   services: AppServices,
   desktop: boolean,
 ): Promise<void> {
+  const saved = await loadSavedSettings(services);
+  // Applied first, so that the debug lines of the start-up reach the log when the player turned the
+  // detailed log on; until here the logger drops them.
+  services.diagnostics.setDebugLogging(saved.debugLogging);
   // The saved language wins over the system ones; i18n is ready before the first render.
-  const language = resolveInitialLanguage(await loadSavedLanguage(services), navigator.languages);
+  const language = resolveInitialLanguage(saved.language, navigator.languages);
   const i18n = await createI18n(language);
   const queryClient = createQueryClient(services);
   const router = createAppRouter();

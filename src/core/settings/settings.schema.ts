@@ -9,6 +9,7 @@
  * @packageDocumentation
  */
 import { z } from 'zod';
+import { DEFAULT_STORAGE_CAP_MB, STORAGE_CAP_PRESETS_MB } from '../storage/storage-rules';
 import { SUPPORTED_LANGUAGES } from './language';
 
 /** Version of the settings document. Bump it only for non-additive (breaking) changes. */
@@ -24,6 +25,16 @@ export const settingsSchema = z.object({
   schemaVersion: z.literal(SETTINGS_SCHEMA_VERSION).catch(SETTINGS_SCHEMA_VERSION),
   /** `null` until the user explicitly picks a language; the system language is used meanwhile. */
   language: z.enum(SUPPORTED_LANGUAGES).nullable().catch(null),
+  /**
+   * The size limit of the archive folder, in megabytes: one of the presets the settings page offers.
+   * Any other value, or none, is the default limit.
+   */
+  storageCapMb: z.literal(STORAGE_CAP_PRESETS_MB).catch(DEFAULT_STORAGE_CAP_MB),
+  /**
+   * Whether the `debug` lines reach the log file (the "detailed log" of the settings page). Off
+   * unless the player turns it on to look into a problem.
+   */
+  debugLogging: z.boolean().catch(false),
 });
 
 /** Validated settings, as used by the rest of the application. */

@@ -5,6 +5,7 @@
  * @packageDocumentation
  */
 import type { QueryClient } from '@tanstack/react-query';
+import { DevDiagnostics } from '../adapters/dev/dev-diagnostics.adapter';
 import {
   createFixtureApi,
   FixtureHttpClient,
@@ -179,6 +180,7 @@ export function createTestServices(options: TestServicesOptions = {}): TestServi
       signInGateway,
       archiveStore,
       compressor,
+      diagnostics: new DevDiagnostics(),
     },
     { appVersion: '0.0.0-test', now, sleep },
   );

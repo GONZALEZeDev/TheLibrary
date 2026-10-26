@@ -14,6 +14,7 @@ import { MemoryArchiveStore } from '../adapters/dev/memory-archive-store.adapter
 import { MemoryLogger } from '../adapters/dev/memory-logger.adapter';
 import { PROJECTION_VERSION } from '../core/analysis/registry';
 import type { AccountId } from '../core/domain/account';
+import type { MatchId } from '../core/domain/match';
 import { accountFolderName } from '../core/match-detail/archive-layout';
 import { INITIAL_ACCOUNT_SYNC_STATE } from '../core/sync/sync-status';
 import type { ArchiveStore } from '../ports/archive-store.port';
@@ -22,6 +23,7 @@ import { createTestServices } from '../test/create-test-services';
 import { createTestDatabase, matchSummary, testAccountId, testMatchId } from '../test/test-data';
 import { AccountDataService } from './account-data.service';
 import { DatabaseMaintenanceRepository } from './database-maintenance.repository';
+import { MatchDetailRepository } from './match-detail.repository';
 import { MatchesRepository } from './matches.repository';
 import { MetricsRepository } from './metrics.repository';
 import { SyncStateRepository } from './sync-state.repository';
@@ -188,6 +190,103 @@ class UnlistableArchiveStore extends MemoryArchiveStore {
 }
 
 /**
+ * An archive store whose next listing of an account's archives, or the removal of one archive, can
+ * be made to fail, as an unreadable folder or a file held open by another program would.
+ */
+class FaultyArchiveFilesStore extends MemoryArchiveStore {
+  #nextListError: Error | null = null;
+  readonly #removalErrors = new Map<MatchId, Error>();
+
+  /**
+   * Make the next listing of an account's archives fail with this error, once.
+   *
+   * @param error - The error the listing rejects with.
+   */
+  failNextArchiveListing(error: Error): void {
+    this.#nextListError = error;
+  }
+
+  /**
+   * Make the next removal of the archive of this match fail with this error, once.
+   *
+   * @param matchId - The match whose archive stays.
+   * @param error - The error the removal rejects with.
+   */
+  failRemovalOf(matchId: MatchId, error: Error): void {
+    this.#removalErrors.set(matchId, error);
+  }
+
+  override list(accountId: AccountId): Promise<readonly MatchId[]> {
+    if (this.#nextListError === null) {
+      return super.list(accountId);
+    }
+    const error = this.#nextListError;
+    this.#nextListError = null;
+    return Promise.reject(error);
+  }
+
+  override remove(accountId: AccountId, matchId: MatchId): Promise<void> {
+    const error = this.#removalErrors.get(matchId);
+    if (error === undefined) {
+      return super.remove(accountId, matchId);
+    }
+    this.#removalErrors.delete(matchId);
+    return Promise.reject(error);
+  }
+}
+
+/** Matches that no synchronisation stores: an archive file of one of them has no row behind it. */
+const ORPHAN_MATCH = testMatchId(100000002);
+const SECOND_ORPHAN_MATCH = testMatchId(100000003);
+
+/** The bytes of an orphan archive file: the reconciliation never reads them. */
+const ORPHAN_BYTES = Uint8Array.from([1, 2, 3]);
+
+/** The query that lists the `ready` matches of an account. */
+const READY_ROWS_QUERY = /^SELECT match_id FROM matches\s+WHERE account_id/;
+
+/**
+ * The detail status of a match of the linked account.
+ *
+ * @param database - The database.
+ * @param matchId - The match.
+ * @returns Its status, as stored.
+ */
+async function detailStatusOf(database: Database, matchId: MatchId): Promise<unknown> {
+  const rows = await database.select(
+    'SELECT detail_status FROM matches WHERE account_id = $1 AND match_id = $2',
+    [LINKED, matchId],
+  );
+  return rows[0]?.detail_status;
+}
+
+/**
+ * The first archive of the linked account, which the tests make go missing.
+ *
+ * @param archive - The archive store.
+ * @returns Its match.
+ */
+async function firstArchive(archive: ArchiveStore): Promise<MatchId> {
+  const [first] = await archive.list(LINKED);
+  if (first === undefined) {
+    throw new Error('The synchronisation archived no match of the linked account');
+  }
+  return first;
+}
+
+/**
+ * The context of every "Archives reconciled" line.
+ *
+ * @param logger - The logger the service writes to.
+ * @returns The contexts, oldest first.
+ */
+function reconciliations(logger: MemoryLogger) {
+  return logger.entries
+    .filter((entry) => entry.message === 'Archives reconciled')
+    .map(({ level, context }) => ({ level, context }));
+}
+
+/**
  * Store the projection and two metrics of a match for an account, as the projection service would.
  *
  * @param metrics - The repository of the analysis rows.
@@ -270,6 +369,21 @@ function failures(logger: MemoryLogger) {
 }
 
 /**
+ * The context of every line the service logged for a failed step of the reconciliation of the
+ * archives, which has its own message.
+ *
+ * @param logger - The logger the service writes to.
+ * @returns The contexts, oldest first.
+ */
+function reconcileFailures(logger: MemoryLogger) {
+  return logger.entries
+    .filter(
+      (entry) => entry.level === 'warn' && entry.message === 'Could not reconcile the archives',
+    )
+    .map((entry) => entry.context);
+}
+
+/**
  * Build the service on two accounts' services, like the app: both are created by
  * `createTestServices` on the same database and archive store, so that their data lives side by
  * side. Nothing is synchronised until the test calls `populate`.
@@ -297,11 +411,13 @@ function setUp(archiveStore: MemoryArchiveStore = new MemoryArchiveStore()) {
   const metrics = new MetricsRepository(database);
   const syncState = new SyncStateRepository(database, logger);
   const details = linkedServices.services.details;
+  const detailRepository = new MatchDetailRepository(database);
   const service = new AccountDataService({
     matches,
     metrics,
     syncState,
     archive: archiveStore,
+    detailRepository,
     maintenance: new DatabaseMaintenanceRepository(database),
     details,
     logger,
@@ -339,6 +455,7 @@ function setUp(archiveStore: MemoryArchiveStore = new MemoryArchiveStore()) {
     metrics,
     syncState,
     details,
+    detailRepository,
     populate,
     snapshot: () => stored(database, archiveStore),
   };
@@ -1157,6 +1274,224 @@ describe('AccountDataService.sweep', () => {
     for (const secret of [LINKED, OTHER, 2000009]) {
       expect(text).not.toContain(String(secret));
     }
+  });
+});
+
+describe('AccountDataService.sweep, the archives of the linked account', () => {
+  it('marks a ready match whose file is gone evicted', async () => {
+    const { service, populate, database, logger, archiveStore, detailRepository, metrics } =
+      setUp();
+    await populate('linked');
+    const gone = await firstArchive(archiveStore);
+    const kept = new Set(await archiveStore.list(LINKED));
+    kept.delete(gone);
+    const metricRows = await metrics.countAccount(LINKED);
+    await archiveStore.remove(LINKED, gone);
+
+    await service.sweep(LINKED);
+
+    await expect(detailStatusOf(database, gone)).resolves.toBe('evicted');
+    // The other archives are untouched, and the evicted match keeps its analysis.
+    await expect(detailRepository.listReadyMatchIds(LINKED)).resolves.toEqual(kept);
+    await expect(archiveStore.list(LINKED)).resolves.toEqual([...kept]);
+    await expect(metrics.countAccount(LINKED)).resolves.toBe(metricRows);
+    expect(reconciliations(logger)).toEqual([
+      { level: 'info', context: { evicted: 1, removed: 0 } },
+    ]);
+    expect(failures(logger)).toEqual([]);
+  });
+
+  it('removes a file that has no ready match', async () => {
+    const { service, populate, database, logger, archiveStore, detailRepository } = setUp();
+    await populate('linked');
+    const archives = await archiveStore.list(LINKED);
+    const ready = await detailRepository.listReadyMatchIds(LINKED);
+    // A file whose match is not stored (an eviction whose removal failed, then a deletion of the
+    // row), and the file of a stored match that is not ready (a write that crashed before its row
+    // was marked).
+    const [notReady] = await database.select(
+      "SELECT match_id FROM matches WHERE account_id = $1 AND detail_status <> 'ready' ORDER BY match_id",
+      [LINKED],
+    );
+    expect(notReady?.match_id).toEqual(expect.any(Number));
+    await archiveStore.write(LINKED, ORPHAN_MATCH, ORPHAN_BYTES);
+    await archiveStore.write(LINKED, testMatchId(Number(notReady?.match_id)), ORPHAN_BYTES);
+
+    await service.sweep(LINKED);
+
+    // Only the two files went: the archives of the ready matches, and their rows, stay.
+    await expect(archiveStore.list(LINKED)).resolves.toEqual(archives);
+    await expect(detailRepository.listReadyMatchIds(LINKED)).resolves.toEqual(ready);
+    expect(reconciliations(logger)).toEqual([
+      { level: 'info', context: { evicted: 0, removed: 2 } },
+    ]);
+    expect(failures(logger)).toEqual([]);
+  });
+
+  it('says nothing when the archives and rows agree', async () => {
+    const { service, populate, logger, archiveStore, detailRepository } = setUp();
+    await populate('linked');
+    const archives = await archiveStore.list(LINKED);
+    const ready = await detailRepository.listReadyMatchIds(LINKED);
+    // The synchronisation left one archive per ready match.
+    expect(new Set(archives)).toEqual(ready);
+    expect(archives.length).toBeGreaterThan(0);
+
+    await service.sweep(LINKED);
+
+    await expect(archiveStore.list(LINKED)).resolves.toEqual(archives);
+    await expect(detailRepository.listReadyMatchIds(LINKED)).resolves.toEqual(ready);
+    expect(reconciliations(logger)).toEqual([]);
+    expect(failures(logger)).toEqual([]);
+    expect(reconcileFailures(logger)).toEqual([]);
+  });
+
+  it('goes on when one removal fails', async () => {
+    const archiveStore = new FaultyArchiveFilesStore();
+    const { service, populate, logger } = setUp(archiveStore);
+    await populate('linked');
+    const archives = await archiveStore.list(LINKED);
+    await archiveStore.write(LINKED, ORPHAN_MATCH, ORPHAN_BYTES);
+    await archiveStore.write(LINKED, SECOND_ORPHAN_MATCH, ORPHAN_BYTES);
+    archiveStore.failRemovalOf(
+      ORPHAN_MATCH,
+      new Error(`Access is denied: archive/${String(LINKED)}/${String(ORPHAN_MATCH)}.json.zst`),
+    );
+
+    await expect(service.sweep(LINKED)).resolves.toMatchObject({ accounts: 0 });
+
+    // The file that could not be removed stays for the next start; the other one went.
+    await expect(archiveStore.list(LINKED)).resolves.toEqual(
+      [...archives, ORPHAN_MATCH].sort((first, second) => first - second),
+    );
+    // Logged as a failed reconciliation, not as a failed deletion, and by its kind only: the
+    // message quotes a path that holds the account id.
+    expect(reconcileFailures(logger)).toEqual([{ step: 'reconcile_files', kind: 'unexpected' }]);
+    expect(failures(logger)).toEqual([]);
+    expect(reconciliations(logger)).toEqual([
+      { level: 'info', context: { evicted: 0, removed: 1 } },
+    ]);
+    expect(JSON.stringify(logger.entries)).not.toContain(String(LINKED));
+    // The start-up went on to its end.
+    expect(logger.entries).toContainEqual(expect.objectContaining({ message: 'Startup cleanup' }));
+  });
+
+  it('goes on when a row cannot be marked evicted, and marks it at the next start', async () => {
+    const { service, populate, database, logger, archiveStore } = setUp();
+    await populate('linked');
+    const gone = await firstArchive(archiveStore);
+    await archiveStore.remove(LINKED, gone);
+    await archiveStore.write(LINKED, ORPHAN_MATCH, ORPHAN_BYTES);
+    database.failNext(/^UPDATE matches\s+SET detail_status/);
+
+    await service.sweep(LINKED);
+
+    // The row stays ready this time, and the orphan file is removed all the same.
+    await expect(detailStatusOf(database, gone)).resolves.toBe('ready');
+    await expect(archiveStore.list(LINKED)).resolves.not.toContain(ORPHAN_MATCH);
+    expect(reconcileFailures(logger)).toEqual([
+      expect.objectContaining({ step: 'reconcile_rows', kind: 'storage' }),
+    ]);
+    expect(failures(logger)).toEqual([]);
+    expect(JSON.stringify(logger.entries)).not.toContain(String(LINKED));
+    expect(reconciliations(logger)).toEqual([
+      { level: 'info', context: { evicted: 0, removed: 1 } },
+    ]);
+
+    await service.sweep(LINKED);
+
+    await expect(detailStatusOf(database, gone)).resolves.toBe('evicted');
+    expect(reconciliations(logger)).toEqual([
+      { level: 'info', context: { evicted: 0, removed: 1 } },
+      { level: 'info', context: { evicted: 1, removed: 0 } },
+    ]);
+  });
+
+  it('marks nothing when the files cannot be listed', async () => {
+    const archiveStore = new FaultyArchiveFilesStore();
+    const { service, populate, logger, detailRepository } = setUp(archiveStore);
+    await populate('linked');
+    const ready = await detailRepository.listReadyMatchIds(LINKED);
+    archiveStore.failNextArchiveListing(new Error(`Cannot read archive/${String(LINKED)}`));
+
+    await expect(service.sweep(LINKED)).resolves.toMatchObject({ accounts: 0 });
+
+    // A listing that failed is not an empty folder: no archive is taken for gone.
+    await expect(detailRepository.listReadyMatchIds(LINKED)).resolves.toEqual(ready);
+    expect(reconcileFailures(logger)).toEqual([{ step: 'reconcile_files', kind: 'unexpected' }]);
+    expect(failures(logger)).toEqual([]);
+    expect(reconciliations(logger)).toEqual([]);
+    expect(logger.entries).toContainEqual(expect.objectContaining({ message: 'Startup cleanup' }));
+  });
+
+  it('removes nothing when the rows cannot be read', async () => {
+    const { service, populate, database, logger, archiveStore } = setUp();
+    await populate('linked');
+    const archives = await archiveStore.list(LINKED);
+    database.failNext(READY_ROWS_QUERY);
+
+    await expect(service.sweep(LINKED)).resolves.toMatchObject({ accounts: 0 });
+
+    // Rows that could not be read are not missing rows: no archive is taken for an orphan.
+    await expect(archiveStore.list(LINKED)).resolves.toEqual(archives);
+    expect(reconcileFailures(logger)).toEqual([
+      expect.objectContaining({ step: 'reconcile_rows', kind: 'storage' }),
+    ]);
+    expect(failures(logger)).toEqual([]);
+    expect(JSON.stringify(logger.entries)).not.toContain(String(LINKED));
+    expect(reconciliations(logger)).toEqual([]);
+    expect(logger.entries).toContainEqual(expect.objectContaining({ message: 'Startup cleanup' }));
+  });
+
+  it('changes nothing when no archive file is listed while matches are archived', async () => {
+    const { service, populate, logger, archiveStore, detailRepository } = setUp();
+    await populate('linked');
+    const ready = await detailRepository.listReadyMatchIds(LINKED);
+    expect(ready.size).toBeGreaterThan(0);
+    // The folder of the account is out of reach for this start: the store lists no file at all.
+    const stored = new Map(archiveStore.files);
+    await archiveStore.removeEntry(accountFolderName(LINKED));
+
+    await service.sweep(LINKED);
+
+    // No row is marked, and a warning says why, without a path or an account id.
+    await expect(detailRepository.listReadyMatchIds(LINKED)).resolves.toEqual(ready);
+    expect(logger.entries).toContainEqual({
+      level: 'warn',
+      scope: 'account.data',
+      message: 'No archive file found for the archived matches: the archives are left as they are',
+      context: { ready: ready.size },
+    });
+    expect(reconciliations(logger)).toEqual([]);
+    expect(reconcileFailures(logger)).toEqual([]);
+    expect(failures(logger)).toEqual([]);
+    expect(JSON.stringify(logger.entries)).not.toContain(String(LINKED));
+
+    // The folder is back at the next start: since no row was marked, every file of it is kept.
+    for (const [path, bytes] of stored) {
+      archiveStore.addFile(path, bytes);
+    }
+    const archives = await archiveStore.list(LINKED);
+    expect(archives.length).toBe(ready.size);
+
+    await service.sweep(LINKED);
+
+    await expect(archiveStore.list(LINKED)).resolves.toEqual(archives);
+    await expect(detailRepository.listReadyMatchIds(LINKED)).resolves.toEqual(ready);
+    expect(reconciliations(logger)).toEqual([]);
+  });
+
+  it('reconciles nothing when no account is linked', async () => {
+    const { service, populate, database, logger } = setUp();
+    await populate('linked');
+    const before = database.statements.length;
+
+    await service.sweep(null);
+
+    expect(database.statements.slice(before).filter((sql) => READY_ROWS_QUERY.test(sql))).toEqual(
+      [],
+    );
+    expect(reconciliations(logger)).toEqual([]);
   });
 });
 

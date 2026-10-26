@@ -10,6 +10,7 @@
 import type { ArchiveStore } from '../ports/archive-store.port';
 import type { Compressor } from '../ports/compressor.port';
 import type { Database } from '../ports/database.port';
+import type { Diagnostics } from '../ports/diagnostics.port';
 import type { HttpClient } from '../ports/http-client.port';
 import type { Logger } from '../ports/logger.port';
 import type { SettingsStore } from '../ports/settings-store.port';
@@ -40,6 +41,7 @@ import { ReviewService } from './review.service';
 import { SettingsService } from './settings.service';
 import { SteamProfileService } from './steam-profile.service';
 import { SteamSignInService } from './steam-sign-in.service';
+import { StorageService } from './storage.service';
 import { SyncStateRepository } from './sync-state.repository';
 import { SyncService } from './sync.service';
 
@@ -58,6 +60,8 @@ export interface AppAdapters {
   readonly archiveStore: ArchiveStore;
   /** Compresses the archives of the match details. */
   readonly compressor: Compressor;
+  /** The detailed log switch and the log folder. */
+  readonly diagnostics: Diagnostics;
 }
 
 /** Options of {@link createAppServices}. */
@@ -81,8 +85,16 @@ export interface AppServicesOptions {
  * @returns The services.
  */
 export function createAppServices(adapters: AppAdapters, options: AppServicesOptions): AppServices {
-  const { logger, settingsStore, http, database, signInGateway, archiveStore, compressor } =
-    adapters;
+  const {
+    logger,
+    settingsStore,
+    http,
+    database,
+    signInGateway,
+    archiveStore,
+    compressor,
+    diagnostics,
+  } = adapters;
   const now = options.now ?? Date.now;
   // The account the app works for is the link stored in the database, not an adapter: this one
   // instance is the `AccountSource` of every service, so they all see a link or an unlink at once.
@@ -142,15 +154,31 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     logger,
     now,
   });
+  // The settings, read by the interface and by the storage below, which reads the size limit there.
+  const settings = new SettingsService(settingsStore, logger);
+  // Keeps the archive folder under the size limit: the synchronisation enforces it inside its runs,
+  // and a change of the limit enforces it inside the exclusive section of the synchronisation.
+  // Typed by hand: its initializer refers to `sync`, whose initializer refers to it.
+  const storage: StorageService = new StorageService({
+    accountSource: linkedAccounts,
+    details: detailRepository,
+    archive: archiveStore,
+    settings,
+    // A closure over `sync`, declared below: the synchronisation takes this service, so it is built
+    // after it, and this is only called once both exist (when the player changes the limit).
+    runExclusive: <T>(task: () => Promise<T>): Promise<T> => sync.runExclusive(task),
+    logger,
+  });
   // The synchronisation runs the detail queue after the history: it gets the one `details`, and
-  // keeps the rank and the analysis of the archived matches up to date inside its runs, which the
-  // suspension waits for.
+  // keeps the rank, the size of the archive folder and the analysis of the archived matches up to
+  // date inside its runs, which the suspension waits for.
   const sync = new SyncService({
     accountSource: linkedAccounts,
     api,
     details,
     matches,
     projection,
+    archiveCap: storage,
     rank,
     syncState,
     logger,
@@ -238,6 +266,7 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     metrics,
     syncState,
     archive: archiveStore,
+    detailRepository,
     maintenance: new DatabaseMaintenanceRepository(database),
     details,
     logger,
@@ -266,7 +295,7 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
   });
   return {
     logger,
-    settings: new SettingsService(settingsStore, logger),
+    settings,
     matches: new MatchesService(linkedAccounts, matches, now),
     heroes,
     details,
@@ -276,5 +305,9 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     breakdown,
     timeline,
     review,
+    storage,
+    // Given to the interface as it is: the detailed log and the log folder need no service. The
+    // settings page saves the switch through `settings` and applies it through `diagnostics`.
+    diagnostics,
   };
 }

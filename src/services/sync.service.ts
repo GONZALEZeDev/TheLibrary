@@ -31,6 +31,11 @@
  *   request budget. The listeners are told when it did something, and the line that ends the run
  *   counts the matches it projected.
  *
+ * Between the detail queue and the projection, the archive folder is trimmed to the size limit the
+ * player chose (see {@link ArchiveCapEnforcer}): after the queue, so that the archives it wrote
+ * count, and before the projection, so that it reads no archive about to be removed. Like the rank
+ * and the projection, a failure of it is logged and does not fail the run.
+ *
  * Both run inside the run, which is what lets the suspension around a change of account wait for
  * them. Neither ever stops or fails the run: the rank service and the projection report their
  * failures instead of throwing, and a bug in one of them is logged and left at that.
@@ -159,6 +164,22 @@ function isAutomatic(trigger: SyncTrigger): boolean {
   return trigger === 'startup' || trigger === 'schedule';
 }
 
+/**
+ * Keeps the archive folder under its size limit (the storage service). Declared here, narrowed to
+ * what the synchronisation calls: the storage service runs a change of the limit inside
+ * {@link SyncService.runExclusive}, so it is built before the synchronisation and cannot take it.
+ */
+export interface ArchiveCapEnforcer {
+  /**
+   * Evict the oldest archives of an account until its archives fit in the limit.
+   *
+   * @param accountId - The account.
+   * @returns What it did; the synchronisation does not read it.
+   * @throws AppError when the database or the settings fail.
+   */
+  enforceCap(accountId: AccountId): Promise<unknown>;
+}
+
 /** What {@link SyncService} needs. */
 export interface SyncServiceDependencies {
   readonly accountSource: AccountSource;
@@ -168,6 +189,8 @@ export interface SyncServiceDependencies {
   readonly matches: MatchesRepository;
   /** The projection of the archived matches into metrics, caught up at the end of every run. */
   readonly projection: ProjectionService;
+  /** The size limit of the archive folder, enforced between the downloads and the projection. */
+  readonly archiveCap: ArchiveCapEnforcer;
   /** The rank of the linked account, refreshed after the history step of a run. */
   readonly rank: PlayerRankService;
   readonly syncState: SyncStateRepository;
@@ -183,6 +206,7 @@ export class SyncService {
   readonly #details: MatchDetailService;
   readonly #matches: MatchesRepository;
   readonly #projection: ProjectionService;
+  readonly #archiveCap: ArchiveCapEnforcer;
   readonly #rank: PlayerRankService;
   readonly #syncState: SyncStateRepository;
   readonly #logger: Logger;
@@ -215,6 +239,7 @@ export class SyncService {
     this.#details = dependencies.details;
     this.#matches = dependencies.matches;
     this.#projection = dependencies.projection;
+    this.#archiveCap = dependencies.archiveCap;
     this.#rank = dependencies.rank;
     this.#syncState = dependencies.syncState;
     this.#logger = dependencies.logger;
@@ -262,7 +287,8 @@ export class SyncService {
 
   /**
    * Try the detail of a match again, for the "Retry" action: put the match back in the queue
-   * (only an `unavailable` or an `invalid` match goes back, see `MatchDetailService.resetForRetry`)
+   * (only an `unavailable`, an `invalid` or an `evicted` match goes back, see
+   * `MatchDetailService.resetForRetry`)
    * and run the detail queue, without the history.
    *
    * A synchronisation may be going already, in which case the run joins it. The queue of that run
@@ -549,8 +575,8 @@ export class SyncService {
   }
 
   /**
-   * Synchronise the linked account: download what is due (see `#download`), then project the
-   * archived matches that are not analysed yet.
+   * Synchronise the linked account: download what is due (see `#download`), trim the archive folder
+   * to its size limit, then project the archived matches that are not analysed yet.
    *
    * The projection comes last, whatever the download came to: after the queue, so that the matches
    * it archived are analysed in the run that downloaded them, and in a run that ended early as well
@@ -570,6 +596,7 @@ export class SyncService {
       return { outcome: 'no_account', detail: null, projected: 0 };
     }
     const download = await this.#download(accountId, trigger, syncRunId);
+    await this.#enforceArchiveCap(accountId, syncRunId);
     const projected = await this.#catchUp(accountId, syncRunId);
     return { ...download, projected };
   }
@@ -658,6 +685,25 @@ export class SyncService {
         syncRunId,
       });
       return 0;
+    }
+  }
+
+  /**
+   * Trim the archive folder of the account to its size limit. A failure (the database, the
+   * settings) is logged as an `error` with its kind only, and neither stops nor fails the run: the
+   * projection that follows works on whatever archives are left.
+   *
+   * @param accountId - The account.
+   * @param syncRunId - Id of this synchronisation in the logs.
+   */
+  async #enforceArchiveCap(accountId: AccountId, syncRunId: string): Promise<void> {
+    try {
+      await this.#archiveCap.enforceCap(accountId);
+    } catch (error) {
+      this.#logger.log('error', 'sync', 'The archive size limit could not be enforced', {
+        kind: toAppError(error).kind,
+        syncRunId,
+      });
     }
   }
 

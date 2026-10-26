@@ -48,7 +48,12 @@ describe('SettingsPage', () => {
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Réglages' })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: 'Français' })).toBeChecked();
-    await expect(services.settings.get()).resolves.toEqual({ schemaVersion: 1, language: 'fr' });
+    await expect(services.settings.get()).resolves.toEqual({
+      schemaVersion: 1,
+      language: 'fr',
+      storageCapMb: 500,
+      debugLogging: false,
+    });
   });
 
   it('shows the storage message and keeps the current language when the save fails', async () => {

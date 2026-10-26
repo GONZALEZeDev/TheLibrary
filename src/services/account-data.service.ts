@@ -1,6 +1,7 @@
 /**
- * Deletion of the local data of an account, and the cleanup at startup of everything that does not
- * belong to the linked account.
+ * Deletion of the local data of an account, the cleanup at startup of everything that does not
+ * belong to the linked account, and the reconciliation at startup of the linked account's archive
+ * files with its rows.
  *
  * An account's data is its matches (the state of their detail queue lives in the same rows), the
  * projections and metrics of their analysis, its synchronisation state, its archive folder, and what
@@ -10,6 +11,15 @@
  * ({@link AccountDataService.sweep}) runs at every start and deletes whatever is left of other
  * accounts, which is how a deletion that failed or was interrupted is finished: the account service
  * makes the link change first, and the sweep retries until the data is gone.
+ *
+ * The sweep also brings the archive files of the linked account back in line with its rows, so that
+ * the size of the archive folder is what the rows say: a `ready` match whose file is gone is marked
+ * `evicted` (it keeps its stored metrics), and a file that no `ready` match stands for (an eviction
+ * whose removal failed, or a write that crashed before its row was marked) is deleted. It runs only
+ * when both listings could be read: a listing that failed is not an empty one, and taking it for
+ * one would evict every archive, or delete every file. An empty list of files while the account has
+ * `ready` matches is not trusted either, since a missing or unreachable folder reads the same: the
+ * archives are left as they are, with a warning.
  *
  * The values that belong to no account stay: the request budget and the pause of deadlock-api in the
  * synchronisation state, the API cache, and the logs (the owner's decision D9).
@@ -30,6 +40,8 @@
  *
  * None of the methods rejects. Every step is tried even when an earlier one failed, a failure is
  * logged with the step that failed, and the caller learns from the report whether anything is left.
+ * The reconciliation is the exception: it changes nothing at all after one of its listings failed,
+ * or when the files came back empty while the account has `ready` matches (see above).
  *
  * Privacy: an account id and the name of an archive folder (which is the id) are never logged. A
  * database error is logged with its context, as everywhere; the message of an archive error can
@@ -43,6 +55,7 @@ import { accountFolderName, isArchiveEntryName } from '../core/match-detail/arch
 import type { ArchiveStore } from '../ports/archive-store.port';
 import type { Logger } from '../ports/logger.port';
 import type { DatabaseMaintenanceRepository } from './database-maintenance.repository';
+import type { MatchDetailRepository } from './match-detail.repository';
 import type { MatchDetailService } from './match-detail.service';
 import type { MatchesRepository } from './matches.repository';
 import type { MetricsRepository } from './metrics.repository';
@@ -51,15 +64,52 @@ import type { SyncStateRepository } from './sync-state.repository';
 /** Scope of every log line of this service. */
 const LOG_SCOPE = 'account.data';
 
-/** The message of the line logged for a step that failed. */
+/** The message of the line logged for a step of a deletion, or of its check, that failed. */
 const FAILURE_MESSAGE = 'Could not delete account data';
+
+/** The message of the line logged for a step of the reconciliation of the archives that failed. */
+const RECONCILE_FAILURE_MESSAGE = 'Could not reconcile the archives';
+
+/**
+ * The message of the warning logged when the linked account has archived matches and no archive
+ * file is listed, so that the reconciliation leaves everything as it is.
+ */
+const NO_ARCHIVE_FILES_MESSAGE =
+  'No archive file found for the archived matches: the archives are left as they are';
 
 /**
  * The step that failed, as logged: the `matches`, the projections and metric values of their
  * analysis (`metrics`) or the synchronisation state (`sync_state`) of an account, the files of the
- * `archive`, the compaction (`vacuum`, its flag included), or the `check` after a deletion.
+ * `archive`, the compaction (`vacuum`, its flag included), the `check` after a deletion, or the
+ * reconciliation of the linked account's archives, on the side of its rows (`reconcile_rows`:
+ * listing the `ready` matches, marking one evicted) or of its files (`reconcile_files`: listing
+ * them, removing one).
  */
-type Step = 'matches' | 'metrics' | 'sync_state' | 'archive' | 'vacuum' | 'check';
+type Step =
+  | 'matches'
+  | 'metrics'
+  | 'sync_state'
+  | 'archive'
+  | 'vacuum'
+  | 'check'
+  | 'reconcile_rows'
+  | 'reconcile_files';
+
+/**
+ * The message logged for each step that failed: the log is read to understand a problem, so a
+ * reconciliation that failed does not say that a deletion did. Every step is listed, so a new one
+ * cannot be added without choosing its message.
+ */
+const FAILURE_MESSAGES: Readonly<Record<Step, string>> = {
+  matches: FAILURE_MESSAGE,
+  metrics: FAILURE_MESSAGE,
+  sync_state: FAILURE_MESSAGE,
+  archive: FAILURE_MESSAGE,
+  vacuum: FAILURE_MESSAGE,
+  check: FAILURE_MESSAGE,
+  reconcile_rows: RECONCILE_FAILURE_MESSAGE,
+  reconcile_files: RECONCILE_FAILURE_MESSAGE,
+};
 
 /** The part of an account's data the `check` looked at. */
 type CheckedPart = 'matches' | 'metrics' | 'sync_state' | 'archive';
@@ -83,6 +133,8 @@ export interface AccountDataServiceDependencies {
   readonly syncState: SyncStateRepository;
   /** The archive folder. */
   readonly archive: ArchiveStore;
+  /** The detail status of the matches: which are archived, and the mark of an evicted archive. */
+  readonly detailRepository: Pick<MatchDetailRepository, 'listReadyMatchIds' | 'markEvicted'>;
   /** Compacts the database. */
   readonly maintenance: DatabaseMaintenanceRepository;
   /** The detail queue, which remembers in memory why its last run stopped. */
@@ -123,6 +175,7 @@ export class AccountDataService {
   readonly #metrics: MetricsRepository;
   readonly #syncState: SyncStateRepository;
   readonly #archive: ArchiveStore;
+  readonly #detailRepository: Pick<MatchDetailRepository, 'listReadyMatchIds' | 'markEvicted'>;
   readonly #maintenance: DatabaseMaintenanceRepository;
   readonly #details: MatchDetailService;
   readonly #logger: Logger;
@@ -135,6 +188,7 @@ export class AccountDataService {
     this.#metrics = dependencies.metrics;
     this.#syncState = dependencies.syncState;
     this.#archive = dependencies.archive;
+    this.#detailRepository = dependencies.detailRepository;
     this.#maintenance = dependencies.maintenance;
     this.#details = dependencies.details;
     this.#logger = dependencies.logger;
@@ -195,15 +249,25 @@ export class AccountDataService {
    * Delete everything that does not belong to the linked account: the matches, the analysis rows
    * and the synchronisation state of every other account, and every entry of the archive folder but
    * the folder of the linked account (the folders of other accounts, the quarantine folder of the
-   * first layout, leftover temporary files, anything unknown). Then compact the database if a
-   * compaction is owed, which is also how a deletion interrupted before its compaction is finished.
+   * first layout, leftover temporary files, anything unknown). Then reconcile the archive files of
+   * the linked account with its rows (see the header of the file): a `ready` match without a file
+   * is marked evicted, a file without a `ready` match is deleted, and one "Archives reconciled" line
+   * says how many when there were any. Then compact the database if a compaction is owed, which is
+   * also how a deletion interrupted before its compaction is finished.
    *
-   * A listing that fails is logged with its step, and that part is skipped. An archive entry whose
-   * name the store would refuse (it is not a single plain name) is skipped and logged without its
-   * name: asking for its removal would fail at every launch.
+   * A listing that fails is logged with its step, and that part is skipped; for the
+   * reconciliation, a failure of either of its listings skips all of it, and so does a listing
+   * without any file while the account has `ready` matches (logged as a warning). An archive entry
+   * whose name the store would refuse (it is not a single plain name) is skipped and logged without
+   * its name: asking for its removal would fail at every launch.
    *
-   * @param linked - The linked account, or `null` when there is none: then nothing is kept.
-   * @returns What was done. It never rejects.
+   * Call it with the synchronisation suspended, as the start-up does: a detail download running
+   * meanwhile would write a file before its row is `ready`, which the reconciliation would delete.
+   *
+   * @param linked - The linked account, or `null` when there is none: then nothing is kept, and
+   *   nothing is reconciled.
+   * @returns What was done (the reconciliation is told by its log line, not in the report). It
+   *   never rejects.
    */
   async sweep(linked: AccountId | null): Promise<SweepReport> {
     let compactionOwed = await this.#readVacuumPending();
@@ -220,6 +284,9 @@ export class AccountDataService {
       }
     }
     const entries = await this.#removeEntriesExcept(linked);
+    if (linked !== null) {
+      await this.#reconcileArchives(linked);
+    }
     const vacuumed = compactionOwed && (await this.#compact());
     this.#logger.log(
       accounts > 0 || entries > 0 || vacuumed ? 'info' : 'debug',
@@ -310,6 +377,75 @@ export class AccountDataService {
       }
     }
     return removed;
+  }
+
+  /**
+   * Bring the archive files of an account back in line with its rows: mark evicted each `ready`
+   * match whose file is gone, then delete each file that no `ready` match stands for. One failure
+   * is logged with its step and the others are still tried; whatever is left is found again by the
+   * next start. When there was anything to do, one line says how much was done.
+   *
+   * Nothing changes when either listing fails, nor when the account has `ready` matches and no
+   * archive file at all (logged as a warning with the number of `ready` matches): its folder may
+   * only be out of reach.
+   *
+   * @param accountId - The linked account.
+   */
+  async #reconcileArchives(accountId: AccountId): Promise<void> {
+    // Both listings must be read before anything changes: a listing that failed would read as an
+    // empty one, and then every row would look like a lost archive, or every file like an orphan.
+    const files = await this.#attempt('reconcile_files', 'archive', () =>
+      this.#archive.list(accountId),
+    );
+    if (!files.ok) {
+      return;
+    }
+    const ready = await this.#attempt('reconcile_rows', 'database', () =>
+      this.#detailRepository.listReadyMatchIds(accountId),
+    );
+    if (!ready.ok) {
+      return;
+    }
+    if (files.value.length === 0 && ready.value.size > 0) {
+      // The store answers an empty list both for an empty folder and for an account folder that is
+      // missing or out of reach (a folder moved or deleted by hand, a drive that is not there).
+      // Taken at its word, it would mark every archive evicted; and if the folder is back at the
+      // next start, every file there would then have no `ready` row, and be deleted. So nothing
+      // changes this start. A match whose file really is gone is still caught when its page is
+      // read: a missing archive puts the match back to `pending` there.
+      this.#logger.log('warn', LOG_SCOPE, NO_ARCHIVE_FILES_MESSAGE, { ready: ready.value.size });
+      return;
+    }
+    const archived = new Set(files.value);
+    let evicted = 0;
+    for (const matchId of ready.value) {
+      if (archived.has(matchId)) {
+        continue;
+      }
+      const marked = await this.#attempt('reconcile_rows', 'database', () =>
+        this.#detailRepository.markEvicted(accountId, matchId),
+      );
+      // Counted only when the row was still `ready` and changed.
+      if (marked.ok && marked.value) {
+        evicted += 1;
+      }
+    }
+    let removed = 0;
+    for (const matchId of files.value) {
+      if (ready.value.has(matchId)) {
+        continue;
+      }
+      // The store does not fail on a file that is already gone: a success means the file is gone.
+      const removal = await this.#attempt('reconcile_files', 'archive', () =>
+        this.#archive.remove(accountId, matchId),
+      );
+      if (removal.ok) {
+        removed += 1;
+      }
+    }
+    if (evicted > 0 || removed > 0) {
+      this.#logger.log('info', LOG_SCOPE, 'Archives reconciled', { evicted, removed });
+    }
   }
 
   /**
@@ -433,11 +569,11 @@ export class AccountDataService {
   }
 
   /**
-   * Log a step that failed.
+   * Log a step that failed, with the message of its step (see {@link FAILURE_MESSAGES}).
    *
    * @param context - The step, and what is known of the failure.
    */
-  #logFailure(context: AppErrorContext): void {
-    this.#logger.log('warn', LOG_SCOPE, FAILURE_MESSAGE, context);
+  #logFailure(context: AppErrorContext & { readonly step: Step }): void {
+    this.#logger.log('warn', LOG_SCOPE, FAILURE_MESSAGES[context.step], context);
   }
 }

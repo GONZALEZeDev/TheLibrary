@@ -30,7 +30,12 @@ const brokenStore: SettingsStore = {
 describe('SettingsService.get', () => {
   it('returns the defaults on first launch', async () => {
     const { service } = createService();
-    await expect(service.get()).resolves.toEqual({ schemaVersion: 1, language: null });
+    await expect(service.get()).resolves.toEqual({
+      schemaVersion: 1,
+      language: null,
+      storageCapMb: 500,
+      debugLogging: false,
+    });
   });
 
   it('wraps storage failures in a storage AppError', async () => {
@@ -49,8 +54,15 @@ describe('SettingsService.update', () => {
     await expect(service.update({ language: 'fr' })).resolves.toEqual({
       schemaVersion: 1,
       language: 'fr',
+      storageCapMb: 500,
+      debugLogging: false,
     });
-    await expect(service.get()).resolves.toEqual({ schemaVersion: 1, language: 'fr' });
+    await expect(service.get()).resolves.toEqual({
+      schemaVersion: 1,
+      language: 'fr',
+      storageCapMb: 500,
+      debugLogging: false,
+    });
   });
 
   it('logs which fields changed', async () => {

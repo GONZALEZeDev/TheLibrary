@@ -1,12 +1,14 @@
 //! Tauri shell of TheLibrary: plugin registration and webview hardening.
 //!
 //! The application logic is written in TypeScript and runs in the webview. This file
-//! only wires the native plugins, opens the settings store, lists the database migrations and
-//! adds a navigation guard so the window can never leave the bundled app.
+//! only wires the native plugins, opens the settings store, lists the database migrations,
+//! adds a navigation guard so the window can never leave the bundled app, and defines the one
+//! command of the app: opening the log folder.
 
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
 use tauri::{Manager, Runtime, Url, Webview};
-use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
+use tauri_plugin_log::{RotationStrategy, Target, TargetKind, WEBVIEW_TARGET};
+use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_sql::{Migration, MigrationKind, PluginConfig as SqlPluginConfig};
 use tauri_plugin_store::StoreExt;
 
@@ -20,6 +22,10 @@ const LOG_MAX_FILE_SIZE_BYTES: u128 = 2 * 1024 * 1024;
 /// Number of rotated log files kept next to the active one (`TheLibrary.log`).
 /// Never set it to 0: the plugin computes `keep_count - 1`, which would underflow.
 const LOG_ROTATED_FILES_KEPT: usize = 5;
+
+/// The error the webview gets when the log folder cannot be opened. Always the same text: the
+/// details, logged here, are not for the webview, and the path of the folder is never sent back.
+const OPEN_LOG_FOLDER_FAILED: &str = "The log folder could not be opened";
 
 /// File of the settings store, relative to the app data folder.
 ///
@@ -109,6 +115,7 @@ pub fn run() {
 
     builder
         .plugin(navigation_guard())
+        .invoke_handler(app_command_handler())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -124,10 +131,58 @@ fn log_plugin<R: Runtime>() -> TauriPlugin<R> {
         ])
         // The plugin defaults to `Trace`, which floods the file with tao/wry internals.
         .level(log::LevelFilter::Info)
+        // The lines of the webview (target `webview`, or `webview::<caller>` when the plugin knows
+        // where the line was written) are kept from `Debug` on. The webview's logger drops its
+        // `debug` lines itself unless the player turned the detailed log on, so the file holds them
+        // only then; the crates stay at `Info`.
+        .level_for(WEBVIEW_TARGET, log::LevelFilter::Debug)
         .max_file_size(LOG_MAX_FILE_SIZE_BYTES)
         // Keeps the active file plus at most N rotated `TheLibrary_<date>.log` files.
         .rotation_strategy(RotationStrategy::KeepSome(LOG_ROTATED_FILES_KEPT))
         .build()
+}
+
+/// Declares the commands of the app, the Rust functions the webview may call with `invoke`, from
+/// one list: the invoke handler given to the builder, and their names for the tests.
+///
+/// `build.rs` declares no app manifest, so an app command needs no entry in
+/// `capabilities/default.json`: every command of this list can be invoked by the main window.
+/// Keep the list short, and each command free of any argument that names a file.
+macro_rules! app_commands {
+    ($($command:ident),+ $(,)?) => {
+        /// Names of the app commands, as the webview invokes them.
+        #[cfg(test)]
+        const APP_COMMAND_NAMES: &[&str] = &[$(stringify!($command)),+];
+
+        /// The invoke handler running the app commands.
+        fn app_command_handler<R: Runtime>(
+        ) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+            tauri::generate_handler![$($command),+]
+        }
+    };
+}
+
+app_commands![open_log_folder];
+
+/// Opens the folder of the log files (`{app_log_dir}`) in the file explorer of the system.
+///
+/// The folder is found and opened here, so the webview is granted no path of the opener plugin
+/// (`opener:allow-open-path` stays out of `capabilities/default.json`) and never learns where the
+/// folder is. A failure is logged here and reaches the webview as [`OPEN_LOG_FOLDER_FAILED`].
+/// Async, so that it runs off the main thread, like the plugin's own `open_path` command.
+#[tauri::command]
+async fn open_log_folder<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    let folder = app.path().app_log_dir().map_err(|error| {
+        log::warn!("the log folder could not be found: {error}");
+        OPEN_LOG_FOLDER_FAILED.to_owned()
+    })?;
+    // `None`: the default program of the system for a folder, i.e. the file explorer.
+    app.opener()
+        .open_path(folder.to_string_lossy(), None::<&str>)
+        .map_err(|error| {
+            log::warn!("the log folder could not be opened: {error}");
+            OPEN_LOG_FOLDER_FAILED.to_owned()
+        })
 }
 
 /// Opens the settings store so the webview never has to.
@@ -202,6 +257,12 @@ fn migrations() -> Vec<Migration> {
             version: 5,
             description: "archive format",
             sql: include_str!("../../migrations/0005_archive_format.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 6,
+            description: "evicted detail status",
+            sql: include_str!("../../migrations/0006_evicted_status.sql"),
             kind: MigrationKind::Up,
         },
     ]
@@ -839,5 +900,22 @@ mod tests {
             loggable_url(&parse("file:///C:/Users/me/page.html")),
             "file:"
         );
+    }
+
+    #[test]
+    fn the_log_folder_command_is_registered() {
+        // `APP_COMMAND_NAMES` and the invoke handler come from the same list (`app_commands!`), so
+        // a command named here is one the webview can invoke.
+        assert_eq!(APP_COMMAND_NAMES, ["open_log_folder"]);
+        // The diagnostics adapter invokes it by this exact name.
+        let adapter = include_str!("../../src/adapters/tauri/tauri-diagnostics.adapter.ts");
+        assert!(
+            adapter.contains("const OPEN_LOG_FOLDER_COMMAND = 'open_log_folder';"),
+            "tauri-diagnostics.adapter.ts must invoke the command `open_log_folder`"
+        );
+        // Built once for the runtime of the app, as `run()` does: the handler compiles for it. The
+        // call in `run()` itself is guarded by the dead-code lint: without it, clippy refuses
+        // `app_command_handler` and the command as unused.
+        let _handler = app_command_handler::<tauri::Wry>();
     }
 }

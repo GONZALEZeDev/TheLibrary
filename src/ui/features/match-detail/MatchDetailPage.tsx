@@ -42,13 +42,16 @@ import { ArrowLeft, RotateCw, UserRound } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { MatchId } from '../../../core/domain/match';
-import { toAppError } from '../../../core/errors/app-error';
 import type { ArchiveFacts } from '../../../core/match-detail/archive-facts';
 import type { MatchDetailView } from '../../../services/match-detail.service';
 import type { MatchTab } from '../../app/router';
+import { Button } from '../../components/Button';
 import { EmptyState } from '../../components/EmptyState';
 import { PageHeader } from '../../components/PageHeader';
+import { Panel } from '../../components/Panel';
+import { StatusLine } from '../../components/StatusLine';
 import { Tabs } from '../../components/Tabs';
+import { formatShortDateTimeMs } from '../../format/date';
 import { LinkAccountButton } from '../account/LinkAccountButton';
 import {
   useHeroAssets,
@@ -103,8 +106,8 @@ interface TabsControl {
 
 /** How the page writes dates and sizes, in the language of the interface. */
 interface Formatters {
-  /** Short date and short time, like the match list and the banner. */
-  readonly dateTime: Intl.DateTimeFormat;
+  /** Writes a Unix ms time as a short date and short time, like the match list and the banner. */
+  readonly dateTime: (time: number) => string;
   /** Sizes in kilobytes, with one decimal at most. */
   readonly kilobytes: Intl.NumberFormat;
 }
@@ -118,7 +121,8 @@ interface RetryAction {
 }
 
 /**
- * The "Retry" button, looking like the "Sync now" button of the matches page.
+ * The "Retry" button, drawn with the same look as the "Sync now" button of the matches page. Its
+ * icon turns while the button is disabled, that is while a synchronisation or the retry runs.
  *
  * @param t - Translation function.
  * @param retry - What the button does and whether it can be used.
@@ -126,15 +130,15 @@ interface RetryAction {
  */
 function renderRetryButton(t: TFunction, retry: RetryAction) {
   return (
-    <button
-      type="button"
+    <Button
+      look="subtle"
+      icon={RotateCw}
+      spinning={retry.disabled}
       onClick={retry.onRetry}
       disabled={retry.disabled}
-      className="inline-flex items-center gap-2 rounded-md border border-border bg-surface-raised px-4 py-2 text-sm font-medium hover:border-accent-bright disabled:cursor-not-allowed disabled:opacity-60"
     >
-      <RotateCw aria-hidden="true" className={retry.disabled ? 'size-4 animate-spin' : 'size-4'} />
       {t('matchDetail.retry')}
-    </button>
+    </Button>
   );
 }
 
@@ -168,14 +172,14 @@ function renderBackLink(t: TFunction) {
  */
 function renderExplanation(sentences: readonly string[], action?: ReactNode) {
   return (
-    <section className="space-y-4 rounded-xl border border-border bg-surface p-4 text-sm">
+    <Panel padding="normal" className="space-y-4 text-sm">
       <div className="space-y-1">
         {sentences.map((sentence) => (
           <p key={sentence}>{sentence}</p>
         ))}
       </div>
       {action}
-    </section>
+    </Panel>
   );
 }
 
@@ -201,7 +205,7 @@ function renderArchiveLine(
         snapshots: facts.snapshots,
         items: facts.itemsBought,
         size: format.kilobytes.format(archivedBytes / 1024),
-        date: format.dateTime.format(facts.fetchedAt),
+        date: format.dateTime(facts.fetchedAt),
       })}
     </p>
   );
@@ -300,7 +304,7 @@ function renderView(
           ? [t('matchDetail.waiting')]
           : [
               t('matchDetail.waiting'),
-              t('matchDetail.nextAttempt', { time: format.dateTime.format(view.nextAttemptAt) }),
+              t('matchDetail.nextAttempt', { time: format.dateTime(view.nextAttemptAt) }),
             ],
       );
     case 'unavailable':
@@ -333,7 +337,7 @@ export function MatchDetailPage() {
   // changes the state of the match): the page reads the match again whenever one runs or advances.
   useRefreshOnSync();
   const format: Formatters = {
-    dateTime: new Intl.DateTimeFormat(i18n.language, { dateStyle: 'short', timeStyle: 'short' }),
+    dateTime: (time) => formatShortDateTimeMs(time, i18n.language),
     kilobytes: new Intl.NumberFormat(i18n.language, { maximumFractionDigits: 1 }),
   };
   // The row of the match in the history: `null` is an answer (the account has no such match, or no
@@ -376,11 +380,7 @@ export function MatchDetailPage() {
       },
     );
   } else if (detail.isError) {
-    body = (
-      <p role="alert" className="text-sm text-loss">
-        {t(`errors.kind.${toAppError(detail.error).kind}`)}
-      </p>
-    );
+    body = <StatusLine kind="error" error={detail.error} />;
   }
   // While the view is read (from the local database, so in a blink) only the title is shown.
 

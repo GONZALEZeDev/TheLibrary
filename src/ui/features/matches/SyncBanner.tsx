@@ -6,7 +6,7 @@
  * the status and the matches, and the progress of the detail queue refreshes the counts of the
  * details and the matches as it goes.
  *
- * Milestone M2a ships it as a plain banner; the screens milestone (M5) gives it its final design.
+ * It is drawn with the shared panel and button of the app, like every other block of a screen.
  *
  * @packageDocumentation
  */
@@ -16,6 +16,9 @@ import { useTranslation } from 'react-i18next';
 import { toAppError } from '../../../core/errors/app-error';
 import type { SyncStatus } from '../../../core/sync/sync-status';
 import type { DetailSummaryView } from '../../../services/match-detail.service';
+import { Button } from '../../components/Button';
+import { Panel } from '../../components/Panel';
+import { formatShortDateTimeMs } from '../../format/date';
 import {
   useDetailSummary,
   useRefreshOnSync,
@@ -134,16 +137,14 @@ export function SyncBanner() {
   const running = useSyncRunning();
   const syncNow = useSyncNow();
   useRefreshOnSync();
-  const dateTime = new Intl.DateTimeFormat(i18n.language, {
-    dateStyle: 'short',
-    timeStyle: 'short',
-  });
   let sentences: string[] = [];
   if (status.isError) {
     // The status could not be read (a damaged database…): say so instead of an empty banner.
     sentences = [t(`errors.kind.${toAppError(status.error).kind}`)];
   } else if (status.data !== undefined) {
-    sentences = describeStatus(status.data, t, (time) => dateTime.format(time));
+    sentences = describeStatus(status.data, t, (time) =>
+      formatShortDateTimeMs(time, i18n.language),
+    );
   }
   // A failed read of the counts only hides their line: the query client logs the failure, and the
   // status above already says when the local data cannot be read.
@@ -151,7 +152,7 @@ export function SyncBanner() {
   const detailsStopLine = describeDetailsStop(detailSummary.data, t);
 
   return (
-    <section className="mb-6 flex items-start justify-between gap-6 rounded-xl border border-border bg-surface p-4">
+    <Panel padding="normal" className="mb-6 flex items-start justify-between gap-6">
       <div className="space-y-1 text-sm">
         {/* Read again by screen readers whenever the status changes. */}
         <div aria-live="polite" className="space-y-1">
@@ -165,17 +166,18 @@ export function SyncBanner() {
         {detailsLine !== null && <p>{detailsLine}</p>}
         {detailsStopLine !== null && <p>{detailsStopLine}</p>}
       </div>
-      <button
-        type="button"
+      <Button
+        look="subtle"
+        icon={RefreshCw}
+        spinning={running}
         onClick={() => {
           syncNow.mutate();
         }}
         disabled={running || status.data?.accountLinked !== true}
-        className="flex shrink-0 items-center gap-2 rounded-md border border-border bg-surface-raised px-4 py-2 text-sm font-medium hover:border-accent-bright disabled:cursor-not-allowed disabled:opacity-60"
+        className="shrink-0"
       >
-        <RefreshCw aria-hidden="true" className={running ? 'size-4 animate-spin' : 'size-4'} />
         {running ? t('matches.sync.running') : t('matches.sync.now')}
-      </button>
-    </section>
+      </Button>
+    </Panel>
   );
 }

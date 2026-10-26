@@ -14,6 +14,8 @@ import { TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { errorLogContext, toAppError } from '../../core/errors/app-error';
+import { Button } from '../components/Button';
+import { Panel } from '../components/Panel';
 import { useServices } from './ServicesContext';
 
 /**
@@ -21,10 +23,6 @@ import { useServices } from './ServicesContext';
  * even `null` or `undefined`, which a route may throw like anything else.
  */
 const NOT_LOGGED = Symbol('not logged');
-
-/** Shared look of the two action buttons. */
-const BUTTON_CLASS =
-  'rounded-md border border-border bg-surface-raised px-4 py-2 text-sm font-medium hover:border-accent-bright';
 
 /**
  * Route error screen.
@@ -64,27 +62,23 @@ export function RouteErrorFallback({ error, reset }: ErrorComponentProps) {
 
   // `role="alert"`: screen readers announce the error as soon as it replaces the page.
   return (
-    <div
-      role="alert"
-      className="mx-auto mt-16 max-w-lg rounded-xl border border-border bg-surface p-8 text-center"
-    >
+    <Panel as="div" role="alert" padding="roomy" className="mx-auto mt-16 max-w-lg text-center">
       <TriangleAlert aria-hidden="true" className="mx-auto mb-4 size-10 text-loss" />
       <h1 className="text-xl font-semibold">{t('errors.title')}</h1>
       <p className="mt-2 text-sm text-fg-muted">{t(`errors.kind.${appError.kind}`)}</p>
       <div className="mt-6 flex justify-center gap-3">
-        <button type="button" onClick={reset} className={BUTTON_CLASS}>
+        <Button look="subtle" onClick={reset}>
           {t('errors.retry')}
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          look="subtle"
           onClick={() => {
             void copyDetails();
           }}
-          className={BUTTON_CLASS}
         >
           {copied ? t('errors.copied') : t('errors.copyDetails')}
-        </button>
+        </Button>
       </div>
-    </div>
+    </Panel>
   );
 }

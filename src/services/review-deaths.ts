@@ -16,9 +16,15 @@
  *   that stretch is the whole phase; for the late game it ends at the time every match of the tier
  *   reaches, so the gap is told on that stretch, and the player's figure on the whole phase.
  *
+ * - **The avoidable deaths** are the deaths the player could have avoided in a match, as stored by the
+ *   projection (`avoidable_deaths`, see `../core/analysis/review/review-values`). They have no
+ *   figure for the tier, so the row has no comparison with it, and a match is weak or strong by a
+ *   fixed rule (`markOfAvoidableDeaths`). Like the deaths of a phase, the row is a mean.
+ *
  * What is not known is left out and never taken for zero: a match without the death details of the
- * archive has no deaths. A match that cannot be placed among the tier (its data is not cached, or not
- * for its length) is still counted, without a mark.
+ * archive has no deaths, and a match without the positions of the players has no avoidable deaths
+ * (which is not none of them). A match that cannot be placed among the tier (its data is not cached,
+ * or not for its length) is still counted, without a mark.
  *
  * The phases and the duration window of a match are worked out once, when the rows are built, and
  * passed down to every row. The resistance items and the deaths before the first one are on the same
@@ -31,14 +37,19 @@
 import { orientedPercentile } from '../core/analysis/insights/insights';
 import { PHASES, PHASE_START_S, spanOf, type Phase } from '../core/analysis/phases';
 import { placeOnCurve } from '../core/analysis/references';
-import { markOfPercentile } from '../core/analysis/review/review-rules';
-import { phaseDeathsKey, phaseDeathsWindowKey } from '../core/analysis/review/review-values';
+import { markOfAvoidableDeaths, markOfPercentile } from '../core/analysis/review/review-rules';
+import {
+  AVOIDABLE_DEATHS_KEY,
+  phaseDeathsKey,
+  phaseDeathsWindowKey,
+} from '../core/analysis/review/review-values';
 import { curveStretchFor } from './community-placement';
 import type { RecentMatch } from './metrics.repository';
 import {
   UNJUDGED,
   placeMatches,
   placeReviewMatches,
+  pointMatchesOf,
   pointRowOf,
   type PlacedMatch,
   type PlacedReviewMatch,
@@ -152,4 +163,38 @@ export function deathRowsOf(
   const placedRecent = placeReviewMatches(recent);
   const placedBefore = placeMatches(before);
   return PHASES.map((phase) => pointRowOf(phaseDeathsPoint(phase), placedRecent, placedBefore));
+}
+
+/**
+ * The point of the avoidable deaths of the player: the stored count of avoidable deaths, judged by
+ * `markOfAvoidableDeaths`. The mean is the average avoidable deaths per match.
+ */
+const AVOIDABLE_DEATHS_POINT: ReviewPoint<ReviewMatch> = {
+  subject: { kind: 'avoidable_deaths' },
+  unit: 'deaths',
+  better: 'lower',
+  display: 'absolute',
+  center: 'mean',
+  // The count is absent when the match has no positions: the match is left out, never taken for 0.
+  valueIn: ({ match }) => match.values.get(AVOIDABLE_DEATHS_KEY) ?? null,
+  judge: (_reviewMatch, count) => ({
+    ...UNJUDGED,
+    mark: markOfAvoidableDeaths(count),
+    marked: true,
+  }),
+};
+
+/**
+ * Build the row of the avoidable deaths of the deaths tab.
+ *
+ * @param recent - The last matches, most recent first.
+ * @param before - The matches before them, which the progress compares with.
+ * @returns The row: the average avoidable deaths per match over the matches that have positions, with
+ *   no comparison with the tier. A match without a count is not in the row.
+ */
+export function avoidableDeathsRowOf(
+  recent: readonly ReviewMatch[],
+  before: readonly RecentMatch[],
+): ReviewRow {
+  return pointRowOf(AVOIDABLE_DEATHS_POINT, recent, pointMatchesOf(before));
 }

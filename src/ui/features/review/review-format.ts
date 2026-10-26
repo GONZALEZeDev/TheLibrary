@@ -227,6 +227,7 @@ function itemNameOf(item: ResistanceItemView): string {
  * - A metric has the name it has on the match page.
  * - The deaths of a phase are "Deaths in mid"; the phase is a word in the middle of the sentence,
  *   like the phase of a metric.
+ * - The avoidable deaths have one name for every match.
  * - A resistance item is named by its English name, or by its class name when the item catalogue does
  *   not know it, then by what the row says of it: the two rows of one item (when it is bought, how
  *   often) read differently.
@@ -247,6 +248,8 @@ export function reviewLabel(subject: ReviewSubject, t: TFunction, language: stri
       return t('review.deaths.phase', {
         phase: t(`analysis.phase.${subject.phase}`).toLocaleLowerCase(language),
       });
+    case 'avoidable_deaths':
+      return t('review.deaths.avoidable');
     case 'resistance_minute':
       return `${itemNameOf(subject.item)} ${ITEM_ROW_SEPARATOR} ${t('review.deaths.boughtAt')}`;
     case 'resistance_rate':
@@ -268,7 +271,8 @@ export function reviewLabel(subject: ReviewSubject, t: TFunction, language: stri
  * Find the tab of the review page that lists a point, which a row of the summary links to.
  *
  * - A metric is in the stats.
- * - The deaths of a phase and every point about the resistance items are in the deaths.
+ * - The deaths of a phase, the avoidable deaths and every point about the resistance items are in
+ *   the deaths.
  * - A place among the players and Valve's top three are in the players.
  *
  * @param subject - The point.
@@ -279,6 +283,7 @@ export function reviewTabOf(subject: ReviewSubject): ReviewTab {
     case 'metric':
       return 'stats';
     case 'phase_deaths':
+    case 'avoidable_deaths':
     case 'resistance_minute':
     case 'resistance_rate':
     case 'first_resistance_minute':
@@ -319,6 +324,7 @@ export function reviewRowKey(subject: ReviewSubject): string {
       return `${subject.kind}.${subject.item.className}`;
     case 'place':
       return `${subject.kind}.${subject.stat}`;
+    case 'avoidable_deaths':
     case 'first_resistance_minute':
     case 'deaths_before_resistance':
     case 'valve_top_three':

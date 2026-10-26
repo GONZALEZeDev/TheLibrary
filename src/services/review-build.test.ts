@@ -20,6 +20,7 @@ import { damageSourceKey } from '../core/analysis/damage-sources';
 import type { MetricKey } from '../core/analysis/metric';
 import { RESISTANCE_ITEMS } from '../core/analysis/review/resistance-items';
 import {
+  AVOIDABLE_DEATHS_KEY,
   VALVE_RANK_KEY,
   deathsBeforeItemKey,
   itemBoughtAtKey,
@@ -243,6 +244,9 @@ const PLACE_OF: Readonly<Record<string, number>> = { w: 11, s: 1, n: 6 };
 /** The rank in Valve's top three that a letter of a pattern stands for: the 1st, or none. */
 const TOP_THREE_RANK_OF: Readonly<Record<string, number>> = { s: 1, n: 0 };
 
+/** The avoidable deaths that a letter of a pattern stands for: three (weak), none (strong) or one. */
+const AVOIDABLE_OF: Readonly<Record<string, number>> = { w: 3, s: 0, n: 1 };
+
 /**
  * How the points of a listing go from match to match. Each is a string with a letter for every match,
  * the most recent first: `w` for a match that is weak for the point, `s` for one that is strong, `n`
@@ -255,6 +259,8 @@ interface Pattern {
   readonly places?: Readonly<Partial<Record<PlaceStat, string>>>;
   /** The place in Valve's top three. */
   readonly topThree?: string;
+  /** The avoidable deaths. */
+  readonly avoidable?: string;
 }
 
 /**
@@ -282,6 +288,7 @@ function flaggedListing(count: number, pattern: Pattern): RecentMatch[] {
       put(scoreboardPlaceKey(stat), pattern.places?.[stat], PLACE_OF);
     }
     put(VALVE_RANK_KEY, pattern.topThree, TOP_THREE_RANK_OF);
+    put(AVOIDABLE_DEATHS_KEY, pattern.avoidable, AVOIDABLE_OF);
     return values;
   });
 }
@@ -1030,6 +1037,52 @@ describe('buildReview', () => {
       expect([firstMinute, ...itemReviews.map(({ rate }) => rate)].map(({ side }) => side)).toEqual(
         Array.from({ length: 13 }, () => null),
       );
+    });
+
+    it('lists avoidable deaths in the summary when weak in a quarter of the marked matches', () => {
+      // Eight matches, two of them with no count: of the six marked, three are weak (half, over a
+      // quarter) and one is strong.
+      const recent = flaggedListing(8, { avoidable: 'wnwnsw..' });
+
+      const review = reviewOf({ recent });
+
+      expect(review.deaths.avoidable).toMatchObject({
+        subject: { kind: 'avoidable_deaths' },
+        count: 6,
+        weak: 3,
+        strong: 1,
+        side: 'weakness',
+      });
+      expect(review.summary.weaknesses.map(labelOf)).toEqual(['avoidable_deaths']);
+      expect(review.summary.strengths).toEqual([]);
+      // The very row of the deaths tab.
+      expect(review.summary.weaknesses[0]).toBe(review.deaths.avoidable);
+    });
+
+    it('lists avoidable deaths right after the phases of the deaths tab', () => {
+      // Six matches of eight are weak for the lane, the early game and the avoidable deaths alike, so
+      // they tie: the order of the tabs settles it.
+      const recent = listing(8, (index) =>
+        index < 6
+          ? {
+              lane_souls_diff_at_10min: -600,
+              [phaseDeathsKey('early')]: 12,
+              [phaseDeathsWindowKey('early')]: 12,
+              [AVOIDABLE_DEATHS_KEY]: 3,
+              [scoreboardPlaceKey('netWorth')]: 11,
+            }
+          : { lane_souls_diff_at_10min: 0, [scoreboardPlaceKey('netWorth')]: 6 },
+      );
+      const cohorts = cohortsOf([[DURATION_S, cachedRead(DURATION_S, { curve: DEATHS_CURVE })]]);
+
+      const review = reviewOf({ recent, cohorts });
+
+      expect(review.summary.weaknesses.map(labelOf)).toEqual([
+        'lane_souls_diff_at_10min',
+        'phase_deaths.early',
+        'avoidable_deaths',
+        'netWorth',
+      ]);
     });
 
     it('leaves out a point flagged as often on both sides, and one flagged too rarely', () => {

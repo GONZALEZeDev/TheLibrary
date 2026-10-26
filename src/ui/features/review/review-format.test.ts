@@ -186,6 +186,16 @@ describe('formatReviewValue', () => {
     },
   );
 
+  it('writes the avoidable deaths with one decimal', async () => {
+    // The row is a mean of deaths per match, in the unit of the other deaths rows.
+    const subject: ReviewSubject = { kind: 'avoidable_deaths' };
+    const row = rowOf({ subject, unit: 'deaths', value: 1.46 });
+
+    expect(formatReviewValue(row.value, row.unit, 'en', await translatorOf('en'))).toBe('1.5');
+    expect(formatReviewValue(row.value, row.unit, 'fr', await translatorOf('fr'))).toBe('1,5');
+    expect(formatReviewValue(0, row.unit, 'en', await translatorOf('en'))).toBe('0.0');
+  });
+
   it('writes a dash for an unknown value, whatever the unit', async () => {
     const units: readonly ReviewUnit[] = [
       'ratio',
@@ -379,6 +389,11 @@ describe('reviewLabel', () => {
       en: 'Deaths in mid',
       fr: 'Morts en mid',
     },
+    avoidable_deaths: {
+      subject: { kind: 'avoidable_deaths' },
+      en: 'Avoidable deaths',
+      fr: 'Morts évitables',
+    },
     resistance_minute: {
       subject: { kind: 'resistance_minute', item: KNOWN_ITEM },
       en: 'Battle Vest · Bought at',
@@ -422,6 +437,13 @@ describe('reviewLabel', () => {
   it.each(Object.entries(NAMES))('names every kind of subject: %s', async (_kind, input) => {
     expect(reviewLabel(input.subject, await translatorOf('en'), 'en')).toBe(input.en);
     expect(reviewLabel(input.subject, await translatorOf('fr'), 'fr')).toBe(input.fr);
+  });
+
+  it('labels the avoidable deaths row in both languages', async () => {
+    const subject: ReviewSubject = { kind: 'avoidable_deaths' };
+
+    expect(reviewLabel(subject, await translatorOf('en'), 'en')).toBe('Avoidable deaths');
+    expect(reviewLabel(subject, await translatorOf('fr'), 'fr')).toBe('Morts évitables');
   });
 
   it('names a metric of a phase with its figure and its phase', async () => {
@@ -508,6 +530,7 @@ describe('reviewTabOf', () => {
   const TAB_OF_KIND = {
     metric: { subject: { kind: 'metric', key: 'deaths' }, tab: 'stats' },
     phase_deaths: { subject: { kind: 'phase_deaths', phase: 'mid' }, tab: 'deaths' },
+    avoidable_deaths: { subject: { kind: 'avoidable_deaths' }, tab: 'deaths' },
     resistance_minute: { subject: { kind: 'resistance_minute', item: KNOWN_ITEM }, tab: 'deaths' },
     resistance_rate: { subject: { kind: 'resistance_rate', item: KNOWN_ITEM }, tab: 'deaths' },
     first_resistance_minute: { subject: { kind: 'first_resistance_minute' }, tab: 'deaths' },
@@ -523,6 +546,10 @@ describe('reviewTabOf', () => {
   it.each(Object.entries(TAB_OF_KIND))('finds a %s point in its tab', (_kind, expected) => {
     expect(reviewTabOf(expected.subject)).toBe(expected.tab);
   });
+
+  it('opens the deaths tab from the avoidable deaths row', () => {
+    expect(reviewTabOf({ kind: 'avoidable_deaths' })).toBe('deaths');
+  });
 });
 
 describe('reviewRowKey', () => {
@@ -535,6 +562,10 @@ describe('reviewRowKey', () => {
     phase_deaths: {
       subject: { kind: 'phase_deaths', phase: 'mid' },
       key: 'phase_deaths.mid',
+    },
+    avoidable_deaths: {
+      subject: { kind: 'avoidable_deaths' },
+      key: 'avoidable_deaths',
     },
     resistance_minute: {
       subject: { kind: 'resistance_minute', item: KNOWN_ITEM },
@@ -682,6 +713,31 @@ describe('the strings of the review page', () => {
       en: '2 of 3',
       fr: '2 sur 3',
     },
+    { key: 'review.deaths.avoidable', en: 'Avoidable deaths', fr: 'Morts évitables' },
+    {
+      key: 'review.deaths.avoidableCaption',
+      en: 'Alone, no ally near you, facing at least 2 enemies. No community figure.',
+      fr: 'Seul, sans allié près de toi, face à au moins 2 ennemis. Pas de chiffre de la communauté.',
+    },
+    {
+      key: 'review.deaths.avoidableMatches',
+      en: 'Matches with avoidable deaths',
+      fr: 'Parties avec des morts évitables',
+    },
+    { key: 'matchDetail.tabs.timeline', en: 'Timeline', fr: 'Chronologie' },
+    { key: 'timeline.chart.unknownItem', en: 'an item', fr: 'un objet' },
+    {
+      key: 'timeline.deaths.killedBy',
+      options: { killer: 'Paige' },
+      en: 'Killed by Paige',
+      fr: 'Tué par Paige',
+    },
+    {
+      key: 'timeline.deaths.timeToKill',
+      options: { seconds: '2.4' },
+      en: 'in 2.4 s',
+      fr: 'en 2.4 s',
+    },
   ] as const)('writes $key in both languages', async (input) => {
     const options = 'options' in input ? input.options : {};
 
@@ -732,6 +788,82 @@ describe('the strings of the review page', () => {
       en: 'No comparison yet for 4 matches: it will come at a next opening',
       fr: 'Pas encore de comparaison pour 4 parties : elle viendra à une prochaine ouverture',
     },
+    {
+      key: 'review.deaths.avoidableLink',
+      options: { date: '21 Oct', count: 1 },
+      en: '21 Oct · 1 avoidable',
+      fr: '21 Oct · 1 évitable',
+    },
+    {
+      key: 'review.deaths.avoidableLink',
+      options: { date: '21 Oct', count: 3 },
+      en: '21 Oct · 3 avoidable',
+      fr: '21 Oct · 3 évitables',
+    },
+    {
+      key: 'review.deaths.noPositions',
+      options: { count: 1 },
+      en: '1 match without positions, left out',
+      fr: '1 partie sans positions, mise à part',
+    },
+    {
+      key: 'review.deaths.noPositions',
+      options: { count: 4 },
+      en: '4 matches without positions, left out',
+      fr: '4 parties sans positions, mises à part',
+    },
+    {
+      key: 'timeline.chart.opponent',
+      options: { count: 1 },
+      en: 'Your lane opponent',
+      fr: 'Ton adversaire de lane',
+    },
+    {
+      key: 'timeline.chart.opponent',
+      options: { count: 2 },
+      en: 'Your lane opponents (average)',
+      fr: 'Tes adversaires de lane (moyenne)',
+    },
+    {
+      key: 'timeline.deaths.title',
+      options: { count: 5 },
+      en: 'Your deaths · 5',
+      fr: 'Tes morts · 5',
+    },
+    // The avoidable count is a plural of its own: French reads zero as a singular.
+    {
+      key: 'timeline.deaths.titleAvoidable',
+      options: { count: 0 },
+      en: '0 avoidable',
+      fr: 'dont 0 évitable',
+    },
+    {
+      key: 'timeline.deaths.titleAvoidable',
+      options: { count: 1 },
+      en: '1 avoidable',
+      fr: 'dont 1 évitable',
+    },
+    {
+      key: 'timeline.deaths.titleAvoidable',
+      options: { count: 2 },
+      en: '2 avoidable',
+      fr: 'dont 2 évitables',
+    },
+    {
+      key: 'timeline.deaths.enemies',
+      options: { count: 1 },
+      en: '1 enemy near you',
+      fr: '1 ennemi près de toi',
+    },
+    {
+      key: 'timeline.deaths.enemies',
+      options: { count: 3 },
+      en: '3 enemies near you',
+      fr: '3 ennemis près de toi',
+    },
+    { key: 'timeline.deaths.allies', options: { count: 0 }, en: 'no ally', fr: 'aucun allié' },
+    { key: 'timeline.deaths.allies', options: { count: 1 }, en: '1 ally', fr: '1 allié' },
+    { key: 'timeline.deaths.allies', options: { count: 2 }, en: '2 allies', fr: '2 alliés' },
     { key: 'review.damage.now', options: { count: 1 }, en: 'Last match', fr: 'Dernière partie' },
     { key: 'review.damage.now', options: { count: 20 }, en: 'Last 20', fr: '20 dernières' },
     {

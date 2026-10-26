@@ -91,6 +91,7 @@
     "tabs": {
       "label": "Sections de la partie",
       "analysis": "Analyse",
+      "timeline": "Chronologie",
       "damage": "Dégâts et build",
       "players": "Joueurs"
     },
@@ -99,6 +100,42 @@
       "duration": "Durée",
       "kda": "K / D / A",
       "souls": "Âmes"
+    }
+  },
+  "timeline": {
+    "chart": {
+      "title": "Âmes au fil de la partie",
+      "you": "Toi",
+      "opponent_one": "Ton adversaire de lane",
+      "opponent_other": "Tes adversaires de lane (moyenne)",
+      "death": "Mort",
+      "avoidableDeath": "Mort évitable",
+      "kill": "Kill",
+      "purchase": "Achat",
+      "unknownItem": "un objet",
+      "noKills": "Kills inconnus : le détail des morts d'un joueur est incomplet."
+    },
+    "deaths": {
+      "title": "Tes morts · {{count}}",
+      "titleAvoidable_one": "dont {{count}} évitable",
+      "titleAvoidable_other": "dont {{count}} évitables",
+      "none": "Aucune mort dans cette partie.",
+      "killedBy": "Tué par {{killer}}",
+      "world": "les troupes ou l'environnement",
+      "timeToKill": "en {{seconds}} s",
+      "enemies_one": "{{count}} ennemi près de toi",
+      "enemies_other": "{{count}} ennemis près de toi",
+      "allies_zero": "aucun allié",
+      "allies_one": "{{count}} allié",
+      "allies_other": "{{count}} alliés",
+      "avoidable": "Évitable",
+      "balanced": "Combat équilibré",
+      "incomplete": "Le détail de tes morts est incomplet dans cette partie.",
+      "noPositions": "Les positions des autres joueurs ne sont pas dans l'archive de cette partie.",
+      "refreshScheduled": "Elle sera téléchargée à nouveau à la prochaine synchronisation.",
+      "estimate": "Estimation : les joueurs proches de toi au moment de ta mort, le tueur toujours compté.",
+      "unknownHero": "un héros",
+      "unreadable": "Impossible de lire cette partie."
     }
   },
   "matchType": {
@@ -354,7 +391,14 @@
       "deathsBefore": "Morts avant ton premier objet de résistance",
       "bought": "Acheté",
       "boughtAt": "Acheté à",
-      "tierCaveat": "Les morts du palier viennent des compteurs de ses parties et peuvent différer d'une par partie des tiennes."
+      "tierCaveat": "Les morts du palier viennent des compteurs de ses parties et peuvent différer d'une par partie des tiennes.",
+      "avoidable": "Morts évitables",
+      "avoidableCaption": "Seul, sans allié près de toi, face à au moins 2 ennemis. Pas de chiffre de la communauté.",
+      "avoidableMatches": "Parties avec des morts évitables",
+      "avoidableLink_one": "{{date}} · {{count}} évitable",
+      "avoidableLink_other": "{{date}} · {{count}} évitables",
+      "noPositions_one": "{{count}} partie sans positions, mise à part",
+      "noPositions_other": "{{count}} parties sans positions, mises à part"
     },
     "damage": {
       "title": "Tes dégâts aux héros par source",

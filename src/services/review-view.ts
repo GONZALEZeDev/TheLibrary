@@ -80,6 +80,8 @@ export interface ResistanceItemView {
  *
  * - `metric`: one of the 24 metrics of the match page.
  * - `phase_deaths`: the player's deaths in a phase of the match.
+ * - `avoidable_deaths`: the player's avoidable deaths per match. It is an estimate, judged by fixed
+ *   per-match marks, and has no community figure to compare with.
  * - `resistance_minute`: the minute the player buys a resistance item.
  * - `resistance_rate`: how often the player buys a resistance item.
  * - `first_resistance_minute`: the minute of the player's first resistance item, whichever it is.
@@ -91,6 +93,7 @@ export interface ResistanceItemView {
 export type ReviewSubject =
   | { readonly kind: 'metric'; readonly key: MetricKey }
   | { readonly kind: 'phase_deaths'; readonly phase: Phase }
+  | { readonly kind: 'avoidable_deaths' }
   | { readonly kind: 'resistance_minute'; readonly item: ResistanceItemView }
   | { readonly kind: 'resistance_rate'; readonly item: ResistanceItemView }
   | { readonly kind: 'first_resistance_minute' }
@@ -317,6 +320,11 @@ export interface ReviewSummary {
 export interface ReviewDeaths {
   /** The deaths of each phase. */
   readonly phases: readonly ReviewRow[];
+  /**
+   * The player's avoidable deaths per match, over the matches that have the positions of the players.
+   * It has no tier figure: each match is marked by a fixed rule.
+   */
+  readonly avoidable: ReviewRow;
   /** The resistance items and the deaths before the first one. */
   readonly resistance: ReviewSection<ResistanceReview>;
 }

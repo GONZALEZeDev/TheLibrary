@@ -91,6 +91,7 @@
     "tabs": {
       "label": "Match sections",
       "analysis": "Analysis",
+      "timeline": "Timeline",
       "damage": "Damage and build",
       "players": "Players"
     },
@@ -99,6 +100,42 @@
       "duration": "Duration",
       "kda": "K / D / A",
       "souls": "Souls"
+    }
+  },
+  "timeline": {
+    "chart": {
+      "title": "Souls over the match",
+      "you": "You",
+      "opponent_one": "Your lane opponent",
+      "opponent_other": "Your lane opponents (average)",
+      "death": "Death",
+      "avoidableDeath": "Avoidable death",
+      "kill": "Kill",
+      "purchase": "Purchase",
+      "unknownItem": "an item",
+      "noKills": "Kills unknown: a player's death detail is incomplete."
+    },
+    "deaths": {
+      "title": "Your deaths · {{count}}",
+      "titleAvoidable_one": "{{count}} avoidable",
+      "titleAvoidable_other": "{{count}} avoidable",
+      "none": "No death in this match.",
+      "killedBy": "Killed by {{killer}}",
+      "world": "troopers or the environment",
+      "timeToKill": "in {{seconds}} s",
+      "enemies_one": "{{count}} enemy near you",
+      "enemies_other": "{{count}} enemies near you",
+      "allies_zero": "no ally",
+      "allies_one": "{{count}} ally",
+      "allies_other": "{{count}} allies",
+      "avoidable": "Avoidable",
+      "balanced": "Even fight",
+      "incomplete": "Your death detail is incomplete in this match.",
+      "noPositions": "The other players' positions are not in this match's archive.",
+      "refreshScheduled": "It will be downloaded again at the next synchronisation.",
+      "estimate": "Estimate: the players close to you when you died, the killer always counted.",
+      "unknownHero": "a hero",
+      "unreadable": "This match cannot be read."
     }
   },
   "matchType": {
@@ -354,7 +391,14 @@
       "deathsBefore": "Deaths before your first resistance item",
       "bought": "Bought",
       "boughtAt": "Bought at",
-      "tierCaveat": "The tier's deaths come from its match counters and can differ by one per match from yours."
+      "tierCaveat": "The tier's deaths come from its match counters and can differ by one per match from yours.",
+      "avoidable": "Avoidable deaths",
+      "avoidableCaption": "Alone, no ally near you, facing at least 2 enemies. No community figure.",
+      "avoidableMatches": "Matches with avoidable deaths",
+      "avoidableLink_one": "{{date}} · {{count}} avoidable",
+      "avoidableLink_other": "{{date}} · {{count}} avoidable",
+      "noPositions_one": "{{count}} match without positions, left out",
+      "noPositions_other": "{{count}} matches without positions, left out"
     },
     "damage": {
       "title": "Your damage to heroes by source",

@@ -7,13 +7,17 @@
 import { describe, expect, it } from 'vitest';
 import { durationWindowOf } from '../core/analysis/cohort';
 import type { Phase } from '../core/analysis/phases';
-import { phaseDeathsKey, phaseDeathsWindowKey } from '../core/analysis/review/review-values';
+import {
+  AVOIDABLE_DEATHS_KEY,
+  phaseDeathsKey,
+  phaseDeathsWindowKey,
+} from '../core/analysis/review/review-values';
 import type { CurvePoint } from '../core/deadlock-api/performance-curve.schema';
 import type { MatchId } from '../core/domain/match';
 import { testMatchId } from '../test/test-data';
 import type { CommunityReference } from './community-placement';
 import type { RecentMatch } from './metrics.repository';
-import { deathRowsOf } from './review-deaths';
+import { avoidableDeathsRowOf, deathRowsOf } from './review-deaths';
 import type { ReviewMatch, ReviewRow } from './review-view';
 
 /** The length of most matches of the tests, in seconds: a match of the 30–35 minute window. */
@@ -412,5 +416,98 @@ describe('deathRowsOf', () => {
       difference: null,
     });
     expect(early?.matches.map(({ mark }) => mark)).toEqual([null, null, null, null, null]);
+  });
+});
+
+describe('avoidableDeathsRowOf', () => {
+  /**
+   * The last matches of the tests, with the avoidable deaths stored for each: the tier's data is
+   * cached for all of them, to show that the row never reads it.
+   *
+   * @param counts - The avoidable deaths of each match, most recent first, `null` for a match that
+   *   has no count.
+   * @returns The matches.
+   */
+  function recentWithAvoidable(counts: readonly (number | null)[]): ReviewMatch[] {
+    return counts.map((count, index) =>
+      reviewMatch(index, count === null ? {} : { [AVOIDABLE_DEATHS_KEY]: count }),
+    );
+  }
+
+  it('averages the avoidable deaths of the matches that have positions', () => {
+    const row = avoidableDeathsRowOf(recentWithAvoidable([4, 1, 0, 1, 2, 0]), []);
+
+    expect(row).toMatchObject({
+      subject: { kind: 'avoidable_deaths' },
+      unit: 'deaths',
+      better: 'lower',
+      // The mean counts (8 / 6), not the median (1).
+      value: 8 / 6,
+      count: 6,
+    });
+    expect(row.matches.map(({ matchId, value }) => [matchId, value])).toEqual([
+      [matchIdAt(0), 4],
+      [matchIdAt(1), 1],
+      [matchIdAt(2), 0],
+      [matchIdAt(3), 1],
+      [matchIdAt(4), 2],
+      [matchIdAt(5), 0],
+    ]);
+  });
+
+  it('marks a match weak from two avoidable deaths and strong at none', () => {
+    const row = avoidableDeathsRowOf(recentWithAvoidable([5, 2, 1, 0, 0, 3]), []);
+
+    expect(row.matches.map(({ mark }) => mark)).toEqual([
+      'weak',
+      'weak',
+      null,
+      'strong',
+      'strong',
+      'weak',
+    ]);
+    // A match with one avoidable death is judged, and neither weak nor strong.
+    expect(row).toMatchObject({ weak: 3, strong: 2, marked: 6, side: 'weakness' });
+  });
+
+  it('leaves out the matches without positions and counts the rest', () => {
+    const row = avoidableDeathsRowOf(recentWithAvoidable([1, null, 0, null, 1, 1, 0]), []);
+
+    // The two matches with no count are not in the row, and are not taken for zero.
+    expect(row.count).toBe(5);
+    expect(row.marked).toBe(5);
+    expect(row.value).toBe(3 / 5);
+    expect(row.matches.map(({ matchId }) => matchId)).toEqual([
+      matchIdAt(0),
+      matchIdAt(2),
+      matchIdAt(4),
+      matchIdAt(5),
+      matchIdAt(6),
+    ]);
+  });
+
+  it('has no tier figure', () => {
+    const row = avoidableDeathsRowOf(recentWithAvoidable([3, 3, 3, 3, 3, 0]), []);
+
+    expect(row).toMatchObject({
+      comparedValue: null,
+      reference: null,
+      difference: null,
+      gapWithinNoise: false,
+    });
+  });
+
+  it('compares with the twenty matches before', () => {
+    const recent = recentWithAvoidable([0, 1, 0, 1, 0]);
+    // The matches before: the figure before is their mean, 3, and a match with no count is left out.
+    const before = [4, 2, 3, 3, 3].map((count, index) =>
+      recentMatch(20 + index, { [AVOIDABLE_DEATHS_KEY]: count }),
+    );
+
+    const row = avoidableDeathsRowOf(recent, [...before, recentMatch(25, {})]);
+
+    // Fewer avoidable deaths than before is better.
+    expect(row.value).toBe(0.4);
+    expect(row.progress).toEqual({ before: 3, direction: 'better' });
   });
 });

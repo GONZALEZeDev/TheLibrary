@@ -45,7 +45,7 @@ import { communityOf, type CommunityState } from './community-placement';
 import type { ItemCatalogue } from './game-asset.service';
 import type { ItemBenchmarkRead } from './item-benchmark.service';
 import type { RecentMatch } from './metrics.repository';
-import { deathRowsOf } from './review-deaths';
+import { avoidableDeathsRowOf, deathRowsOf } from './review-deaths';
 import { playerRowsOf } from './review-players';
 import { resistanceReviewOf } from './review-resistance';
 import { statsRowsOf } from './review-stats';
@@ -335,9 +335,9 @@ function rowsOnSide(
  * @param players - The players tab.
  * @returns The weaknesses and the strengths: every row of the tabs that has a side, without a cut.
  *   The rows are the very rows of their tabs. The tab order that settles a tie is the stats (the
- *   families, then the phases), the deaths of each phase, the resistance rows (the first item, the
- *   deaths before it, then the minute and the rate of each item), the places, the top three and the
- *   place in it.
+ *   families, then the phases), the deaths of each phase, the avoidable deaths, the resistance rows
+ *   (the first item, the deaths before it, then the minute and the rate of each item), the places,
+ *   the top three and the place in it.
  */
 function summaryOf(
   stats: ReviewStats,
@@ -356,6 +356,7 @@ function summaryOf(
     ...stats.families.flatMap(({ rows: familyRows }) => familyRows),
     ...stats.phases,
     ...deaths.phases,
+    deaths.avoidable,
     ...resistance,
     ...players.places,
     players.topThree,
@@ -385,6 +386,7 @@ export function buildReview(inputs: ReviewInputs): Review {
   const stats = statsRowsOf(reviewMatches, earlierMatches);
   const deaths: ReviewDeaths = {
     phases: deathRowsOf(reviewMatches, earlierMatches),
+    avoidable: avoidableDeathsRowOf(reviewMatches, earlierMatches),
     resistance: resistanceSectionOf(catalogue, reviewMatches, earlierMatches, itemBenchmark),
   };
   const players = playerRowsOf(reviewMatches, earlierMatches);

@@ -228,6 +228,7 @@ function deathsOf(resistance: Review['deaths']['resistance']): Review['deaths'] 
     phases: PHASES.map((phase, index) =>
       rowOf({ kind: 'phase_deaths', phase }, { value: PHASE_DEATHS[index] ?? null }),
     ),
+    avoidable: rowOf({ kind: 'avoidable_deaths' }),
     resistance,
   };
 }

@@ -72,6 +72,18 @@ describe('zstd codec', () => {
     expect(compressed.length).toBeLessThan(zstd.compress(original, 3).length);
   });
 
+  it('compresses at the level it is given, into a frame that decodes the same', async () => {
+    const json = syntheticDocument();
+    const original = new TextEncoder().encode(json);
+
+    const compressed = await compressBytes(original, 1);
+    const zstd = await Zstd.load();
+
+    expect(compressed.length).toBe(zstd.compress(original, 1).length);
+    expect(compressed.length).not.toBe(zstd.compress(original, 19).length);
+    expect(new TextDecoder().decode(await decompressBytes(compressed))).toBe(json);
+  });
+
   it('reads a frame made by the reference zstd', async () => {
     const frame = Uint8Array.from(atob(ORACLE_FRAME_BASE64), (char) => char.charCodeAt(0));
 

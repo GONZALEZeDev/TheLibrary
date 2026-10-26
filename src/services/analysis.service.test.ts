@@ -92,9 +92,6 @@ const INSIDE_POSITION = 10;
  */
 const LONG_HISTORY_COUNT = 120;
 
-// A test of the long history archives and projects 36 Paige matches, which takes about five seconds:
-// the tests that build it give themselves 30 seconds, where the limit of a test is 5.
-
 /** The tier of the current rank of the player (badge 44, Sentinel): the rank of an unranked match. */
 const CURRENT_TIER = Math.floor(createPlayerRankFixture().badge / 10);
 
@@ -1363,7 +1360,7 @@ describe('AnalysisService.analyseMatch', () => {
     await expect(context.analysis.getMatchAnalysis(inside)).resolves.toEqual(view);
     const newestAnalysis = ready(await context.analysis.getMatchAnalysis(newest));
     expect(rowOf(newestAnalysis, 'kda').personal?.count).toBe(PERSONAL_WINDOW);
-  }, 30_000);
+  });
 
   it('answers a second opening of a match whose window is projected without projecting', async () => {
     const context = await setUpLongHistory();
@@ -1382,7 +1379,7 @@ describe('AnalysisService.analyseMatch', () => {
     }
 
     expect(projectMatch).not.toHaveBeenCalled();
-  }, 30_000);
+  });
 
   it('shows the analysis of a match whose window holds a match the projection keeps skipping', async () => {
     const context = await setUpLongHistory();
@@ -1420,7 +1417,7 @@ describe('AnalysisService.analyseMatch', () => {
       version: PROJECTION_VERSION,
       failed: false,
     });
-  }, 30_000);
+  });
 
   it('answers failed without projecting again when the projection could not read the match', async () => {
     const context = await setUp();

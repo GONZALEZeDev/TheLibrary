@@ -70,20 +70,26 @@ function loadZstd(): Promise<Zstd> {
 }
 
 /**
- * Compress bytes into one zstd frame at level 19.
+ * Compress bytes into one zstd frame, at level 19 unless told otherwise.
  *
  * Uses the library's one-shot call: the whole input is in memory and the frame comes back in one
  * piece, which suits an archive file of a few hundred kilobytes.
  *
  * @param bytes - The data to compress.
+ * @param level - The zstd level. The app always uses {@link ZSTD_LEVEL}; tests that write many
+ *   archives pass a faster one, since the level changes only the size of the frame, never what it
+ *   decodes to.
  * @returns The zstd frame.
  * @throws {@link ZstdLoadError} when the library cannot be loaded, {@link ZstdDataError} when it
  *   fails on `bytes`.
  */
-export async function compressBytes(bytes: Uint8Array): Promise<Uint8Array> {
+export async function compressBytes(
+  bytes: Uint8Array,
+  level: number = ZSTD_LEVEL,
+): Promise<Uint8Array> {
   const library = await loadZstd();
   try {
-    return library.compress(bytes, ZSTD_LEVEL);
+    return library.compress(bytes, level);
   } catch (error) {
     throw new ZstdDataError(error);
   }

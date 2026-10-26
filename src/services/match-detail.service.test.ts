@@ -31,6 +31,7 @@ import {
 import { MemoryArchiveStore } from '../adapters/dev/memory-archive-store.adapter';
 import { MemoryLogger, type LogEntry } from '../adapters/dev/memory-logger.adapter';
 import { StaticAccountSource } from '../adapters/dev/static-account-source.adapter';
+import { PROJECTION_VERSION } from '../core/analysis/registry';
 import { MAX_RESPONSE_BYTES } from '../core/deadlock-api/endpoints';
 import { parseMatchHistory } from '../core/deadlock-api/match-history.schema';
 import { parseMatchMetadata } from '../core/deadlock-api/match-metadata.schema';
@@ -39,6 +40,7 @@ import { PAIGE_HERO_ID } from '../core/domain/hero';
 import type { MatchId, MatchSummary } from '../core/domain/match';
 import { AppError } from '../core/errors/app-error';
 import {
+  ARCHIVE_FORMAT,
   createArchiveEnvelope,
   decodeArchiveEnvelope,
   encodeArchiveEnvelope,
@@ -68,6 +70,8 @@ import { DeadlockApiService } from './deadlock-api.service';
 import { MatchDetailRepository, type StoredDetail } from './match-detail.repository';
 import { MatchDetailService, type DetailRunReport } from './match-detail.service';
 import { MatchesRepository } from './matches.repository';
+import { MetricsRepository, type ProjectionRecord } from './metrics.repository';
+import { ProjectionService } from './projection.service';
 import { SyncStateRepository } from './sync-state.repository';
 
 /** The current time of the tests (Unix milliseconds); the fixture history ends about 2 h before. */
@@ -96,14 +100,16 @@ const NOTHING: DetailRunReport = {
   retried: 0,
   unavailable: 0,
   invalid: 0,
+  refreshed: 0,
   stoppedBy: null,
 };
 
 /**
  * What the queue records about the detail of a match: the columns it writes, without the fields of
- * the match that the stored detail also carries (the queue never writes those).
+ * the match that the stored detail also carries (the queue never writes those) and without the
+ * format of the archive, which these tests do not look at.
  */
-type RecordedDetail = Omit<StoredDetail, 'match'>;
+type RecordedDetail = Omit<StoredDetail, 'match' | 'archiveFormat'>;
 
 /** The detail state of a match nobody tried yet. */
 const UNTOUCHED: RecordedDetail = {
@@ -251,6 +257,17 @@ async function setUp(options: SetUpOptions = {}) {
   const compressor = new DirectCompressor();
   // The real reader, on the same archive, compressor and logger: the page is tested through it.
   const reader = new ArchiveReaderService({ archive, compressor, logger });
+  // The real analysis, on the same database and archive: a refreshed match forgets its projection
+  // through it, in turn with its projections, as in the app.
+  const metrics = new MetricsRepository(database);
+  const projection = new ProjectionService({
+    reader,
+    metrics,
+    details: repository,
+    logger,
+    now,
+    yieldToEventLoop: () => Promise.resolve(),
+  });
   const service = new MatchDetailService({
     accountSource: new StaticAccountSource(
       options.accountId === undefined ? ACCOUNT : options.accountId,
@@ -260,6 +277,7 @@ async function setUp(options: SetUpOptions = {}) {
     archive,
     compressor,
     reader,
+    projections: projection,
     logger,
     now,
     random: options.random ?? (() => 0.5),
@@ -268,6 +286,8 @@ async function setUp(options: SetUpOptions = {}) {
     service,
     api,
     repository,
+    metrics,
+    projection,
     archive,
     compressor,
     reader,
@@ -317,7 +337,7 @@ async function plantArchive(
   bytes: Uint8Array,
 ): Promise<void> {
   await context.archive.write(ACCOUNT, matchOf(row), bytes);
-  await context.repository.markReady(ACCOUNT, matchOf(row), bytes.length);
+  await context.repository.markReady(ACCOUNT, matchOf(row), bytes.length, ARCHIVE_FORMAT);
 }
 
 /**
@@ -549,6 +569,11 @@ describe('MatchDetailService.runQueue', () => {
         lastError: null,
         archivedBytes: bytes.length,
       });
+      // The file and the database agree on the format: the current one, so it is never refreshed.
+      expect(envelope.archiveFormat).toBe(ARCHIVE_FORMAT);
+      await expect(repository.getDetail(ACCOUNT, matchOf(row))).resolves.toMatchObject({
+        archiveFormat: ARCHIVE_FORMAT,
+      });
     }
     // The database agrees: the archived matches are ready, the two the API lacks wait for a retry.
     await expect(repository.summary(ACCOUNT, START)).resolves.toEqual({
@@ -569,6 +594,7 @@ describe('MatchDetailService.runQueue', () => {
           retried: MISSING_ROWS.length,
           unavailable: 0,
           invalid: 0,
+          refreshed: 0,
           quarantined: 0,
           stoppedBy: null,
         },
@@ -835,6 +861,7 @@ describe('MatchDetailService.runQueue', () => {
         retried: 1,
         unavailable: 0,
         invalid: 0,
+        refreshed: 0,
         quarantined: 1,
         stoppedBy: 'network',
       },
@@ -1519,6 +1546,7 @@ describe('MatchDetailService.runQueue', () => {
         retried: 0,
         unavailable: 0,
         invalid: 0,
+        refreshed: 0,
         quarantined: 0,
         stoppedBy: 'storage',
       },
@@ -1528,6 +1556,7 @@ describe('MatchDetailService.runQueue', () => {
         retried: second.retried,
         unavailable: 0,
         invalid: 1,
+        refreshed: 0,
         quarantined: 2,
         stoppedBy: 'network',
       },
@@ -1537,6 +1566,7 @@ describe('MatchDetailService.runQueue', () => {
         retried: 0,
         unavailable: 0,
         invalid: 0,
+        refreshed: 0,
         quarantined: 0,
         stoppedBy: 'paused',
       },
@@ -1547,6 +1577,7 @@ describe('MatchDetailService.runQueue', () => {
       'retried',
       'unavailable',
       'invalid',
+      'refreshed',
       'quarantined',
       'stoppedBy',
     ]);
@@ -1630,6 +1661,502 @@ describe('MatchDetailService.runQueue', () => {
 });
 
 /**
+ * What the archive file of a format-1 match holds in these tests. The refresh never reads the old
+ * file, it only replaces it, so any bytes do; these ones show whether it was replaced.
+ */
+const OLD_ARCHIVE = new Uint8Array([1, 2, 3, 4, 5]);
+
+/** The projection the analysis stored for a match, before its archive is refreshed. */
+const PROJECTED: ProjectionRecord = {
+  version: PROJECTION_VERSION,
+  playerBadge: null,
+  hasLeaver: false,
+  failed: false,
+  projectedAt: START,
+};
+
+/**
+ * Leave a format-1 archive for a match, as a version of the app that kept only the tracked player's
+ * path did: a file, a `ready` match, and no format in the database (it was not recorded then).
+ *
+ * @param context - What {@link setUp} built; the match must be stored.
+ * @param row - The row of the match.
+ */
+async function plantFormatOneArchive(context: TestContext, row: RawMatchHistoryRow): Promise<void> {
+  await plantArchive(context, row, OLD_ARCHIVE);
+  await context.database.execute(
+    'UPDATE matches SET archive_format = NULL WHERE account_id = $1 AND match_id = $2',
+    [ACCOUNT, matchOf(row)],
+  );
+}
+
+/**
+ * The lines that report a failed refresh, oldest first.
+ *
+ * @param logger - The logger the queue wrote to.
+ * @returns The log entries `Match archive refresh failed`.
+ */
+function refreshFailures(logger: MemoryLogger): LogEntry[] {
+  return logger.entries.filter((entry) => entry.message === 'Match archive refresh failed');
+}
+
+/**
+ * The archive file of a match, as it is in the archive store.
+ *
+ * @param archive - The archive store.
+ * @param row - The row of the match.
+ * @returns Its bytes, or `undefined` when there is no file.
+ */
+function archiveFileOf(
+  archive: MemoryArchiveStore,
+  row: RawMatchHistoryRow,
+): Uint8Array | undefined {
+  return archive.files.get(archivePath(ACCOUNT, matchOf(row)));
+}
+
+describe('MatchDetailService.runQueue, refresh of the format-1 archives', () => {
+  it('downloads again a ready match of format 1 within 90 days and forgets its projection', async () => {
+    const context = await setUp({ matches: summariesOf([SERVED]) });
+    const { service, repository, metrics, archive, compressor, http, logger } = context;
+    await plantFormatOneArchive(context, SERVED);
+    await metrics.saveProjection(ACCOUNT, matchOf(SERVED), PROJECTED, new Map([['kda', 2]]));
+    const listener = vi.fn();
+    service.subscribe(listener);
+
+    const report = await service.runQueue(ACCOUNT, RUN);
+
+    expect(report).toEqual({ ...NOTHING, refreshed: 1 });
+    expect(http.requests.map((request) => matchIdOfRequest(request))).toEqual([matchOf(SERVED)]);
+    // The file is replaced in place by an archive of the current format, with all twelve paths.
+    const bytes = archiveFileOf(archive, SERVED) ?? expect.unreachable('the archive exists');
+    const envelope = decodeArchiveEnvelope(await compressor.decompress(bytes));
+    expect(envelope.archiveFormat).toBe(ARCHIVE_FORMAT);
+    expect(envelope.payload.match_info.match_paths?.paths).toHaveLength(12);
+    // The match stays archived all along; only its size and its format change.
+    await expect(repository.getDetail(ACCOUNT, matchOf(SERVED))).resolves.toMatchObject({
+      status: 'ready',
+      attempts: 0,
+      archivedBytes: bytes.length,
+      archiveFormat: ARCHIVE_FORMAT,
+    });
+    // The projection made from the old file is forgotten: the catch-up of the same sync makes it again.
+    await expect(metrics.getProjection(ACCOUNT, matchOf(SERVED))).resolves.toBeNull();
+    await expect(metrics.listToProject(ACCOUNT, PROJECTION_VERSION)).resolves.toEqual([
+      matchOf(SERVED),
+    ]);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(runEnds(logger)[0]).toMatchObject({ archived: 0, refreshed: 1, stoppedBy: null });
+    // Once refreshed, a match is never downloaded again.
+    await expect(service.runQueue(ACCOUNT, 'run-0002')).resolves.toEqual(NOTHING);
+    expect(http.requests).toHaveLength(1);
+  });
+
+  it('refreshes only after the due matches', async () => {
+    const { handler, held, whenHeld } = holdRequests();
+    const fixtures = createFixtureApi({ now: START, matchCount: 30 });
+    let received = 0;
+    const context = await setUp({
+      matches: summariesOf([SERVED, OTHER_SERVED]),
+      // The first request waits for the test; the others are answered at once.
+      handler: (request) => {
+        received += 1;
+        return received === 1 ? handler(request) : fixtures(request);
+      },
+    });
+    // The match to refresh is the most recent one, so the order cannot come from the start times.
+    await plantFormatOneArchive(context, SERVED);
+
+    const run = context.service.runQueue(ACCOUNT, RUN);
+    await whenHeld(1);
+    await settle();
+    // The due match is downloading. The other puller has nothing due, and still does not refresh.
+    expect(context.http.requests.map((request) => matchIdOfRequest(request))).toEqual([
+      matchOf(OTHER_SERVED),
+    ]);
+    const due = held[0] ?? expect.unreachable('a request is held');
+    due.answer(await answerLike(fixtures, due.request));
+
+    await expect(run).resolves.toEqual({ ...NOTHING, archived: 1, refreshed: 1 });
+    expect(context.http.requests.map((request) => matchIdOfRequest(request))).toEqual([
+      matchOf(OTHER_SERVED),
+      matchOf(SERVED),
+    ]);
+  });
+
+  it('does not refresh once the due matches stopped the run', async () => {
+    const context = await setUp({
+      matches: summariesOf([SERVED, OTHER_SERVED]),
+      handler: () => {
+        throw new AppError('network', 'The server cannot be reached');
+      },
+    });
+    await plantFormatOneArchive(context, SERVED);
+
+    await expect(context.service.runQueue(ACCOUNT, RUN)).resolves.toEqual({
+      ...NOTHING,
+      stoppedBy: 'network',
+    });
+
+    // Only the due match was tried: the refresh waits for a run that goes through them.
+    expect(context.http.requests.map((request) => matchIdOfRequest(request))).toEqual([
+      matchOf(OTHER_SERVED),
+    ]);
+    expect(archiveFileOf(context.archive, SERVED)).toEqual(OLD_ARCHIVE);
+  });
+
+  it.each([
+    {
+      label: 'the API fails',
+      handler: (): HttpResponse => jsonResponse({ error: 'no' }, 500),
+      kind: 'service_unavailable (500)',
+      stoppedBy: null,
+    },
+    {
+      label: 'the answer has no body',
+      handler: (): HttpResponse => ({ status: 204, headers: {}, body: '' }),
+      kind: 'empty_body',
+      stoppedBy: null,
+    },
+    {
+      // A page of a proxy would be the same for every match: the run stops, as for a download.
+      label: 'the answer is not JSON',
+      handler: (): HttpResponse => NOT_JSON,
+      kind: 'not_json',
+      stoppedBy: 'network',
+    },
+  ] as const)(
+    'keeps a match ready with its old archive when the refresh fails: $label',
+    async ({ handler, kind, stoppedBy }) => {
+      const context = await setUp({ matches: summariesOf([SERVED]), handler });
+      const { service, repository, metrics, archive, logger } = context;
+      await plantFormatOneArchive(context, SERVED);
+      await metrics.saveProjection(ACCOUNT, matchOf(SERVED), PROJECTED, new Map([['kda', 2]]));
+      const saveState = vi.spyOn(repository, 'saveState');
+
+      const report = await service.runQueue(ACCOUNT, RUN);
+
+      expect(report).toEqual({ ...NOTHING, stoppedBy });
+      // Nothing is lost: the old file, the ready match and its projection are all still there.
+      expect(archiveFileOf(archive, SERVED)).toEqual(OLD_ARCHIVE);
+      await expect(repository.getDetail(ACCOUNT, matchOf(SERVED))).resolves.toMatchObject({
+        status: 'ready',
+        attempts: 0,
+        nextAttemptAt: null,
+        lastError: null,
+        archivedBytes: OLD_ARCHIVE.length,
+        archiveFormat: null,
+      });
+      await expect(metrics.getProjection(ACCOUNT, matchOf(SERVED))).resolves.toEqual(
+        expect.objectContaining({ version: PROJECTION_VERSION }),
+      );
+      // No attempt is counted for a refresh, and the banner still counts the match as archived.
+      expect(saveState).not.toHaveBeenCalled();
+      await expect(repository.summary(ACCOUNT, START)).resolves.toEqual({
+        archived: 1,
+        waiting: 0,
+        unavailable: 0,
+        invalid: 0,
+      });
+      // One line, with the match and the code of the failure only.
+      expect(refreshFailures(logger)).toEqual([
+        {
+          level: 'info',
+          scope: 'detail',
+          message: 'Match archive refresh failed',
+          context: { syncRunId: RUN, matchId: matchOf(SERVED), kind },
+        },
+      ]);
+      expect(logger.entries.filter((entry) => entry.message === 'Detail attempt failed')).toEqual(
+        [],
+      );
+    },
+  );
+
+  it('keeps the old archive when the new one cannot be written', async () => {
+    const context = await setUp({ matches: summariesOf([SERVED]) });
+    const { service, repository, archive, logger } = context;
+    await plantFormatOneArchive(context, SERVED);
+    archive.failNextWrite(new Error('There is not enough space on the disk'));
+
+    await expect(service.runQueue(ACCOUNT, RUN)).resolves.toEqual({
+      ...NOTHING,
+      stoppedBy: 'storage',
+    });
+
+    // A local failure says nothing about the match: the run stops and the match is left as it was.
+    expect(archiveFileOf(archive, SERVED)).toEqual(OLD_ARCHIVE);
+    await expect(repository.getDetail(ACCOUNT, matchOf(SERVED))).resolves.toMatchObject({
+      status: 'ready',
+      archivedBytes: OLD_ARCHIVE.length,
+      archiveFormat: null,
+    });
+    expect(refreshFailures(logger)).toEqual([]);
+    expect(stopLines(logger)[0]).toMatchObject({
+      context: { stoppedBy: 'storage', matchId: matchOf(SERVED) },
+    });
+  });
+
+  it.each([
+    {
+      label: 'the projection cannot be forgotten',
+      fail: (context: TestContext) =>
+        vi
+          .spyOn(context.projection, 'forgetProjection')
+          .mockRejectedValueOnce(
+            new AppError('storage', 'Could not forget the projection of a match'),
+          ),
+      // The forgetting failed: the projection of the old file is still there, for now.
+      projectionKept: true,
+    },
+    {
+      label: 'the refreshed match cannot be recorded',
+      fail: (context: TestContext) =>
+        vi
+          .spyOn(context.repository, 'markReady')
+          .mockRejectedValueOnce(new AppError('storage', 'Could not record an archived match')),
+      projectionKept: false,
+    },
+  ])('refreshes the match again at the next run when $label', async ({ fail, projectionKept }) => {
+    const context = await setUp({ matches: summariesOf([SERVED]) });
+    const { service, repository, metrics, archive, compressor, http } = context;
+    await plantFormatOneArchive(context, SERVED);
+    await metrics.saveProjection(ACCOUNT, matchOf(SERVED), PROJECTED, new Map([['kda', 2]]));
+    fail(context);
+
+    await expect(service.runQueue(ACCOUNT, RUN)).resolves.toEqual({
+      ...NOTHING,
+      stoppedBy: 'storage',
+    });
+
+    // The new file is in place, but the database still records no format: the match is still
+    // to refresh, and stays ready with the size of the old file until it is recorded.
+    const written = archiveFileOf(archive, SERVED) ?? expect.unreachable('the archive exists');
+    expect(decodeArchiveEnvelope(await compressor.decompress(written)).archiveFormat).toBe(
+      ARCHIVE_FORMAT,
+    );
+    await expect(repository.getDetail(ACCOUNT, matchOf(SERVED))).resolves.toMatchObject({
+      status: 'ready',
+      archivedBytes: OLD_ARCHIVE.length,
+      archiveFormat: null,
+    });
+    const kept = await metrics.getProjection(ACCOUNT, matchOf(SERVED));
+    expect(kept !== null).toBe(projectionKept);
+
+    await expect(service.runQueue(ACCOUNT, 'run-0002')).resolves.toEqual({
+      ...NOTHING,
+      refreshed: 1,
+    });
+
+    expect(http.requests).toHaveLength(2);
+    await expect(repository.getDetail(ACCOUNT, matchOf(SERVED))).resolves.toMatchObject({
+      status: 'ready',
+      archiveFormat: ARCHIVE_FORMAT,
+    });
+    await expect(metrics.getProjection(ACCOUNT, matchOf(SERVED))).resolves.toBeNull();
+  });
+
+  it('forgets the projection that the analysis made from the old archive during the refresh', async () => {
+    const context = await setUp({ matches: summariesOf([SERVED]) });
+    const { service, repository, projection, metrics, reader, archive, database } = context;
+    // An archive the analysis can read, of which the database records no format, as a format-1
+    // archive: its content does not matter here, only the order of the reads and the writes.
+    await service.runQueue(ACCOUNT, RUN);
+    await database.execute(
+      'UPDATE matches SET archive_format = NULL WHERE account_id = $1 AND match_id = $2',
+      [ACCOUNT, matchOf(SERVED)],
+    );
+    // The page of the match asks for its analysis: the projection reads the old file, then waits.
+    let oldFileRead = (): void => undefined;
+    const oldFileWasRead = new Promise<void>((resolve) => {
+      oldFileRead = resolve;
+    });
+    let finishProjection = (): void => undefined;
+    const projectionMayFinish = new Promise<void>((resolve) => {
+      finishProjection = resolve;
+    });
+    const read = reader.readArchive.bind(reader);
+    vi.spyOn(reader, 'readArchive').mockImplementationOnce(async (accountId, matchId) => {
+      const result = await read(accountId, matchId);
+      oldFileRead();
+      await projectionMayFinish;
+      return result;
+    });
+    let newFileWritten = (): void => undefined;
+    const newFileWasWritten = new Promise<void>((resolve) => {
+      newFileWritten = resolve;
+    });
+    const write = archive.write.bind(archive);
+    vi.spyOn(archive, 'write').mockImplementation(async (...args) => {
+      await write(...args);
+      newFileWritten();
+    });
+    const forget = vi.spyOn(metrics, 'forgetProjection');
+
+    const projecting = projection.projectMatch(ACCOUNT, matchOf(SERVED));
+    await oldFileWasRead;
+    const refreshing = service.runQueue(ACCOUNT, 'run-0002');
+    await newFileWasWritten;
+    await settle();
+
+    // The new file is written, and the forgetting waits for the projection of the old one.
+    expect(forget).not.toHaveBeenCalled();
+    finishProjection();
+    await expect(projecting).resolves.toMatchObject({ projected: 1 });
+    await expect(refreshing).resolves.toEqual({ ...NOTHING, refreshed: 1 });
+
+    // What was made from the old file was saved, then forgotten: the catch-up makes it again.
+    expect(forget).toHaveBeenCalledTimes(1);
+    await expect(metrics.getProjection(ACCOUNT, matchOf(SERVED))).resolves.toBeNull();
+    await expect(metrics.listToProject(ACCOUNT, PROJECTION_VERSION)).resolves.toEqual([
+      matchOf(SERVED),
+    ]);
+    await expect(repository.getDetail(ACCOUNT, matchOf(SERVED))).resolves.toMatchObject({
+      status: 'ready',
+      archiveFormat: ARCHIVE_FORMAT,
+    });
+  });
+
+  it.each([
+    {
+      label: 'the API does not have the match any more',
+      handler: (): HttpResponse => jsonResponse({ error: 'not found' }, 404),
+      kind: 'not_found (404)',
+    },
+    {
+      label: 'the answer is the detail of another match',
+      handler: answerWithAnotherMatch(),
+      kind: 'invalid_payload (match_id)',
+    },
+    {
+      label: 'the facts of the answer cannot be read',
+      handler: (): HttpResponse => jsonResponse(metadataWithoutNetWorth(SERVED)),
+      kind: 'invalid_payload (tracked_player.net_worth: invalid_type)',
+    },
+  ])(
+    'marks a refresh that failed for good and never tries it again: $label',
+    async ({ handler, kind }) => {
+      const context = await setUp({ matches: summariesOf([SERVED]), handler });
+      const { service, repository, metrics, archive, http, clock, logger } = context;
+      await plantFormatOneArchive(context, SERVED);
+      await metrics.saveProjection(ACCOUNT, matchOf(SERVED), PROJECTED, new Map([['kda', 2]]));
+
+      await expect(service.runQueue(ACCOUNT, RUN)).resolves.toEqual(NOTHING);
+
+      // The match keeps its format-1 archive, now marked as such for good.
+      expect(archiveFileOf(archive, SERVED)).toEqual(OLD_ARCHIVE);
+      await expect(repository.getDetail(ACCOUNT, matchOf(SERVED))).resolves.toMatchObject({
+        status: 'ready',
+        attempts: 0,
+        lastError: null,
+        archivedBytes: OLD_ARCHIVE.length,
+        archiveFormat: 1,
+      });
+      await expect(metrics.getProjection(ACCOUNT, matchOf(SERVED))).resolves.not.toBeNull();
+      expect(refreshFailures(logger)).toEqual([
+        {
+          level: 'info',
+          scope: 'detail',
+          message: 'Match archive refresh failed',
+          context: { syncRunId: RUN, matchId: matchOf(SERVED), kind },
+        },
+      ]);
+      // A refresh keeps nothing in the quarantine: the match already has a usable archive.
+      expect(quarantinedPaths(archive)).toEqual([]);
+      // It is never asked again, the next run or a day later.
+      await expect(service.runQueue(ACCOUNT, 'run-0002')).resolves.toEqual(NOTHING);
+      clock.now += DAY;
+      await expect(service.runQueue(ACCOUNT, 'run-0003')).resolves.toEqual(NOTHING);
+      expect(http.requests).toHaveLength(1);
+    },
+  );
+
+  it('tries a retryable refresh again at the next run', async () => {
+    const context = await setUp({
+      matches: summariesOf([SERVED]),
+      handler: () => jsonResponse({ error: 'no' }, 500),
+    });
+    const { service, repository, answer, http } = context;
+    await plantFormatOneArchive(context, SERVED);
+    await expect(service.runQueue(ACCOUNT, RUN)).resolves.toEqual(NOTHING);
+
+    // No retry date either: the next run, whenever it comes, tries again.
+    answer.handler = createFixtureApi({ now: START, matchCount: 30 });
+    await expect(service.runQueue(ACCOUNT, 'run-0002')).resolves.toEqual({
+      ...NOTHING,
+      refreshed: 1,
+    });
+
+    expect(http.requests).toHaveLength(2);
+    await expect(repository.getDetail(ACCOUNT, matchOf(SERVED))).resolves.toMatchObject({
+      status: 'ready',
+      archiveFormat: ARCHIVE_FORMAT,
+    });
+  });
+
+  it('stops refreshing on a pause', async () => {
+    const context = await setUp({
+      matches: summariesOf([SERVED, OTHER_SERVED]),
+      handler: () => jsonResponse({ status: 429 }, 429, { 'retry-after': '600' }),
+    });
+    const { service, repository, archive, answer, clock, http, logger } = context;
+    await plantFormatOneArchive(context, SERVED);
+    await plantFormatOneArchive(context, OTHER_SERVED);
+
+    await expect(service.runQueue(ACCOUNT, RUN)).resolves.toEqual({
+      ...NOTHING,
+      stoppedBy: 'paused',
+    });
+
+    // Both matches are left as they were: a pause is no failure of a refresh.
+    for (const row of [SERVED, OTHER_SERVED]) {
+      expect(archiveFileOf(archive, row)).toEqual(OLD_ARCHIVE);
+      await expect(repository.getDetail(ACCOUNT, matchOf(row))).resolves.toMatchObject({
+        status: 'ready',
+        archiveFormat: null,
+      });
+    }
+    // At most the two requests already on their way when the pause came.
+    expect(http.requests.length).toBeGreaterThan(0);
+    expect(http.requests.length).toBeLessThanOrEqual(2);
+    expect(refreshFailures(logger)).toEqual([]);
+    expect(stopLines(logger)[0]).toMatchObject({
+      level: 'info',
+      context: { stoppedBy: 'paused' },
+    });
+    // Once the pause is over, both are refreshed.
+    answer.handler = createFixtureApi({ now: START, matchCount: 30 });
+    clock.now = START + 601_000;
+    await expect(service.runQueue(ACCOUNT, 'run-0002')).resolves.toEqual({
+      ...NOTHING,
+      refreshed: 2,
+    });
+  });
+
+  it('never refreshes a match older than 90 days', async () => {
+    const context = await setUp({ matches: summariesOf([SERVED]) });
+    const { service, repository, archive, clock, http } = context;
+    await plantFormatOneArchive(context, SERVED);
+    // The first instant past the window.
+    clock.now = SERVED.start_time * 1000 + DETAIL_WINDOW_MS + 1;
+
+    await expect(service.runQueue(ACCOUNT, RUN)).resolves.toEqual(NOTHING);
+
+    expect(http.requests).toHaveLength(0);
+    expect(archiveFileOf(archive, SERVED)).toEqual(OLD_ARCHIVE);
+    await expect(repository.getDetail(ACCOUNT, matchOf(SERVED))).resolves.toMatchObject({
+      status: 'ready',
+      archiveFormat: null,
+    });
+    // At the very last instant inside the window, it was still refreshed.
+    clock.now = SERVED.start_time * 1000 + DETAIL_WINDOW_MS;
+    await expect(service.runQueue(ACCOUNT, 'run-0002')).resolves.toEqual({
+      ...NOTHING,
+      refreshed: 1,
+    });
+  });
+});
+
+/**
  * The lines the service wrote at a level.
  *
  * @param logger - The logger the service wrote to.
@@ -1659,13 +2186,13 @@ describe('MatchDetailService.getSummary', () => {
     });
     // 1 is pending, 2 waits for a retry, 3 and 4 are archived, 5 is given up, 6 is unusable.
     await repository.saveState(ACCOUNT, testMatchId(2), retrying(START + MINUTE));
-    await repository.markReady(ACCOUNT, testMatchId(3), 100);
-    await repository.markReady(ACCOUNT, testMatchId(4), 100);
+    await repository.markReady(ACCOUNT, testMatchId(3), 100, ARCHIVE_FORMAT);
+    await repository.markReady(ACCOUNT, testMatchId(4), 100, ARCHIVE_FORMAT);
     await repository.saveState(ACCOUNT, testMatchId(5), UNAVAILABLE);
     await repository.saveState(ACCOUNT, testMatchId(6), INVALID);
-    await repository.markReady(ACCOUNT, testMatchId(7), 100);
-    await repository.markReady(ACCOUNT, testMatchId(8), 100);
-    await repository.markReady(otherAccount, testMatchId(9), 100);
+    await repository.markReady(ACCOUNT, testMatchId(7), 100, ARCHIVE_FORMAT);
+    await repository.markReady(ACCOUNT, testMatchId(8), 100, ARCHIVE_FORMAT);
+    await repository.markReady(otherAccount, testMatchId(9), 100, ARCHIVE_FORMAT);
 
     await expect(service.getSummary()).resolves.toEqual({
       archived: 2,
@@ -1842,7 +2369,7 @@ describe('MatchDetailService.getMatchDetail', () => {
       matches: summariesOf([SERVED]),
     });
     // The database says the detail is archived, but the folder holds no file for it.
-    await repository.markReady(ACCOUNT, matchOf(SERVED), 52_431);
+    await repository.markReady(ACCOUNT, matchOf(SERVED), 52_431, ARCHIVE_FORMAT);
 
     await expect(service.getMatchDetail(matchOf(SERVED))).resolves.toEqual({ kind: 'missing' });
 
@@ -1863,7 +2390,7 @@ describe('MatchDetailService.getMatchDetail', () => {
 
   it('downloads again, then shows, a match whose archive was missing', async () => {
     const { service, repository, http } = await setUp({ matches: summariesOf([SERVED]) });
-    await repository.markReady(ACCOUNT, matchOf(SERVED), 52_431);
+    await repository.markReady(ACCOUNT, matchOf(SERVED), 52_431, ARCHIVE_FORMAT);
     await expect(service.getMatchDetail(matchOf(SERVED))).resolves.toEqual({ kind: 'missing' });
 
     await expect(service.runQueue(ACCOUNT, RUN)).resolves.toEqual({ ...NOTHING, archived: 1 });
@@ -1928,7 +2455,8 @@ describe('MatchDetailService.getMatchDetail', () => {
       ...UNREADABLE_ARCHIVES,
       {
         label: 'a file that is gone',
-        plant: (context) => context.repository.markReady(ACCOUNT, matchOf(SERVED), 52_431),
+        plant: (context) =>
+          context.repository.markReady(ACCOUNT, matchOf(SERVED), 52_431, ARCHIVE_FORMAT),
       },
       {
         label: 'a ready match without an archive size',
@@ -1958,7 +2486,7 @@ describe('MatchDetailService.getMatchDetail', () => {
 
   it('answers missing, not lost, until the match leaves the window', async () => {
     const context = await setUp({ matches: summariesOf([SERVED]) });
-    await context.repository.markReady(ACCOUNT, matchOf(SERVED), 52_431);
+    await context.repository.markReady(ACCOUNT, matchOf(SERVED), 52_431, ARCHIVE_FORMAT);
     // The very last instant at which the match is still inside the window.
     context.clock.now = SERVED.start_time * 1000 + DETAIL_WINDOW_MS;
 
@@ -2061,7 +2589,7 @@ describe('MatchDetailService.getMatchDetail', () => {
 
   it('lets a failure to put the match back to pending reach the caller', async () => {
     const { service, repository } = await setUp({ matches: summariesOf([SERVED]) });
-    await repository.markReady(ACCOUNT, matchOf(SERVED), 52_431);
+    await repository.markReady(ACCOUNT, matchOf(SERVED), 52_431, ARCHIVE_FORMAT);
     vi.spyOn(repository, 'resetToPending').mockRejectedValueOnce(
       new AppError('storage', 'Could not reset the detail state of a match'),
     );
@@ -2248,7 +2776,7 @@ describe('MatchDetailService.resetForRetry', () => {
     });
     // 1 is pending, 2 waits for a retry, 3 is archived, 4 is given up, 5 is unusable.
     await repository.saveState(ACCOUNT, testMatchId(2), retrying(START + MINUTE));
-    await repository.markReady(ACCOUNT, testMatchId(3), 52_431);
+    await repository.markReady(ACCOUNT, testMatchId(3), 52_431, ARCHIVE_FORMAT);
     await repository.saveState(ACCOUNT, testMatchId(4), UNAVAILABLE);
     await repository.saveState(ACCOUNT, testMatchId(5), INVALID);
     const detailOf = async (matchId: number) => repository.getDetail(ACCOUNT, testMatchId(matchId));

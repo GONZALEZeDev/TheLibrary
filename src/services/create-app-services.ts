@@ -30,6 +30,7 @@ import { LinkedAccountRepository } from './linked-account.repository';
 import { MatchBreakdownService } from './match-breakdown.service';
 import { MatchDetailRepository } from './match-detail.repository';
 import { MatchDetailService } from './match-detail.service';
+import { MatchTimelineService } from './match-timeline.service';
 import { MatchesRepository } from './matches.repository';
 import { MatchesService } from './matches.service';
 import { MetricsRepository } from './metrics.repository';
@@ -102,6 +103,19 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
   // The detail state of the matches is written by the detail queue and read by the analysis: the one
   // repository for both.
   const detailRepository = new MatchDetailRepository(database);
+  // The values of the metrics of every match, read by the analysis and erased with the account.
+  const metrics = new MetricsRepository(database);
+  // Turns the archived matches into the values of their metrics, through the very `reader` and
+  // `detailRepository` above. The synchronisation runs it at the end of each run, and the analysis
+  // for a match whose page finds it not analysed yet: one instance for both, since it is the one
+  // that runs their projections one at a time (and the detail queue's forgetting of one, below).
+  const projection = new ProjectionService({
+    reader,
+    metrics,
+    details: detailRepository,
+    logger,
+    now,
+  });
   const details = new MatchDetailService({
     accountSource: linkedAccounts,
     api,
@@ -109,11 +123,13 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     archive: archiveStore,
     compressor,
     reader,
+    // A match whose archive the queue refreshes forgets its projection, for the catch-up to redo it.
+    // Through the projection service, in turn with its projections: one that read the old file
+    // finishes its save first, and the forgetting then deletes it.
+    projections: projection,
     logger,
     now,
   });
-  // The values of the metrics of every match, read by the analysis and erased with the account.
-  const metrics = new MetricsRepository(database);
   // Keeps the rank of the linked account, through the one `api` (and so its rank budget and pause).
   const rank = new PlayerRankService({ api, accounts: linkedAccounts, logger, now });
   // The slow-changing API responses (the hero names and the community data) share one cache table.
@@ -123,17 +139,6 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     api,
     cache: apiCache,
     accountSource: linkedAccounts,
-    logger,
-    now,
-  });
-  // Turns the archived matches into the values of their metrics, through the very `reader` and
-  // `detailRepository` above. The synchronisation runs it at the end of each run, and the analysis
-  // for a match whose page finds it not analysed yet: one instance for both, since it is the one
-  // that runs their projections one at a time.
-  const projection = new ProjectionService({
-    reader,
-    metrics,
-    details: detailRepository,
     logger,
     now,
   });
@@ -193,6 +198,18 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     heroes,
     assets,
     logger,
+  });
+  // Tells the timeline of a match from its archive (through the very `reader` above), its detail
+  // state (whether the queue downloads it again with the positions of every player) and the
+  // catalogues of the very `heroes` and `assets` above.
+  const timeline = new MatchTimelineService({
+    accountSource: linkedAccounts,
+    details: detailRepository,
+    reader,
+    heroes,
+    assets,
+    logger,
+    now,
   });
   // Sums up the last matches against the tier above and the matches before them, from the stored
   // projections, the community data of the very `benchmarks` above and the catalogues. The item
@@ -257,6 +274,7 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     account,
     analysis,
     breakdown,
+    timeline,
     review,
   };
 }

@@ -12,8 +12,9 @@
  *
  * What a projection stores is the metrics of the registry, the damage sources of the match (the
  * damage of each source, of each item owned, the unlock time of each ability) and its review values
- * (the deaths of each phase, the first purchase of each shop item, the places on the scoreboard).
- * The synthetic matches hold a damage matrix, items, death details and a scoreboard, so every
+ * (the deaths of each phase, the first purchase of each shop item, the places on the scoreboard, the
+ * avoidable deaths). The synthetic matches hold a damage matrix, items, death details, the paths of
+ * all twelve players and a scoreboard, so every
  * archived match stores keys of each family: the tests derive how many from the archive itself,
  * they do not hard-code it.
  *
@@ -28,6 +29,7 @@ import {
 import { fixtureTrackedBadge } from '../adapters/dev/fixtures/match-metadata.fixture';
 import { MemoryLogger, type LogEntry } from '../adapters/dev/memory-logger.adapter';
 import * as damageMatrixReader from '../core/analysis/damage-matrix';
+import { avoidableDeathCount, judgeDeaths } from '../core/analysis/avoidable-deaths';
 import { DAMAGE_KEY_PREFIXES, projectDamageSources } from '../core/analysis/damage-sources';
 import { PERSONAL_WINDOW } from '../core/analysis/insights/thresholds';
 import { buildMatchContext } from '../core/analysis/match-context';
@@ -35,6 +37,7 @@ import { accuracyMetric } from '../core/analysis/metrics/accuracy.metric';
 import { kdaMetric } from '../core/analysis/metrics/kda.metric';
 import { projectMetrics, PROJECTION_VERSION } from '../core/analysis/registry';
 import {
+  AVOIDABLE_DEATHS_KEY,
   projectReviewValues,
   REVIEW_KEY_PREFIXES,
   VALVE_RANK_KEY,
@@ -88,6 +91,13 @@ const VERSION_BEFORE_DAMAGE_SOURCES = 1;
  */
 const VERSION_BEFORE_REVIEW_VALUES = 2;
 
+/**
+ * The last version of the projection that stored no avoidable deaths: the projections the release
+ * before them left on the disk, which hold the metrics, the damage sources and the other review
+ * values.
+ */
+const VERSION_BEFORE_AVOIDABLE_DEATHS = 3;
+
 /** The `issue` of a damage matrix whose grid of samples goes back, whatever the code of the check. */
 const BROKEN_MATRIX_ISSUE = /^damage_matrix\.sample_time_s: \w+$/;
 
@@ -130,6 +140,7 @@ const HISTORY = createMatchHistoryFixture({ now: START, count: LONG_MATCH_COUNT 
 /** The part of a player of an archive that the tests edit. */
 interface EditablePlayer {
   account_id: number;
+  player_slot: number;
   net_worth?: number;
   deaths: number;
   abandon_match_time_s?: number;
@@ -144,11 +155,17 @@ interface EditableDamageMatrix {
   sample_time_s: number[];
 }
 
+/** The part of the movement paths of an archive that the tests edit. */
+interface EditableMatchPaths {
+  paths: { player_slot: number }[];
+}
+
 /** The part of the `match_info` of an archive that the tests edit. */
 interface EditableMatchInfo {
   winning_team?: number;
   players: EditablePlayer[];
   damage_matrix?: EditableDamageMatrix;
+  match_paths?: EditableMatchPaths;
 }
 
 /** The part of an archive file that the tests edit. */
@@ -281,8 +298,10 @@ async function damageValuesOf(
  * metrics.
  *
  * @param context - What {@link setUp} built.
- * @param matchId - The match; its death details, items and scoreboard must be readable, or absent.
- * @returns The values by key; the deaths are left out when the death details are incomplete.
+ * @param matchId - The match; its death details, items, paths and scoreboard must be readable, or
+ *   absent.
+ * @returns The values by key; the deaths are left out when the death details are incomplete, and the
+ *   avoidable deaths when they are, or when the positions of the players are not all known.
  */
 async function reviewValuesOf(
   context: TestContext,
@@ -294,18 +313,23 @@ async function reviewValuesOf(
     deathTimesS: trackedDeathsReader.readTrackedDeathTimes(envelope),
     items: trackedItemsReader.readTrackedItems(envelope),
     scoreboard: scoreboardReader.readScoreboard(envelope),
+    avoidableDeaths: avoidableDeathCount(judgeDeaths(envelope)),
   });
 }
 
 /**
  * Whether a key is one of the review values: it starts with the prefix of a family, or is the key
- * of Valve's top three.
+ * of Valve's top three or the one of the avoidable deaths.
  *
  * @param key - A stored key.
  * @returns `true` for a review key.
  */
 function isReviewKey(key: string): boolean {
-  return key === VALVE_RANK_KEY || REVIEW_KEY_PREFIXES.some((prefix) => key.startsWith(prefix));
+  return (
+    key === VALVE_RANK_KEY ||
+    key === AVOIDABLE_DEATHS_KEY ||
+    REVIEW_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))
+  );
 }
 
 /**
@@ -468,6 +492,21 @@ async function breakDamageMatrix(context: TestContext, matchId: MatchId): Promis
 async function breakScoreboard(context: TestContext, matchId: MatchId): Promise<void> {
   await editArchive(context, matchId, ({ matchInfo }) => {
     delete matchInfo.winning_team;
+  });
+}
+
+/**
+ * Make the positions of the other players unknown: the archive keeps the path of the tracked player
+ * alone, as an archive of the first format does. The rest of the archive stays valid.
+ *
+ * @param context - What {@link setUp} built.
+ * @param matchId - The match.
+ */
+async function keepOnlyTrackedPath(context: TestContext, matchId: MatchId): Promise<void> {
+  await editArchive(context, matchId, ({ tracked, matchInfo }) => {
+    const matchPaths = matchInfo.match_paths ?? expect.unreachable('the match has paths');
+    matchPaths.paths = matchPaths.paths.filter((path) => path.player_slot === tracked.player_slot);
+    expect(matchPaths.paths, 'the path of the tracked player is kept').toHaveLength(1);
   });
 }
 
@@ -695,6 +734,20 @@ describe('ProjectionService.catchUp', () => {
           ...(await damageValuesOf(context, matchId)),
         ]),
     },
+    {
+      bump: 'the version 4 bump, which added the avoidable deaths',
+      // The state the release before it left: everything but the avoidable deaths.
+      version: VERSION_BEFORE_AVOIDABLE_DEATHS,
+      stored: async (
+        context: TestContext,
+        matchId: MatchId,
+      ): Promise<ReadonlyMap<string, number | null>> =>
+        new Map(
+          [...(await projectedValuesOf(context, matchId))].filter(
+            ([key]) => key !== AVOIDABLE_DEATHS_KEY,
+          ),
+        ),
+    },
   ])('projects every archived match again after $bump', async ({ version, stored }) => {
     const context = await setUp();
     const { service, metrics, logger, archived } = context;
@@ -732,6 +785,7 @@ describe('ProjectionService.catchUp', () => {
       const values = await metrics.getValues(ACCOUNT, matchId);
       expect(values.size).toBeGreaterThan((await stored(context, matchId)).size);
       expect((await reviewValuesOf(context, matchId)).size, String(matchId)).toBeGreaterThan(0);
+      expect(values.has(AVOIDABLE_DEATHS_KEY), String(matchId)).toBe(true);
       expect(values).toEqual(await projectedValuesOf(context, matchId));
     }
     // The archives were on the disk already: the bump costs no download, only one line of the run.
@@ -815,9 +869,129 @@ describe('ProjectionService.catchUp', () => {
       ).toBe(true);
     }
     expect(reviewKeys).toContain(VALVE_RANK_KEY);
+    expect(reviewKeys).toContain(AVOIDABLE_DEATHS_KEY);
     // Values that are read are no news: nothing is logged about them.
     expect(linesOf(logger, 'Review values not read')).toEqual([]);
     expect(linesOf(logger, 'Metric not computed')).toEqual([]);
+  });
+
+  it('writes the avoidable deaths of a match with positions', async () => {
+    const context = await setUp();
+    const { service, metrics, logger, archived } = context;
+
+    await service.catchUp(ACCOUNT, RUN);
+
+    const counts: number[] = [];
+    for (const matchId of archived) {
+      const judged = judgeDeaths(await envelopeOf(context, matchId));
+      // The synthetic matches archive the paths of all twelve players: the positions are known.
+      expect(judged.positionsKnown, String(matchId)).toBe(true);
+      const expected = avoidableDeathCount(judged);
+      expect(expected, String(matchId)).not.toBeNull();
+      const stored = (await metrics.getValues(ACCOUNT, matchId)).get(AVOIDABLE_DEATHS_KEY);
+      expect(stored, String(matchId)).toBe(expected);
+      counts.push(stored ?? expect.unreachable());
+    }
+    // Some match holds an avoidable death and some does not: the key tells them apart.
+    expect(counts.some((count) => count > 0)).toBe(true);
+    expect(counts.some((count) => count === 0)).toBe(true);
+    // The positions are read: nothing is told about them.
+    expect(linesOf(logger, 'Review values not read')).toEqual([]);
+  });
+
+  it('writes no avoidable key without the positions', async () => {
+    const context = await setUp();
+    const { service, metrics, logger, archived } = context;
+    const bare = archived[1] ?? expect.unreachable('the history holds several archived matches');
+    expect(
+      avoidableDeathCount(judgeDeaths(await envelopeOf(context, bare))),
+      'the positions are known before the edit',
+    ).not.toBeNull();
+    // Only the path of the tracked player is left: a player who is not on the map may have been near.
+    await keepOnlyTrackedPath(context, bare);
+
+    const report = await service.catchUp(ACCOUNT, RUN);
+
+    // The match is projected like any other, with every value but the avoidable deaths: unknown, and
+    // never 0.
+    expect(report).toEqual({ ...NOTHING, projected: archived.length });
+    const values = await metrics.getValues(ACCOUNT, bare);
+    expect(values.has(AVOIDABLE_DEATHS_KEY)).toBe(false);
+    expect(values).toEqual(await projectedValuesOf(context, bare));
+    expect([...(await reviewValuesOf(context, bare)).keys()].length).toBeGreaterThan(0);
+    // The positions of a first-format archive are not a problem: nothing is logged about it.
+    expect(linesOf(logger, 'Review values not read')).toEqual([]);
+    expect(linesOf(logger, 'Match not projected')).toEqual([]);
+  });
+
+  it('writes no avoidable key when the death details are incomplete', async () => {
+    const context = await setUp();
+    const { service, metrics, archived } = context;
+    const incomplete =
+      archived[1] ?? expect.unreachable('the history holds several archived matches');
+    expect(
+      (await reviewValuesOf(context, incomplete)).has(AVOIDABLE_DEATHS_KEY),
+      'the key is written before the edit',
+    ).toBe(true);
+    // The tracked player died, and the archive no longer details their deaths.
+    await editArchive(context, incomplete, ({ tracked }) => {
+      expect(tracked.deaths, 'the tracked player died in this match').toBeGreaterThan(0);
+      delete tracked.death_details;
+    });
+
+    await service.catchUp(ACCOUNT, RUN);
+
+    // The positions are known, but which deaths there were is not: not fewer, so not counted.
+    const values = await metrics.getValues(ACCOUNT, incomplete);
+    expect(values.has(AVOIDABLE_DEATHS_KEY)).toBe(false);
+    expect(values).toEqual(await projectedValuesOf(context, incomplete));
+  });
+
+  it('writes zero for a match without death when the positions are known', async () => {
+    const context = await setUp();
+    const { service, metrics, archived } = context;
+    const deathless =
+      archived[1] ?? expect.unreachable('the history holds several archived matches');
+    // The tracked player never died.
+    await editArchive(context, deathless, ({ tracked }) => {
+      tracked.deaths = 0;
+      tracked.death_details = [];
+    });
+
+    const report = await service.catchUp(ACCOUNT, RUN);
+
+    // Nothing to avoid is a count of nothing, which is known: 0, not an absent key.
+    expect(report).toEqual({ ...NOTHING, projected: archived.length });
+    const values = await metrics.getValues(ACCOUNT, deathless);
+    expect(values.get(AVOIDABLE_DEATHS_KEY)).toBe(0);
+    expect(values).toEqual(await projectedValuesOf(context, deathless));
+  });
+
+  it('projects again a match whose projection was forgotten', async () => {
+    const context = await setUp();
+    const { service, metrics, archived } = context;
+    const forgotten =
+      archived[1] ?? expect.unreachable('the history holds several archived matches');
+    await service.catchUp(ACCOUNT, RUN);
+    expect((await metrics.getValues(ACCOUNT, forgotten)).has(AVOIDABLE_DEATHS_KEY)).toBe(true);
+    // The detail queue replaced the archive of the match with one that lacks the positions, and
+    // asked to forget the projection made from the old one.
+    await keepOnlyTrackedPath(context, forgotten);
+    await service.forgetProjection(ACCOUNT, forgotten);
+    await expect(metrics.getProjection(ACCOUNT, forgotten)).resolves.toBeNull();
+    await expect(metrics.listToProject(ACCOUNT, PROJECTION_VERSION)).resolves.toEqual([forgotten]);
+
+    const report = await service.catchUp(ACCOUNT, 'run-0002');
+
+    // Only that match is projected again, from the archive as it is now.
+    expect(report).toEqual({ ...NOTHING, projected: 1 });
+    await expect(metrics.getProjection(ACCOUNT, forgotten)).resolves.toMatchObject({
+      version: PROJECTION_VERSION,
+      failed: false,
+    });
+    const values = await metrics.getValues(ACCOUNT, forgotten);
+    expect(values.has(AVOIDABLE_DEATHS_KEY)).toBe(false);
+    expect(values).toEqual(await projectedValuesOf(context, forgotten));
   });
 
   it('projects a match without a damage matrix', async () => {
@@ -1008,9 +1182,12 @@ describe('ProjectionService.catchUp', () => {
     const lost = [...before.keys()].filter((key) => !values.has(key));
     expect(lost.length).toBeGreaterThan(0);
     for (const key of lost) {
-      expect(key.startsWith('phase_deaths.') || key.startsWith('deaths_before_item.'), key).toBe(
-        true,
-      );
+      expect(
+        key.startsWith('phase_deaths.') ||
+          key.startsWith('deaths_before_item.') ||
+          key === AVOIDABLE_DEATHS_KEY,
+        key,
+      ).toBe(true);
     }
     // …and the items and the places still are, as the archive gives them.
     for (const prefix of ['item_bought_at.', 'scoreboard_place.', 'scoreboard_place_of.']) {
@@ -2338,5 +2515,49 @@ describe('ProjectionService, one projection at a time', () => {
     // The catch-up ran all the same, on what the run that rejected left, and so does the next one.
     await expect(next).resolves.toEqual({ ...NOTHING, projected: archived.length - 1 });
     await expect(service.catchUp(ACCOUNT, 'run-0002')).resolves.toEqual(NOTHING);
+  });
+
+  it('forgets a projection only once the projection that is running has saved its own', async () => {
+    const context = await setUp();
+    const { service, metrics, archived } = context;
+    const oldest = archived.at(-1) ?? expect.unreachable('the history holds archived matches');
+    const gate = createGate();
+    const events = recordRuns(context, gate.opened);
+    const forget = metrics.forgetProjection.bind(metrics);
+    vi.spyOn(metrics, 'forgetProjection').mockImplementation(async (...args) => {
+      events.push('forget');
+      await forget(...args);
+    });
+
+    // The projection of the match is held as it starts, as if it had read the old archive; the
+    // detail queue asks to forget it meanwhile, because it has just written a new one.
+    const projecting = service.projectMatch(ACCOUNT, oldest);
+    const forgetting = service.forgetProjection(ACCOUNT, oldest);
+    await settle();
+
+    expect(events).toEqual(['match']);
+    gate.open();
+    await expect(projecting).resolves.toEqual({ ...NOTHING, projected: 1 });
+    await forgetting;
+
+    // The projection made from the old archive was saved, then forgotten: the match is to project.
+    expect(events).toEqual(['match', 'save', 'done', 'forget']);
+    await expect(metrics.getProjection(ACCOUNT, oldest)).resolves.toBeNull();
+    await expect(metrics.listToProject(ACCOUNT, PROJECTION_VERSION)).resolves.toContain(oldest);
+  });
+
+  it('lets the next projection run after a forgetting that failed, and tells the caller', async () => {
+    const { service, metrics, archived } = await setUp();
+    const oldest = archived.at(-1) ?? expect.unreachable('the history holds archived matches');
+    vi.spyOn(metrics, 'forgetProjection').mockRejectedValueOnce(
+      new AppError('storage', 'Could not forget the projection of a match'),
+    );
+
+    // Asked together: the catch-up waits for the forgetting, which rejects.
+    const forgetting = service.forgetProjection(ACCOUNT, oldest);
+    const next = service.catchUp(ACCOUNT, RUN);
+
+    await expect(forgetting).rejects.toMatchObject({ kind: 'storage' });
+    await expect(next).resolves.toEqual({ ...NOTHING, projected: archived.length });
   });
 });

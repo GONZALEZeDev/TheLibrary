@@ -14,6 +14,19 @@
  * before it fails, the database still says the match is to do, and a file already written is simply
  * written again by the next attempt.
  *
+ * Once no match is due, the same two pullers refresh the archives of the first format, which kept
+ * only the tracked player's path: the `ready` matches of the last 90 days whose format was never
+ * recorded (`MatchDetailRepository.nextStale`), most recent first, each tried once per run. A
+ * refresh goes through the very steps of a download and writes the new archive over the old one;
+ * then the projection of the match is forgotten, so that the analysis makes it again from the new
+ * file, and only then is the match recorded with the current format, so that a failure in between
+ * leaves it to refresh again. A refresh never loses a match: the match stays `ready` throughout, and the old file stays
+ * until the new one replaces it. A failed refresh counts no attempt and changes nothing but, when
+ * the failure is final (deadlock-api no longer has the match, or its answer cannot be used), the
+ * recorded format, so that the match keeps its old archive and is never tried again. Any other
+ * failure about the match is tried again at the next run, and one that says nothing about it (a
+ * pause, the network, a local failure) stops the run, as for a download.
+ *
  * What an attempt can end in, and what it costs (the rules are in `./match-detail-verdicts`):
  * - the API answers with an HTTP status that says it has no detail (404), failed, refused, or was
  *   not understood, or it answers with no body: a counted failure, retried later (`retry`, then
@@ -57,6 +70,7 @@ import type { AccountId } from '../core/domain/account';
 import type { MatchId } from '../core/domain/match';
 import { AppError, errorLogContext, isAppError, toAppError } from '../core/errors/app-error';
 import {
+  ARCHIVE_FORMAT,
   createArchiveEnvelope,
   encodeArchiveEnvelope,
 } from '../core/match-detail/archive-envelope';
@@ -107,12 +121,30 @@ export interface MatchDetailServiceDependencies {
   readonly compressor: Compressor;
   /** Reads the archives back, for the match page. */
   readonly reader: ArchiveReaderService;
+  /** Where the analysis keeps its projections: a refreshed match must be projected again. */
+  readonly projections: ProjectionForgetter;
   /** Structured logger. */
   readonly logger: Logger;
   /** Current time (Unix ms); `Date.now` by default. */
   readonly now?: () => number;
   /** Random source of the retry delays, in [0, 1); `Math.random` by default. */
   readonly random?: () => number;
+}
+
+/**
+ * The one thing the queue asks of the storage of the analysis: forget the projection of a match
+ * whose archive it replaced, so that the next catch-up projects it again from the new file
+ * (`MetricsRepository` is the one of the app).
+ */
+export interface ProjectionForgetter {
+  /**
+   * Forget the projection of a match, so that it is listed as one to project.
+   *
+   * @param accountId - The player.
+   * @param matchId - The match.
+   * @throws AppError of kind `storage` when the database fails.
+   */
+  forgetProjection(accountId: AccountId, matchId: MatchId): Promise<void>;
 }
 
 /** How a run of the queue went. */
@@ -125,6 +157,8 @@ export interface DetailRunReport {
   readonly unavailable: number;
   /** Matches whose answer cannot be used (final). */
   readonly invalid: number;
+  /** Matches archived again in the current format, over their format-1 archive. */
+  readonly refreshed: number;
   /** Why the run ended early, or `null` when it went through every due match. */
   readonly stoppedBy: DetailRunStop | null;
 }
@@ -183,12 +217,20 @@ const LOG_SCOPE = 'detail';
  */
 const PULLER_COUNT = METADATA_MAX_CONCURRENCY;
 
+/**
+ * The code of the failure of a download that deadlock-api answered with a 404: it does not have the
+ * match. A download tries it again later; for a refresh, it is final: the API served the match
+ * once, so a 404 now says it no longer does.
+ */
+const NOT_FOUND_ERROR = 'not_found (404)';
+
 /** What a run counts as it goes. Read by the pullers, which share one object, and by the report. */
 interface RunState {
   archived: number;
   retried: number;
   unavailable: number;
   invalid: number;
+  refreshed: number;
   /** Responses kept in the quarantine folder during this run (only the log line counts them). */
   quarantined: number;
   /** The first reason the run was stopped for; once set, no puller starts a new match. */
@@ -206,6 +248,7 @@ export class MatchDetailService {
   readonly #archive: ArchiveStore;
   readonly #compressor: Compressor;
   readonly #reader: ArchiveReaderService;
+  readonly #projections: ProjectionForgetter;
   readonly #logger: Logger;
   readonly #now: () => number;
   readonly #random: () => number;
@@ -227,6 +270,7 @@ export class MatchDetailService {
     this.#archive = dependencies.archive;
     this.#compressor = dependencies.compressor;
     this.#reader = dependencies.reader;
+    this.#projections = dependencies.projections;
     this.#logger = dependencies.logger;
     this.#now = dependencies.now ?? Date.now;
     this.#random = dependencies.random ?? Math.random;
@@ -234,7 +278,8 @@ export class MatchDetailService {
 
   /**
    * Process every due match of the account: download its detail, archive it, and record the
-   * outcome. Matches are taken most recent first, two at a time.
+   * outcome. Matches are taken most recent first, two at a time. Once none is due, the format-1
+   * archives of the last 90 days are refreshed the same way (see the module documentation).
    *
    * @param accountId - The tracked account.
    * @param syncRunId - Id of the synchronisation that runs the queue, to tie the log lines to it.
@@ -247,6 +292,7 @@ export class MatchDetailService {
       retried: 0,
       unavailable: 0,
       invalid: 0,
+      refreshed: 0,
       quarantined: 0,
       stoppedBy: null,
     };
@@ -264,11 +310,25 @@ export class MatchDetailService {
     await Promise.all(
       Array.from({ length: PULLER_COUNT }, () => this.#pull(accountId, syncRunId, run, taken)),
     );
+    // The refresh of the format-1 archives comes once both pullers are done with the due matches,
+    // so that it never delays a match that has no archive at all, and only when nothing stopped
+    // the run: what stopped it (a pause, the network, the disk) would stop the refresh as well.
+    if (run.stoppedBy === null) {
+      // A set of its own: a match that was downloaded in this run is now of the current format, so
+      // it is not offered again; this one makes each match to refresh tried once per run.
+      const refreshTaken = new Set<MatchId>();
+      await Promise.all(
+        Array.from({ length: PULLER_COUNT }, () =>
+          this.#pullStale(accountId, syncRunId, run, refreshTaken),
+        ),
+      );
+    }
     const report: DetailRunReport = {
       archived: run.archived,
       retried: run.retried,
       unavailable: run.unavailable,
       invalid: run.invalid,
+      refreshed: run.refreshed,
       stoppedBy: run.stoppedBy,
     };
     // Kept for the banner: a run that stops on its first match records nothing, so the counts do
@@ -280,6 +340,7 @@ export class MatchDetailService {
       retried: run.retried,
       unavailable: run.unavailable,
       invalid: run.invalid,
+      refreshed: run.refreshed,
       quarantined: run.quarantined,
       stoppedBy: run.stoppedBy,
     });
@@ -483,6 +544,139 @@ export class MatchDetailService {
   }
 
   /**
+   * One puller of the refresh: take the matches whose archive is of the first format one after the
+   * other and refresh them, until none is left or the run is stopped. It works like
+   * {@link MatchDetailService.#pull}, on the matches `MatchDetailRepository.nextStale` offers, and
+   * never rejects either: whatever goes wrong stops the run.
+   *
+   * @param accountId - The tracked account.
+   * @param syncRunId - Id of the run in the logs.
+   * @param run - What the run counts, shared with the other puller.
+   * @param taken - The matches taken by the refresh in this run, shared with the other puller.
+   */
+  async #pullStale(
+    accountId: AccountId,
+    syncRunId: string,
+    run: RunState,
+    taken: Set<MatchId>,
+  ): Promise<void> {
+    for (;;) {
+      let stale: DueMatch | null;
+      try {
+        stale = await this.#claimStale(accountId, taken);
+      } catch (error) {
+        this.#stop(run, stopOf(error), error, accountId, syncRunId);
+        return;
+      }
+      if (stale === null) {
+        return;
+      }
+      // As for a download: the other puller may have stopped the run while the database was
+      // answering, and the match is given back untouched.
+      if (run.stoppedBy !== null) {
+        taken.delete(stale.matchId);
+        return;
+      }
+      try {
+        await this.#refresh(accountId, stale.matchId, run, syncRunId);
+      } catch (error) {
+        this.#stop(run, stopOf(error), error, accountId, syncRunId, stale.matchId);
+        return;
+      }
+    }
+  }
+
+  /**
+   * Take the next match to refresh for the calling puller, so that the other one cannot take it.
+   * The claim is made the way {@link MatchDetailService.#claimNext} makes it, and for the same
+   * reason: both pullers can be offered the same match.
+   *
+   * @param accountId - The tracked account.
+   * @param taken - The matches taken by the refresh in this run; the claimed match is added to it.
+   * @returns The claimed match, or `null` when none is left to refresh.
+   * @throws AppError of kind `storage` when the database fails.
+   */
+  async #claimStale(accountId: AccountId, taken: Set<MatchId>): Promise<DueMatch | null> {
+    for (;;) {
+      const stale = await this.#repository.nextStale(accountId, this.#now(), taken);
+      if (stale === null) {
+        return null;
+      }
+      if (!taken.has(stale.matchId)) {
+        taken.add(stale.matchId);
+        return stale;
+      }
+    }
+  }
+
+  /**
+   * Refresh one match: download its detail again, archive it in the current format over its
+   * format-1 archive, and forget its projection; or, when that fails, leave the match as it was.
+   *
+   * The download and the archive are the very steps of a download ({@link MatchDetailService.#attempt}),
+   * with one more between the write and the record: the new file replaces the old one whole, or not
+   * at all, then the projection of the match is forgotten, and only then is the match recorded with
+   * the current format. The match is `ready` before, during and after, with a file the page and the
+   * analysis can read. Until the record, the database still holds no format: whatever fails after the
+   * write (the forgetting, or the record itself), the next run refreshes the match again, and its
+   * projection is forgotten or made again from the new file in the meantime, never left as the one
+   * of the old file.
+   *
+   * A failure about the match is judged as a download judges it, but costs nothing: no attempt is
+   * counted, no state is saved, and no body is quarantined (the match already has an archive). It
+   * is logged on one line, and only a final one is recorded: deadlock-api no longer has the match
+   * (a 404), or its answer cannot be used (`invalid`). Then the match keeps its format-1 archive for
+   * good. Any other is tried again at the next run, and an answer that is not JSON also stops this
+   * one, as it does for a download.
+   *
+   * @param accountId - The tracked account.
+   * @param matchId - The match, `ready` with a format-1 archive.
+   * @param run - What the run counts.
+   * @param syncRunId - Id of the run in the logs.
+   * @throws The error that stops the run (a pause, the network, or a local failure): the match is
+   *   still recorded with no format, with its old file, or with the new one when the failure came
+   *   after the write; so the next run refreshes it again.
+   */
+  async #refresh(
+    accountId: AccountId,
+    matchId: MatchId,
+    run: RunState,
+    syncRunId: string,
+  ): Promise<void> {
+    // Forgotten after the write, never before: a projection forgotten while the old file is still
+    // there could be made again from it, and then never again. And before the record: if the
+    // forgetting fails, the match is still to refresh.
+    const attempt = await this.#attempt(accountId, matchId, () =>
+      this.#projections.forgetProjection(accountId, matchId),
+    );
+    if (attempt.outcome === 'archived') {
+      run.refreshed += 1;
+      this.#logger.log('debug', LOG_SCOPE, 'Match archive refreshed', {
+        syncRunId,
+        matchId,
+        archivedBytes: attempt.archivedBytes,
+      });
+      this.#notify();
+      return;
+    }
+    if (attempt.stopRun !== undefined) {
+      // Before anything slow, as for a download: the other puller must not start a match meanwhile.
+      this.#stop(run, stopOf(attempt.stopRun), attempt.stopRun, accountId, syncRunId, matchId);
+    }
+    // The code of the failure, as a download records it: an error kind and a status or a field
+    // path, never a value of the payload.
+    this.#logger.log('info', LOG_SCOPE, 'Match archive refresh failed', {
+      syncRunId,
+      matchId,
+      kind: attempt.lastError,
+    });
+    if (attempt.failure === 'invalid' || attempt.lastError === NOT_FOUND_ERROR) {
+      await this.#repository.markRefreshFinal(accountId, matchId);
+      this.#notify();
+    }
+  }
+
+  /**
    * Attempt one match and record the outcome.
    *
    * @param accountId - The tracked account.
@@ -559,10 +753,16 @@ export class MatchDetailService {
    *
    * @param accountId - The tracked account.
    * @param matchId - The match.
+   * @param beforeRecord - Work to do once the archive is written and before it is recorded; none
+   *   for a download (see {@link MatchDetailService.#archiveDetail}).
    * @returns The archive that was written and recorded, or the failure to record.
    * @throws The error that stops the run (a pause, the network, or a local failure).
    */
-  async #attempt(accountId: AccountId, matchId: MatchId): Promise<Attempt> {
+  async #attempt(
+    accountId: AccountId,
+    matchId: MatchId,
+    beforeRecord?: () => Promise<void>,
+  ): Promise<Attempt> {
     let fetched: MetadataFetch;
     try {
       fetched = await this.#api.fetchMatchMetadata(matchId);
@@ -576,7 +776,7 @@ export class MatchDetailService {
           context: { pausedUntil: fetched.until },
         });
       case 'not_found':
-        return retryable('not_found (404)');
+        return retryable(NOT_FOUND_ERROR);
       case 'invalid':
         // An answer with no body at all (a 204, say) is a hiccup of the API: it comes back. One
         // with a body that cannot be used is not what the API sends (a proxy, a security product).
@@ -584,7 +784,7 @@ export class MatchDetailService {
           ? retryable('empty_body')
           : unreadableAnswer(fetched.issue, fetched.body);
       case 'fetched':
-        return this.#archiveDetail(accountId, matchId, fetched.json, fetched.body);
+        return this.#archiveDetail(accountId, matchId, fetched.json, fetched.body, beforeRecord);
     }
   }
 
@@ -598,14 +798,19 @@ export class MatchDetailService {
    * @param matchId - The match that was requested.
    * @param json - The parsed payload, not validated yet.
    * @param body - The text the payload was parsed from, kept for the quarantine.
+   * @param beforeRecord - Work to do once the archive is written and before it is recorded: the
+   *   refresh forgets the projection of the match there. A failure of it stops the run with the
+   *   match not recorded, like a failure of the write.
    * @returns The archive that was written, or the invalid verdict.
-   * @throws The error that stops the run: the compressor, the archive or the database failed.
+   * @throws The error that stops the run: the compressor, the archive, `beforeRecord` or the
+   *   database failed.
    */
   async #archiveDetail(
     accountId: AccountId,
     matchId: MatchId,
     json: unknown,
     body: string,
+    beforeRecord?: () => Promise<void>,
   ): Promise<Attempt> {
     let encoded: Uint8Array;
     try {
@@ -634,7 +839,8 @@ export class MatchDetailService {
     }
     const compressed = await this.#compressor.compress(encoded);
     await this.#archive.write(accountId, matchId, compressed);
-    await this.#repository.markReady(accountId, matchId, compressed.length);
+    await beforeRecord?.();
+    await this.#repository.markReady(accountId, matchId, compressed.length, ARCHIVE_FORMAT);
     return { outcome: 'archived', archivedBytes: compressed.length };
   }
 

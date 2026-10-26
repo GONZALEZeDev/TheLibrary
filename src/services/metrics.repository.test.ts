@@ -580,6 +580,67 @@ describe('MetricsRepository', () => {
     });
   });
 
+  describe('forgetProjection', () => {
+    it('forgets a projection so the match is projected again', async () => {
+      const database = createTestDatabase();
+      await seedMatches(database, [
+        { n: 0, startTime: 1_000 },
+        { n: 1, startTime: 2_000 },
+        { n: 0, accountId: OTHER_ACCOUNT_ID, startTime: 1_000 },
+      ]);
+      const repository = new MetricsRepository(database);
+      for (const [accountId, n] of [
+        [ACCOUNT_ID, 0],
+        [ACCOUNT_ID, 1],
+        [OTHER_ACCOUNT_ID, 0],
+      ] as const) {
+        await repository.saveProjection(
+          accountId,
+          matchId(n),
+          projection(),
+          metricValues({ kda: 2 }),
+        );
+      }
+      await expect(repository.listToProject(ACCOUNT_ID, VERSION)).resolves.toEqual([]);
+
+      await repository.forgetProjection(ACCOUNT_ID, matchId(0));
+
+      // The match has no projection any more, so the next catch-up projects it again.
+      await expect(repository.getProjection(ACCOUNT_ID, matchId(0))).resolves.toBeNull();
+      await expect(repository.listToProject(ACCOUNT_ID, VERSION)).resolves.toEqual([matchId(0)]);
+      // Only its projection row is gone: its values stay until the next save replaces them.
+      await expect(repository.getValues(ACCOUNT_ID, matchId(0))).resolves.toEqual(
+        metricValues({ kda: 2 }),
+      );
+      // The other match of the account, and the same match of another account, keep theirs.
+      await expect(repository.getProjection(ACCOUNT_ID, matchId(1))).resolves.not.toBeNull();
+      await expect(repository.getProjection(OTHER_ACCOUNT_ID, matchId(0))).resolves.not.toBeNull();
+
+      await repository.saveProjection(
+        ACCOUNT_ID,
+        matchId(0),
+        projection(),
+        metricValues({ avoidable_deaths: 1 }),
+      );
+
+      // The next save replaces the values whole, and the match is done again.
+      await expect(repository.getValues(ACCOUNT_ID, matchId(0))).resolves.toEqual(
+        metricValues({ avoidable_deaths: 1 }),
+      );
+      await expect(repository.listToProject(ACCOUNT_ID, VERSION)).resolves.toEqual([]);
+    });
+
+    it('does nothing for a match that has no projection', async () => {
+      const database = createTestDatabase();
+      await seedMatches(database, [{ n: 0, startTime: 1_000 }]);
+      const repository = new MetricsRepository(database);
+
+      await repository.forgetProjection(ACCOUNT_ID, matchId(0));
+
+      await expect(repository.listToProject(ACCOUNT_ID, VERSION)).resolves.toEqual([matchId(0)]);
+    });
+  });
+
   describe('listToProjectUpTo', () => {
     /**
      * Seed the matches and the projections the tests of the projection on demand read; the match to
@@ -1421,6 +1482,7 @@ describe('MetricsRepository', () => {
       const calls: readonly (() => Promise<unknown>)[] = [
         () =>
           repository.saveProjection(ACCOUNT_ID, matchId(0), projection(), metricValues({ a: 1 })),
+        () => repository.forgetProjection(ACCOUNT_ID, matchId(0)),
         () => repository.listToProject(ACCOUNT_ID, VERSION),
         () => repository.listToProjectUpTo(ACCOUNT_ID, matchId(0), VERSION, 5),
         () => repository.getProjection(ACCOUNT_ID, matchId(0)),

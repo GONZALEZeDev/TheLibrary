@@ -20,7 +20,9 @@
  * to end, then runs. Side by side, two projections would list the same matches and project them
  * twice, and two saves of one match at once can leave a projection row standing over metrics that
  * were deleted. A call that waited finds done what the earlier one projected, and projects what is
- * left. However a projection ends, the next one runs.
+ * left. However a projection ends, the next one runs. The forgetting of a projection
+ * ({@link ProjectionService.forgetProjection}, for an archive the detail queue replaced) takes its
+ * turn the same way, so that it never runs in the middle of a projection of the old file.
  *
  * What a match can end in, and what it costs:
  * - the archive is projected: its values are stored, with the badge of the player, whether somebody
@@ -67,6 +69,7 @@
  *
  * @packageDocumentation
  */
+import { avoidableDeathCount, judgeDeaths } from '../core/analysis/avoidable-deaths';
 import { readDamageMatrix, type DamageMatrixRead } from '../core/analysis/damage-matrix';
 import { projectDamageSources } from '../core/analysis/damage-sources';
 import { PERSONAL_WINDOW } from '../core/analysis/insights/thresholds';
@@ -274,15 +277,37 @@ export class ProjectionService {
   }
 
   /**
-   * Run a projection once the ones asked for before it have ended, and make the next one wait for it
-   * in turn. The turn passes on however the projection ends: a projection never rejects, but one
-   * that does all the same (a logger that throws, against the contract of its port) must neither
-   * keep the next ones waiting nor make them fail.
+   * Forget the projection of a match whose archive was just replaced by one that holds more, so that
+   * the next projection that lists it makes it again from the new file: what the detail queue calls
+   * when it refreshes an archive, once the new file is written and before it records it.
    *
-   * @param projection - The work of the projection; it is called once the earlier ones have ended.
-   * @returns What the projection resolves to, or rejects with.
+   * It takes its turn like a projection, and that is the point: a projection that runs meanwhile may
+   * have read the old file already. Deleted while it runs, the projection row would be written back
+   * by its save, made from the old file and of the current version, so never made again. In turn,
+   * that projection ends first and the forgetting then deletes what it saved, while a projection
+   * that starts after it reads the new file.
+   *
+   * @param accountId - The tracked account.
+   * @param matchId - The match.
+   * @returns A promise resolved once the projection is forgotten.
+   * @throws AppError of kind `storage` when the database fails: unlike a projection, the caller has
+   *   to know, since the match keeps a projection made from the old file.
    */
-  #inTurn(projection: () => Promise<ProjectionReport>): Promise<ProjectionReport> {
+  forgetProjection(accountId: AccountId, matchId: MatchId): Promise<void> {
+    return this.#inTurn(() => this.#metrics.forgetProjection(accountId, matchId));
+  }
+
+  /**
+   * Run a projection (or the forgetting of one) once the ones asked for before it have ended, and
+   * make the next one wait for it in turn. The turn passes on however the work ends: a projection
+   * never rejects, but one that does all the same (a logger that throws, against the contract of its
+   * port) must neither keep the next ones waiting nor make them fail; nor must a forgetting that
+   * fails.
+   *
+   * @param projection - The work; it is called once the earlier ones have ended.
+   * @returns What the work resolves to, or rejects with.
+   */
+  #inTurn<T>(projection: () => Promise<T>): Promise<T> {
     const run = this.#tail.then(projection);
     this.#tail = run.then(
       () => undefined,
@@ -629,8 +654,8 @@ export class ProjectionService {
 
   /**
    * Work out the review values of a match from its archive: the deaths of each phase, the first
-   * purchase of each shop item and the deaths before it, the places on the scoreboard. They come
-   * from three parts of the archive, each read on its own, so that a part that cannot be read costs
+   * purchase of each shop item and the deaths before it, the places on the scoreboard, the avoidable
+   * deaths. They come from four parts of the archive, each read on its own, so that a part that cannot be read costs
    * the match its own values and no other: a scoreboard that cannot be read still leaves the deaths
    * and the items, and so on. The metrics of the match do not depend on any of them, so the match is
    * projected all the same, and the problem is told, once in a run.
@@ -657,6 +682,10 @@ export class ProjectionService {
       deathTimesS: this.#readReviewPart(run, tags, matchId, () => readTrackedDeathTimes(envelope)),
       items: this.#readReviewPart(run, tags, matchId, () => readTrackedItems(envelope)),
       scoreboard: this.#readReviewPart(run, tags, matchId, () => readScoreboard(envelope)),
+      // `null` when the deaths are incomplete or the positions of the other players are not all known.
+      avoidableDeaths: this.#readReviewPart(run, tags, matchId, () =>
+        avoidableDeathCount(judgeDeaths(envelope)),
+      ),
     });
   }
 

@@ -324,6 +324,33 @@ export class MetricsRepository {
   }
 
   /**
+   * Forget the projection of a match, so that it is projected again: its archive was replaced by
+   * one that holds more, and the values made from the old one are out of date.
+   *
+   * Only the projection row is deleted, in one statement. It is what says the match is done, so
+   * from now on {@link MetricsRepository.listToProject} and
+   * {@link MetricsRepository.listToProjectUpTo} list the match, while
+   * {@link MetricsRepository.listPrevious} and {@link MetricsRepository.listRecent}, which join on
+   * that row, leave it out. Its values stay until the next
+   * {@link MetricsRepository.saveProjection}, which replaces them all. Nothing happens when the
+   * match has no projection.
+   *
+   * @param accountId - The player.
+   * @param matchId - The match.
+   * @throws AppError of kind `storage` when the database fails.
+   */
+  async forgetProjection(accountId: AccountId, matchId: MatchId): Promise<void> {
+    await this.#run(
+      () =>
+        this.#database.execute(
+          'DELETE FROM match_projections WHERE account_id = $1 AND match_id = $2',
+          [accountId, matchId],
+        ),
+      'Could not forget the projection of a match',
+    );
+  }
+
+  /**
    * The matches of a player that are still to project: their detail is archived (`ready`) and they
    * have no projection of this version, because they have none or one of another version. A match
    * whose projection failed is not listed again before the version changes.

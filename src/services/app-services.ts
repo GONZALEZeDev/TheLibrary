@@ -13,6 +13,7 @@ import type { AnalysisService } from './analysis.service';
 import type { HeroCatalogService } from './hero-catalog.service';
 import type { MatchBreakdownService } from './match-breakdown.service';
 import type { MatchDetailService } from './match-detail.service';
+import type { MatchTimelineService } from './match-timeline.service';
 import type { MatchesService } from './matches.service';
 import type { ReviewService } from './review.service';
 import type { SettingsService } from './settings.service';
@@ -38,6 +39,11 @@ export interface AppServices {
   readonly analysis: AnalysisService;
   /** Breakdown of the Paige matches: the damage by source with its build, read from the archive. */
   readonly breakdown: MatchBreakdownService;
+  /**
+   * Timeline of the Paige matches: the souls against the lane opponents, the kills, the purchases
+   * and the deaths with who was near, read from the archive.
+   */
+  readonly timeline: MatchTimelineService;
   /** Review of the last Paige matches: the comparison with the tier above and with the matches before. */
   readonly review: ReviewService;
 }

@@ -31,8 +31,8 @@
 import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { MatchId } from '../../../core/domain/match';
-import { toAppError } from '../../../core/errors/app-error';
 import type { CommunityState } from '../../../services/community-placement';
+import { StatusLine } from '../../components/StatusLine';
 import { useAnalysisRun } from './AnalysisRun';
 import { InsightSummary } from './InsightSummary';
 import { MetricFamilies } from './MetricFamilies';
@@ -93,11 +93,7 @@ export function AnalysisSection({ matchId }: AnalysisSectionProps) {
   if (view === undefined) {
     // While the analysis is read (from the local database, so in a blink) nothing is shown. A failed
     // refresh keeps the view already shown: the error only replaces an empty section.
-    return analysis.isError ? (
-      <p role="alert" className="text-sm text-loss">
-        {t(`errors.kind.${toAppError(analysis.error).kind}`)}
-      </p>
-    ) : null;
+    return analysis.isError ? <StatusLine kind="error" error={analysis.error} /> : null;
   }
   switch (view.kind) {
     case 'not_analysed':

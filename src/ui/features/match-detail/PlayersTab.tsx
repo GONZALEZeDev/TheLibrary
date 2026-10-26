@@ -41,10 +41,11 @@ import type { TFunction } from 'i18next';
 import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { MatchId } from '../../../core/domain/match';
-import { toAppError } from '../../../core/errors/app-error';
 import type { PlaceStat, ScoreboardPlayer, StatPlace } from '../../../core/match-detail/scoreboard';
 import type { PlayerRowView, TeamView } from '../../../services/match-breakdown-view';
 import { GamePicture } from '../../components/GamePicture';
+import { PANEL_CLASSES } from '../../components/Panel';
+import { StatusLine } from '../../components/StatusLine';
 import { formatDifference, formatMetricValue, NO_VALUE } from './analysis-format';
 import {
   GRID_CELL_DENSE,
@@ -292,8 +293,10 @@ function renderTeam(team: TeamView, ranked: boolean, t: TFunction, language: str
   const columns = columnsOf(ranked);
   return (
     // The box clips what it holds: the tint of the row of the tracked player follows its corners.
-    // The table scrolls inside it rather than crush its columns when the window is narrow.
-    <div key={team.team} className="overflow-x-auto rounded-xl border border-border bg-surface">
+    // The table scrolls inside it rather than crush its columns when the window is narrow. The box has
+    // no padding (the table runs to its edges), which the panel component has no option for: it takes
+    // the look of a panel from the shared classes.
+    <div key={team.team} className={`overflow-x-auto ${PANEL_CLASSES.base}`}>
       <table className="w-full min-w-[44rem] table-fixed border-separate border-spacing-0 text-left text-sm leading-6 tabular-nums">
         <caption className="px-3 py-2 text-left text-base font-semibold">
           {t(isYours ? 'players.team.yours' : 'players.team.enemy')}
@@ -372,11 +375,7 @@ export function PlayersTab({ matchId }: PlayersTabProps) {
   if (view === undefined) {
     // While the view is read (from the local database, so in a blink) nothing is shown. A failed
     // refresh keeps the view already shown: the error only replaces an empty tab.
-    return players.isError ? (
-      <p role="alert" className="text-sm text-loss">
-        {t(`errors.kind.${toAppError(players.error).kind}`)}
-      </p>
-    ) : null;
+    return players.isError ? <StatusLine kind="error" error={players.error} /> : null;
   }
   switch (view.kind) {
     case 'not_archived':

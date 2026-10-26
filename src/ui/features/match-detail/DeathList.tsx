@@ -19,6 +19,7 @@ import type { TFunction } from 'i18next';
 import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TimelineDeath, TimelinePositions } from '../../../services/match-timeline-view';
+import { PANEL_CLASSES } from '../../components/Panel';
 import { formatGameTime, formatOneDecimal, INSIGHT_STYLE, NO_VALUE } from './analysis-format';
 
 /** Props of {@link DeathList}. */
@@ -199,7 +200,9 @@ export function DeathList({
         <p className="text-sm text-fg-muted">{t('timeline.deaths.none')}</p>
       ) : (
         <>
-          <ul className="space-y-1 rounded-xl border border-border bg-surface p-1">
+          {/* A list cannot be the element of the panel component: it takes the look of a panel from
+              the shared classes. */}
+          <ul className={`space-y-1 ${PANEL_CLASSES.base} ${PANEL_CLASSES.padding.tight}`}>
             {deaths.map((death, index) => {
               const pressed = index === selected;
               return (

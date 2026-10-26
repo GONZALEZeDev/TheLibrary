@@ -38,8 +38,9 @@ import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { DamageBreakdown, DamageSourceRow } from '../../../core/analysis/damage-breakdown';
 import type { MatchId } from '../../../core/domain/match';
-import { toAppError } from '../../../core/errors/app-error';
+import { Panel } from '../../components/Panel';
 import { ShareBar } from '../../components/ShareBar';
+import { StatusLine } from '../../components/StatusLine';
 import {
   formatMetricValue,
   formatShare,
@@ -259,7 +260,7 @@ function renderRow(row: DamageSourceRow, t: TFunction, language: string) {
  */
 function renderTable(breakdown: DamageBreakdown, titleId: string, t: TFunction, language: string) {
   return (
-    <div className="rounded-xl border border-border bg-surface p-1">
+    <Panel as="div" padding="tight">
       {/* The names of the columns are for the eye: each figure of a row carries its own for assistive
           technologies, which the header would only say once for the whole list. */}
       <div
@@ -274,7 +275,7 @@ function renderTable(breakdown: DamageBreakdown, titleId: string, t: TFunction, 
       <ul aria-labelledby={titleId} className="divide-y divide-border">
         {breakdown.rows.map((row) => renderRow(row, t, language))}
       </ul>
-    </div>
+    </Panel>
   );
 }
 
@@ -293,11 +294,7 @@ export function DamageTab({ matchId }: DamageTabProps) {
   if (view === undefined) {
     // While the view is read (from the local database, so in a blink) nothing is shown. A failed
     // refresh keeps the view already shown: the error only replaces an empty tab.
-    return damage.isError ? (
-      <p role="alert" className="text-sm text-loss">
-        {t(`errors.kind.${toAppError(damage.error).kind}`)}
-      </p>
-    ) : null;
+    return damage.isError ? <StatusLine kind="error" error={damage.error} /> : null;
   }
   switch (view.kind) {
     case 'pending':

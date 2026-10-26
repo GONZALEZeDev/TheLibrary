@@ -17,7 +17,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { MatchId } from '../../../core/domain/match';
-import { toAppError } from '../../../core/errors/app-error';
+import { StatusLine } from '../../components/StatusLine';
 import { DeathList } from './DeathList';
 import { TimelineChart } from './TimelineChart';
 import { useTimelineTab } from './use-match-timeline';
@@ -44,11 +44,7 @@ export function TimelineTab({ matchId }: TimelineTabProps) {
   if (view === undefined) {
     // While the view is read (from the local archive, so in a blink) nothing is shown. A failed
     // refresh keeps the view already shown: the error only replaces an empty tab.
-    return timeline.isError ? (
-      <p role="alert" className="text-sm text-loss">
-        {t(`errors.kind.${toAppError(timeline.error).kind}`)}
-      </p>
-    ) : null;
+    return timeline.isError ? <StatusLine kind="error" error={timeline.error} /> : null;
   }
   switch (view.kind) {
     case 'not_archived':

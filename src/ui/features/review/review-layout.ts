@@ -5,6 +5,7 @@
  *
  * @packageDocumentation
  */
+import { PANEL_CLASSES } from '../../components/Panel';
 
 /**
  * The grid of a row of the review (`ReviewRow`) and of the header of its columns (`ReviewRowHeader`),
@@ -39,8 +40,10 @@ export const REVIEW_ROW_GRID =
  * list of rows (`ReviewRowList`) and the list of the damage tab stand in it. Its padding is the only
  * padding around the rows of a list: the budget of the grid above counts the border and the padding of
  * this box, and any other padding comes out of the name column of the rows.
+ *
+ * It is the look of a panel (its border and surface) with the tight padding of the panels.
  */
-export const REVIEW_LIST_BOX = 'rounded-xl border border-border bg-surface p-1';
+export const REVIEW_LIST_BOX = `${PANEL_CLASSES.base} ${PANEL_CLASSES.padding.tight}`;
 
 /**
  * The look of the title (an `h2`) of a section of a tab of the review: the page title is the `h1`,
@@ -51,7 +54,8 @@ export const REVIEW_SECTION_TITLE = 'text-base font-semibold';
 /**
  * The look of a link inside the review (a point that links to its tab, a match that links to its
  * page): the colour of the surrounding text, with an underline that says it is a link and darkens
- * under the pointer, and the outline of the focus of the app.
+ * under the pointer. The outline of the focus comes from the global rule of the app; `rounded-sm`
+ * only rounds its corners.
  */
 export const REVIEW_LINK =
-  'rounded-sm underline decoration-fg-muted underline-offset-4 hover:decoration-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-bright';
+  'rounded-sm underline decoration-fg-muted underline-offset-4 hover:decoration-fg';

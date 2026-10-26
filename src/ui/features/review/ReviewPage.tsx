@@ -51,7 +51,6 @@ import { useTranslation } from 'react-i18next';
 import type { CohortRank, ComparedWith } from '../../../core/analysis/cohort';
 import { MIN_PERSONAL_MATCHES } from '../../../core/analysis/insights/thresholds';
 import { RANK_TIER_NAMES } from '../../../core/domain/rank';
-import { toAppError } from '../../../core/errors/app-error';
 import type {
   Review,
   ReviewCommunity,
@@ -61,7 +60,10 @@ import type {
 import type { ReviewTab } from '../../app/router';
 import { EmptyState } from '../../components/EmptyState';
 import { PageHeader } from '../../components/PageHeader';
+import { Panel } from '../../components/Panel';
+import { StatusLine } from '../../components/StatusLine';
 import { Tabs } from '../../components/Tabs';
+import { MS_PER_SECOND, formatMediumDate } from '../../format/date';
 import { LinkAccountButton } from '../account/LinkAccountButton';
 import { useRefreshOnSync } from '../matches/use-matches';
 import { ReviewDamage } from './ReviewDamage';
@@ -96,9 +98,6 @@ const TAB_LABEL_KEYS = {
  * `satisfies` clause), in the order they are written there.
  */
 const TAB_IDS = Object.keys(TAB_LABEL_KEYS) as readonly ReviewTab[];
-
-/** Milliseconds in a second: the start of a match is in seconds, a date wants milliseconds. */
-const MS_PER_SECOND = 1_000;
 
 /** What the page knows of the download of the comparison. */
 type CommunityRefresh = ReturnType<typeof useReviewCommunityRefresh>;
@@ -136,19 +135,19 @@ function lacksCommunityData(community: ReviewCommunity): boolean {
  * The line about the matches the review covers.
  *
  * @param recent - The last matches.
- * @param day - How to write a date.
+ * @param language - Language to write the dates in.
  * @param t - Translation function.
  * @returns "Your last 12 matches, Oct 3 to Oct 20", "Your last 6 matches, on Oct 20" when they were
  *   all played on one day, or "Your last match, Oct 20" for one. `null` for a window with no dates
  *   (one with no match, which a review is never made of).
  */
-function windowLine(recent: ReviewWindow, day: Intl.DateTimeFormat, t: TFunction): string | null {
+function windowLine(recent: ReviewWindow, language: string, t: TFunction): string | null {
   const { count, firstStartTime, lastStartTime } = recent;
   if (firstStartTime === null || lastStartTime === null) {
     return null;
   }
-  const from = day.format(firstStartTime * MS_PER_SECOND);
-  const to = day.format(lastStartTime * MS_PER_SECOND);
+  const from = formatMediumDate(firstStartTime, language);
+  const to = formatMediumDate(lastStartTime, language);
   // The format has the year, the month and the day: two times that write the same date are on the
   // same calendar day, in the time zone of the player. "From the 20th to the 20th" would say less
   // than "on the 20th".
@@ -203,7 +202,7 @@ function tierLine(rank: CohortRank, comparedWith: ComparedWith, t: TFunction): s
  *
  * @param community - Where the comparison stands.
  * @param refresh - The download of the comparison.
- * @param day - How to write a date.
+ * @param language - Language to write the dates in.
  * @param t - Translation function.
  * @returns With a comparison: the tier, then a line for each of the matches compared with every
  *   rank, the matches with no comparison yet, the matches with none to have, and the age of the data,
@@ -214,7 +213,7 @@ function tierLine(rank: CohortRank, comparedWith: ComparedWith, t: TFunction): s
 function cohortLines(
   community: ReviewCommunity,
   refresh: CommunityRefresh,
-  day: Intl.DateTimeFormat,
+  language: string,
   t: TFunction,
 ): string[] {
   if (community.kind === 'missing') {
@@ -238,7 +237,9 @@ function cohortLines(
     lines.push(t('review.cohort.tooFew', { count: community.unusableMatches }));
   }
   if (community.stale) {
-    lines.push(t('review.cohort.stale', { date: day.format(community.fetchedAt) }));
+    // `fetchedAt` is in milliseconds, the format takes seconds.
+    const date = formatMediumDate(Math.floor(community.fetchedAt / MS_PER_SECOND), language);
+    lines.push(t('review.cohort.stale', { date }));
   }
   return lines;
 }
@@ -247,16 +248,12 @@ function cohortLines(
  * The line about the item statistics the resistance items are compared with.
  *
  * @param itemStats - Where the item statistics of the tier stand.
- * @param day - How to write a date.
+ * @param language - Language to write the dates in.
  * @param t - Translation function.
  * @returns What makes them less than whole (not downloaded yet, old, of every rank, holding nothing
  *   for the tier), or `null` when nothing does or when there are no items to have them of.
  */
-function itemStatsLine(
-  itemStats: ReviewItemStats,
-  day: Intl.DateTimeFormat,
-  t: TFunction,
-): string | null {
+function itemStatsLine(itemStats: ReviewItemStats, language: string, t: TFunction): string | null {
   switch (itemStats.kind) {
     case 'fresh':
     case 'no_items':
@@ -264,7 +261,10 @@ function itemStatsLine(
     case 'missing':
       return t('review.itemStats.missing');
     case 'stale':
-      return t('review.itemStats.stale', { date: day.format(itemStats.fetchedAt) });
+      // `fetchedAt` is in milliseconds, the format takes seconds.
+      return t('review.itemStats.stale', {
+        date: formatMediumDate(Math.floor(itemStats.fetchedAt / MS_PER_SECOND), language),
+      });
     case 'fallback':
       return t('review.itemStats.fallback');
     case 'none':
@@ -278,7 +278,7 @@ function itemStatsLine(
  *
  * @param review - The review.
  * @param refresh - The download of the comparison.
- * @param day - How to write a date.
+ * @param language - Language to write the dates in.
  * @param t - Translation function.
  * @returns The lines. The comparison is a live region: it changes while the page is open (the
  *   download ends, the review is read again), and a screen reader says so.
@@ -286,12 +286,12 @@ function itemStatsLine(
 function renderHeaderLines(
   review: Review,
   refresh: CommunityRefresh,
-  day: Intl.DateTimeFormat,
+  language: string,
   t: TFunction,
 ) {
-  const covered = windowLine(review.recent, day, t);
-  const comparison = cohortLines(review.community, refresh, day, t);
-  const itemStats = itemStatsLine(review.community.itemStats, day, t);
+  const covered = windowLine(review.recent, language, t);
+  const comparison = cohortLines(review.community, refresh, language, t);
+  const itemStats = itemStatsLine(review.community.itemStats, language, t);
   return (
     <div className="space-y-1 text-sm text-fg-muted">
       {covered === null ? null : <p>{covered}</p>}
@@ -347,7 +347,6 @@ export function ReviewPage() {
   // Asked for from the first render, the read that follows the download would join the first read of
   // the review and not start another (see `useReviewCommunityRefresh`).
   const refresh = useReviewCommunityRefresh(ready !== null && lacksCommunityData(ready.community));
-  const day = new Intl.DateTimeFormat(i18n.language, { dateStyle: 'medium' });
 
   let body: ReactNode = null;
   if (ready !== null) {
@@ -379,25 +378,21 @@ export function ReviewPage() {
     );
   } else if (view?.kind === 'empty') {
     body = (
-      <section className="rounded-xl border border-border bg-surface p-4 text-sm">
+      <Panel padding="normal" className="text-sm">
         <p>{t('review.empty')}</p>
-      </section>
+      </Panel>
     );
   } else if (review.isError) {
     // A failed read of the review again keeps the review already shown: the error only replaces an
     // empty screen.
-    body = (
-      <p role="alert" className="text-sm text-loss">
-        {t(`errors.kind.${toAppError(review.error).kind}`)}
-      </p>
-    );
+    body = <StatusLine kind="error" error={review.error} />;
   }
   // While the review is read (from the local database, so in a blink) only the title is shown.
 
   return (
     <>
       <PageHeader title={t('review.title')}>
-        {ready === null ? undefined : renderHeaderLines(ready, refresh, day, t)}
+        {ready === null ? undefined : renderHeaderLines(ready, refresh, i18n.language, t)}
       </PageHeader>
       {body}
     </>

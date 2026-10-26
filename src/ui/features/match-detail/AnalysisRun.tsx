@@ -34,7 +34,8 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { MatchId } from '../../../core/domain/match';
 import type { MatchAnalysisView } from '../../../services/analysis-view';
-import { BUTTON_CLASSES, DIALOG_ACTIONS_CLASS } from '../../components/button-styles';
+import { Button } from '../../components/Button';
+import { DIALOG_ACTIONS_CLASS } from '../../components/button-styles';
 import { Dialog } from '../../components/Dialog';
 import { focusOnMount } from '../../components/focus-on-mount';
 import { useAnalyseMatch, useMatchAnalysis } from './use-match-analysis';
@@ -185,16 +186,15 @@ export function AnalysisRun({ matchId, children }: AnalysisRunProps) {
               <div className={DIALOG_ACTIONS_CLASS}>
                 {/* The button appears in place of the text of the analysis that ran: the focus goes
                     to it, or the keyboard would have nothing to reach. */}
-                <button
-                  type="button"
+                <Button
+                  look="subtle"
                   ref={focusOnMount}
                   onClick={() => {
                     setFailureClosed(true);
                   }}
-                  className={BUTTON_CLASSES.subtle}
                 >
                   {t('analysis.analysing.close')}
-                </button>
+                </Button>
               </div>
             </>
           ) : (

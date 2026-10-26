@@ -10,7 +10,9 @@
 import { useTranslation } from 'react-i18next';
 import type { AccountId } from '../../../core/domain/account';
 import { toAppError } from '../../../core/errors/app-error';
-import { BUTTON_CLASSES } from '../../components/button-styles';
+import { Button } from '../../components/Button';
+import { StatusLine } from '../../components/StatusLine';
+import { formatMediumDate, MS_PER_SECOND } from '../../format/date';
 import { AccountAvatar } from '../account/AccountAvatar';
 import { accountDisplayName } from '../account/display-name';
 import { LinkAccountButton } from '../account/LinkAccountButton';
@@ -47,27 +49,22 @@ export interface AccountSummaryProps {
 export function AccountSummary({ account, busy, onUnlink }: AccountSummaryProps) {
   const { t, i18n } = useTranslation();
   if (account.isPending) {
-    return (
-      <p role="status" className="mt-4 text-sm text-fg-muted">
-        {t('settings.account.loading')}
-      </p>
-    );
+    return <StatusLine kind="loading" text={t('settings.account.loading')} className="mt-4" />;
   }
   // The button that asks to unlink, for the account that is linked and for the one that cannot be
   // read. It is a function and not a component: the two places differ only in what the player is
   // asked about.
   const renderUnlinkButton = (confirmation: Confirmation) => (
-    <button
-      type="button"
+    <Button
+      look="subtle"
       aria-haspopup="dialog"
       disabled={busy}
       onClick={() => {
         onUnlink(confirmation);
       }}
-      className={BUTTON_CLASSES.subtle}
     >
       {t('account.unlink.button')}
-    </button>
+    </Button>
   );
   // A failed refresh keeps the account already shown: the error only replaces an empty section. An
   // account that cannot be read is not one that is missing, so it never gets the way to link
@@ -76,9 +73,7 @@ export function AccountSummary({ account, busy, onUnlink }: AccountSummaryProps)
     const { kind } = toAppError(account.error);
     return (
       <>
-        <p role="alert" className="mt-4 text-sm text-loss">
-          {t(`errors.kind.${kind}`)}
-        </p>
+        <StatusLine kind="error" error={account.error} className="mt-4" />
         {/* A stored link that cannot be read (a damaged profile) must still be possible to leave: the
             unlink reads only the id of the account, which the service checks by itself. The account
             is not known here, so it is called by the placeholder name. */}
@@ -104,9 +99,8 @@ export function AccountSummary({ account, busy, onUnlink }: AccountSummaryProps)
   }
   const linked = account.data;
   const name = accountDisplayName(linked.personaName, t);
-  const linkedOn = new Intl.DateTimeFormat(i18n.language, { dateStyle: 'medium' }).format(
-    linked.linkedAt,
-  );
+  // `linkedAt` is in milliseconds, the shared formatter wants seconds.
+  const linkedOn = formatMediumDate(Math.floor(linked.linkedAt / MS_PER_SECOND), i18n.language);
   return (
     <>
       <div className="mt-4 flex items-center gap-4">

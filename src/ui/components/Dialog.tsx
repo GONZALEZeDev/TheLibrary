@@ -9,6 +9,7 @@
  */
 import { useEffectEvent, useId, useLayoutEffect, useRef } from 'react';
 import type { ReactNode, SyntheticEvent } from 'react';
+import { PANEL_CLASSES } from './Panel';
 
 /** Props of {@link Dialog}. */
 export interface DialogProps {
@@ -86,9 +87,9 @@ export function Dialog({ open, title, onClose, children }: DialogProps) {
       ref={dialogRef}
       aria-labelledby={titleId}
       onCancel={handleCancel}
-      // `m-auto` centres the modal: Tailwind's preflight resets the margin that the browser's
-      // default stylesheet uses for that.
-      className="m-auto w-[calc(100%-2rem)] max-w-md rounded-xl border border-border bg-surface p-6 text-fg backdrop:bg-bg/70"
+      // The look of a panel with room around the content. `m-auto` centres the modal: Tailwind's
+      // preflight resets the margin that the browser's default stylesheet uses for that.
+      className={`${PANEL_CLASSES.base} ${PANEL_CLASSES.padding.roomy} m-auto w-[calc(100%-2rem)] max-w-md text-fg backdrop:bg-bg/70`}
     >
       {open && (
         <>

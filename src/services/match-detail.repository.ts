@@ -93,7 +93,7 @@ const attemptsSchema = z.int().nonnegative();
 /** Schema of the format of an archive file: the formats the app reads, or none recorded. */
 const archiveFormatSchema = z.union([z.literal(1), z.literal(2)]).nullable();
 
-/** Schema of the row `nextDue` reads. */
+/** Schema of the row `nextDue` and `nextStale` read. */
 const dueRowSchema = z.object({ match_id: matchIdSchema, detail_attempts: attemptsSchema });
 
 /**
@@ -253,31 +253,18 @@ export class MatchDetailRepository {
     now: number,
     excluding: ReadonlySet<MatchId>,
   ): Promise<DueMatch | null> {
-    const params = new SqlParams();
-    // `IN ()` is not valid SQL: without matches to skip, the condition is left out.
-    const skip = (): string =>
-      excluding.size === 0 ? '' : `AND match_id NOT IN (${params.bindAll(excluding)})`;
-    // The placeholders are numbered as the text is read, so each part is written after the one
-    // that precedes it.
-    const sql = `SELECT match_id, detail_attempts FROM matches
-       WHERE ${eligibleConditions(params, accountId, now)}
-         AND (detail_status = ${params.bind(PENDING)}
+    return this.#nextMatch(
+      accountId,
+      now,
+      excluding,
+      // `pending`, or `retry` with a date that is due (the SQL form of `isRetryDue`).
+      (params) => `(detail_status = ${params.bind(PENDING)}
               OR (detail_status = ${params.bind(RETRY)}
                   AND (detail_next_attempt_at IS NULL
                        OR detail_next_attempt_at <= ${params.bind(now)}
-                       OR detail_next_attempt_at > ${params.bind(now + MAX_RETRY_DELAY_MS)})))
-         ${skip()}
-       ORDER BY start_time DESC, match_id DESC LIMIT 1`;
-    const rows = await this.#run(
-      () => this.#database.select(sql, params.values),
+                       OR detail_next_attempt_at > ${params.bind(now + MAX_RETRY_DELAY_MS)})))`,
       'Could not read the next match to download',
     );
-    const [row] = rows;
-    if (row === undefined) {
-      return null;
-    }
-    const due = parseRow(dueRowSchema, row, 'A stored detail state is invalid');
-    return { matchId: due.match_id, attempts: due.detail_attempts };
   }
 
   /**
@@ -340,28 +327,15 @@ export class MatchDetailRepository {
     now: number,
     excluding: ReadonlySet<MatchId>,
   ): Promise<DueMatch | null> {
-    const params = new SqlParams();
-    // `IN ()` is not valid SQL: without matches to skip, the condition is left out.
-    const skip = (): string =>
-      excluding.size === 0 ? '' : `AND match_id NOT IN (${params.bindAll(excluding)})`;
-    // The placeholders are numbered as the text is read, so each part is written after the one
-    // that precedes it.
-    const sql = `SELECT match_id, detail_attempts FROM matches
-       WHERE ${eligibleConditions(params, accountId, now)}
-         AND detail_status = ${params.bind(READY)}
-         AND archive_format IS NULL
-         ${skip()}
-       ORDER BY start_time DESC, match_id DESC LIMIT 1`;
-    const rows = await this.#run(
-      () => this.#database.select(sql, params.values),
+    return this.#nextMatch(
+      accountId,
+      now,
+      excluding,
+      // `ready` with no format recorded: a format-1 file never tried for a refresh.
+      (params) => `detail_status = ${params.bind(READY)}
+         AND archive_format IS NULL`,
       'Could not read the next match to refresh',
     );
-    const [row] = rows;
-    if (row === undefined) {
-      return null;
-    }
-    const stale = parseRow(dueRowSchema, row, 'A stored detail state is invalid');
-    return { matchId: stale.match_id, attempts: stale.detail_attempts };
   }
 
   /**
@@ -509,6 +483,53 @@ export class MatchDetailRepository {
       unavailable: counts.unavailable,
       invalid: counts.invalid,
     };
+  }
+
+  /**
+   * The most recent eligible match of a player whose status qualifies, for
+   * {@link MatchDetailRepository.nextDue} and {@link MatchDetailRepository.nextStale}.
+   *
+   * Both share everything but which statuses qualify and what a failure says: the eligibility
+   * (`isDetailEligible`), the matches to skip, the order (the most recent first, and the one with
+   * the highest id when two started at the same second), and the validation of the row.
+   *
+   * @param accountId - The player.
+   * @param now - The current time, in Unix milliseconds.
+   * @param excluding - Matches to skip, such as the ones being downloaded already.
+   * @param statusCondition - Writes the condition on the status (`nextDue`: `pending` or a due
+   *   `retry`; `nextStale`: `ready` with no format), binding its values to the given parameters. It
+   *   is called after the eligibility conditions are bound and before the matches to skip, the
+   *   order in which the text is read.
+   * @param message - What a failure of the database says (`nextDue`: the next match to download;
+   *   `nextStale`: the next match to refresh).
+   * @returns The match and the attempts counted for it, or `null` when none qualifies.
+   * @throws AppError of kind `storage` when the database fails or returns an invalid row.
+   */
+  async #nextMatch(
+    accountId: AccountId,
+    now: number,
+    excluding: ReadonlySet<MatchId>,
+    statusCondition: (params: SqlParams) => string,
+    message: string,
+  ): Promise<DueMatch | null> {
+    const params = new SqlParams();
+    // `IN ()` is not valid SQL: without matches to skip, the condition is left out.
+    const skip = (): string =>
+      excluding.size === 0 ? '' : `AND match_id NOT IN (${params.bindAll(excluding)})`;
+    // The placeholders are numbered as the text is read, so each part is written after the one
+    // that precedes it.
+    const sql = `SELECT match_id, detail_attempts FROM matches
+       WHERE ${eligibleConditions(params, accountId, now)}
+         AND ${statusCondition(params)}
+         ${skip()}
+       ORDER BY start_time DESC, match_id DESC LIMIT 1`;
+    const rows = await this.#run(() => this.#database.select(sql, params.values), message);
+    const [row] = rows;
+    if (row === undefined) {
+      return null;
+    }
+    const next = parseRow(dueRowSchema, row, 'A stored detail state is invalid');
+    return { matchId: next.match_id, attempts: next.detail_attempts };
   }
 
   /**

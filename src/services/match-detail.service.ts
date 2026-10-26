@@ -101,7 +101,6 @@ import {
   type DetailRunStop,
 } from './match-detail-verdicts';
 
-export type { DetailRunStop } from './match-detail-verdicts';
 export type { DetailSummary } from './match-detail.repository';
 
 /** What {@link MatchDetailService} needs. */
@@ -313,8 +312,18 @@ export class MatchDetailService {
     // The matches the pullers hold or held in this run. A match is tried once per run, whatever
     // becomes of it, and this is how the pullers keep from taking the same match.
     const taken = new Set<MatchId>();
+    // The download pool: each puller claims the next due match, and downloads and archives it.
+    const claimDue = (): Promise<DueMatch | null> =>
+      this.#claimWith(
+        (excluding) => this.#repository.nextDue(accountId, this.#now(), excluding),
+        taken,
+      );
+    const download = (due: DueMatch): Promise<void> =>
+      this.#process(accountId, due, run, syncRunId);
     await Promise.all(
-      Array.from({ length: PULLER_COUNT }, () => this.#pull(accountId, syncRunId, run, taken)),
+      Array.from({ length: PULLER_COUNT }, () =>
+        this.#pullWith(claimDue, download, taken, run, accountId, syncRunId),
+      ),
     );
     // The refresh of the format-1 archives comes once both pullers are done with the due matches,
     // so that it never delays a match that has no archive at all, and only when nothing stopped
@@ -323,9 +332,17 @@ export class MatchDetailService {
       // A set of its own: a match that was downloaded in this run is now of the current format, so
       // it is not offered again; this one makes each match to refresh tried once per run.
       const refreshTaken = new Set<MatchId>();
+      // The refresh pool: each puller claims the next format-1 archive, and archives it again.
+      const claimStale = (): Promise<DueMatch | null> =>
+        this.#claimWith(
+          (excluding) => this.#repository.nextStale(accountId, this.#now(), excluding),
+          refreshTaken,
+        );
+      const refresh = (stale: DueMatch): Promise<void> =>
+        this.#refresh(accountId, stale.matchId, run, syncRunId);
       await Promise.all(
         Array.from({ length: PULLER_COUNT }, () =>
-          this.#pullStale(accountId, syncRunId, run, refreshTaken),
+          this.#pullWith(claimStale, refresh, refreshTaken, run, accountId, syncRunId),
         ),
       );
     }
@@ -479,138 +496,91 @@ export class MatchDetailService {
   }
 
   /**
-   * One puller: take the due matches one after the other and process them, until none is due or the
+   * One puller: take the matches one after the other and work on each, until none is left or the
    * run is stopped. It never rejects: whatever goes wrong stops the run.
    *
+   * Both pools of a run share this loop: claim a match, stop the run when the claim fails, give the
+   * match back when the run was stopped meanwhile, work on it, and stop the run when the work fails.
+   * They differ in what they pass: the download pool claims from `MatchDetailRepository.nextDue`
+   * and works with {@link MatchDetailService.#process}; the refresh pool claims from
+   * `MatchDetailRepository.nextStale` and works with {@link MatchDetailService.#refresh}.
+   *
+   * @param claim - Claims the next match of the pool (see {@link MatchDetailService.#claimWith}),
+   *   or answers `null` when none is left.
+   * @param work - Downloads or refreshes the claimed match; it rejects with the error that stops
+   *   the run.
+   * @param taken - The matches the pool took in this run, shared with the other puller; `claim`
+   *   adds to it.
+   * @param run - What the run counts, shared with the other puller.
    * @param accountId - The tracked account.
    * @param syncRunId - Id of the run in the logs.
-   * @param run - What the run counts, shared with the other puller.
-   * @param taken - The matches taken in this run, shared with the other puller.
    */
-  async #pull(
+  async #pullWith(
+    claim: () => Promise<DueMatch | null>,
+    work: (match: DueMatch) => Promise<void>,
+    taken: Set<MatchId>,
+    run: RunState,
     accountId: AccountId,
     syncRunId: string,
-    run: RunState,
-    taken: Set<MatchId>,
   ): Promise<void> {
     for (;;) {
-      let due: DueMatch | null;
+      let match: DueMatch | null;
       try {
-        due = await this.#claimNext(accountId, taken);
+        match = await claim();
       } catch (error) {
         this.#stop(run, stopOf(error), error, accountId, syncRunId);
         return;
       }
-      if (due === null) {
+      if (match === null) {
         return;
       }
       // The stop is read here, once the match is claimed and right before it starts: the other
       // puller may have stopped the run while the database was answering. The match is given back,
       // untouched, as if it had not been offered.
       if (run.stoppedBy !== null) {
-        taken.delete(due.matchId);
+        taken.delete(match.matchId);
         return;
       }
       try {
-        await this.#process(accountId, due, run, syncRunId);
+        await work(match);
       } catch (error) {
-        this.#stop(run, stopOf(error), error, accountId, syncRunId, due.matchId);
+        this.#stop(run, stopOf(error), error, accountId, syncRunId, match.matchId);
         return;
       }
     }
   }
 
   /**
-   * Take the next due match for the calling puller, so that the other one cannot take it.
+   * Take the next match of a pool for the calling puller, so that the other one cannot take it.
    *
    * The other puller asks for its own match at the same time, and both questions are answered from
    * the same state of the database: they can both name the same match. The match is therefore
    * claimed once the answer is back, in the same synchronous block as the check, without any
    * `await` in between: the first puller to get the answer claims the match, and the other asks
-   * again, now that it is excluded.
+   * again, now that it is excluded. Both pools claim this way, and differ only in the query they
+   * pass: `MatchDetailRepository.nextDue` for the downloads, `MatchDetailRepository.nextStale` for
+   * the refresh.
    *
-   * @param accountId - The tracked account.
-   * @param taken - The matches taken in this run; the claimed match is added to it.
-   * @returns The claimed match, or `null` when none is due.
+   * @param next - Asks the database for the next match of the pool, skipping the given ones; the
+   *   current time is read at each call.
+   * @param taken - The matches the pool took in this run; the claimed match is added to it.
+   * @returns The claimed match, or `null` when none is left.
    * @throws AppError of kind `storage` when the database fails.
    */
-  async #claimNext(accountId: AccountId, taken: Set<MatchId>): Promise<DueMatch | null> {
+  async #claimWith(
+    next: (excluding: ReadonlySet<MatchId>) => Promise<DueMatch | null>,
+    taken: Set<MatchId>,
+  ): Promise<DueMatch | null> {
     // Each round either claims a match, or sees that the other puller claimed the one it was
     // offered: the matches are finite, and each round that does not claim excludes one more.
     for (;;) {
-      const due = await this.#repository.nextDue(accountId, this.#now(), taken);
-      if (due === null) {
+      const match = await next(taken);
+      if (match === null) {
         return null;
       }
-      if (!taken.has(due.matchId)) {
-        taken.add(due.matchId);
-        return due;
-      }
-    }
-  }
-
-  /**
-   * One puller of the refresh: take the matches whose archive is of the first format one after the
-   * other and refresh them, until none is left or the run is stopped. It works like
-   * {@link MatchDetailService.#pull}, on the matches `MatchDetailRepository.nextStale` offers, and
-   * never rejects either: whatever goes wrong stops the run.
-   *
-   * @param accountId - The tracked account.
-   * @param syncRunId - Id of the run in the logs.
-   * @param run - What the run counts, shared with the other puller.
-   * @param taken - The matches taken by the refresh in this run, shared with the other puller.
-   */
-  async #pullStale(
-    accountId: AccountId,
-    syncRunId: string,
-    run: RunState,
-    taken: Set<MatchId>,
-  ): Promise<void> {
-    for (;;) {
-      let stale: DueMatch | null;
-      try {
-        stale = await this.#claimStale(accountId, taken);
-      } catch (error) {
-        this.#stop(run, stopOf(error), error, accountId, syncRunId);
-        return;
-      }
-      if (stale === null) {
-        return;
-      }
-      // As for a download: the other puller may have stopped the run while the database was
-      // answering, and the match is given back untouched.
-      if (run.stoppedBy !== null) {
-        taken.delete(stale.matchId);
-        return;
-      }
-      try {
-        await this.#refresh(accountId, stale.matchId, run, syncRunId);
-      } catch (error) {
-        this.#stop(run, stopOf(error), error, accountId, syncRunId, stale.matchId);
-        return;
-      }
-    }
-  }
-
-  /**
-   * Take the next match to refresh for the calling puller, so that the other one cannot take it.
-   * The claim is made the way {@link MatchDetailService.#claimNext} makes it, and for the same
-   * reason: both pullers can be offered the same match.
-   *
-   * @param accountId - The tracked account.
-   * @param taken - The matches taken by the refresh in this run; the claimed match is added to it.
-   * @returns The claimed match, or `null` when none is left to refresh.
-   * @throws AppError of kind `storage` when the database fails.
-   */
-  async #claimStale(accountId: AccountId, taken: Set<MatchId>): Promise<DueMatch | null> {
-    for (;;) {
-      const stale = await this.#repository.nextStale(accountId, this.#now(), taken);
-      if (stale === null) {
-        return null;
-      }
-      if (!taken.has(stale.matchId)) {
-        taken.add(stale.matchId);
-        return stale;
+      if (!taken.has(match.matchId)) {
+        taken.add(match.matchId);
+        return match;
       }
     }
   }

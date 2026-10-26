@@ -515,13 +515,24 @@ describe('MatchTimelineService', () => {
       const info = (await rawEnvelopeOf(context, matchId)).payload.match_info;
       const tracked = rawTracked(context, info);
 
-      // The kills are the deaths of the other players that the tracked player made, in time order.
+      // The kills are the deaths of the other players that the tracked player made, in time order,
+      // each with the hero of the victim, named by the catalogue.
       const kills = info.players
-        .flatMap((player) => deathsOf(player))
-        .filter((death) => death.killer_player_slot === tracked.player_slot)
-        .map((death) => death.game_time_s)
-        .toSorted((first, second) => first - second);
+        .flatMap((player) =>
+          deathsOf(player)
+            .filter((death) => death.killer_player_slot === tracked.player_slot)
+            .map((death) => ({
+              timeS: death.game_time_s,
+              victim: {
+                heroId: player.hero_id,
+                name: HEROES.find((hero) => hero.id === player.hero_id)?.name ?? null,
+              },
+            })),
+        )
+        .toSorted((first, second) => first.timeS - second.timeS);
       expect(kills.length).toBeGreaterThan(0);
+      // The fixture catalogue names the heroes of the history: the names are checked, not skipped.
+      expect(kills.every((kill) => kill.victim.name !== null)).toBe(true);
       expect(view.kills).toEqual(kills);
 
       // The purchases are the shop items, named by the catalogue: no ability unlock or upgrade, and
@@ -599,6 +610,12 @@ describe('MatchTimelineService', () => {
       expect(view.deaths?.length).toBeGreaterThan(0);
       for (const death of view.deaths ?? []) {
         expect(death.killer).toMatchObject({ kind: 'hero', name: null });
+      }
+      // The victims of the kills likewise.
+      expect(view.kills?.length).toBeGreaterThan(0);
+      for (const kill of view.kills ?? []) {
+        expect(kill.victim.heroId).toEqual(expect.any(Number));
+        expect(kill.victim.name).toBeNull();
       }
       expect(view.purchases.map((purchase) => purchase.itemId)).toEqual(
         tracked.items

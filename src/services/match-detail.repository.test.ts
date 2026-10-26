@@ -512,6 +512,23 @@ describe('MatchDetailRepository', () => {
         archiveFormat: 1,
       });
     });
+
+    it('does not mark final a match reset to pending in the meantime', async () => {
+      const { database, repository } = await createRepositories([
+        matchSummary({ matchId: 1, startTime: daysAgo(1) }),
+      ]);
+      await archiveWithoutFormat(database, repository, [1]);
+      // The match is reset while its refresh runs: it is no longer archived.
+      await repository.resetToPending(TEST_ACCOUNT_ID, testMatchId(1));
+
+      await repository.markRefreshFinal(TEST_ACCOUNT_ID, testMatchId(1));
+
+      // No format is recorded for an archive the match no longer has.
+      await expect(repository.getDetail(TEST_ACCOUNT_ID, testMatchId(1))).resolves.toMatchObject({
+        status: 'pending',
+        archiveFormat: null,
+      });
+    });
   });
 
   it('counts the eligible matches by status', async () => {

@@ -1,6 +1,7 @@
 /**
  * Tests of the rows of the deaths tab of the review: the deaths of each phase against the tier above
- * ({@link deathRowsOf}), on matches and curves written by hand.
+ * ({@link deathRowsOf}) and the avoidable deaths ({@link avoidableDeathsRowOf}), on matches and
+ * curves written by hand.
  *
  * @packageDocumentation
  */

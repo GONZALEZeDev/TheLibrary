@@ -20,12 +20,12 @@
  * refresh goes through the very steps of a download and writes the new archive over the old one;
  * then the projection of the match is forgotten, so that the analysis makes it again from the new
  * file, and only then is the match recorded with the current format, so that a failure in between
- * leaves it to refresh again. A refresh never loses a match: the match stays `ready` throughout, and the old file stays
- * until the new one replaces it. A failed refresh counts no attempt and changes nothing but, when
- * the failure is final (deadlock-api no longer has the match, or its answer cannot be used), the
- * recorded format, so that the match keeps its old archive and is never tried again. Any other
- * failure about the match is tried again at the next run, and one that says nothing about it (a
- * pause, the network, a local failure) stops the run, as for a download.
+ * leaves it to refresh again. A refresh never loses a match: the match stays `ready` throughout,
+ * and the old file stays until the new one replaces it. A failed refresh counts no attempt and
+ * changes nothing but, when the failure is final (deadlock-api no longer has the match, or its
+ * answer cannot be used), the recorded format, so that the match keeps its old archive and is
+ * never tried again. Any other failure about the match is tried again at the next run, and one that
+ * says nothing about it (a pause, the network, a local failure) stops the run, as for a download.
  *
  * What an attempt can end in, and what it costs (the rules are in `./match-detail-verdicts`):
  * - the API answers with an HTTP status that says it has no detail (404), failed, refused, or was
@@ -121,7 +121,10 @@ export interface MatchDetailServiceDependencies {
   readonly compressor: Compressor;
   /** Reads the archives back, for the match page. */
   readonly reader: ArchiveReaderService;
-  /** Where the analysis keeps its projections: a refreshed match must be projected again. */
+  /**
+   * Forgets the projection of a refreshed match, which must be projected again: the projection
+   * service of the analysis, see {@link ProjectionForgetter}.
+   */
   readonly projections: ProjectionForgetter;
   /** Structured logger. */
   readonly logger: Logger;
@@ -132,9 +135,12 @@ export interface MatchDetailServiceDependencies {
 }
 
 /**
- * The one thing the queue asks of the storage of the analysis: forget the projection of a match
- * whose archive it replaced, so that the next catch-up projects it again from the new file
- * (`MetricsRepository` is the one of the app).
+ * The one thing the queue asks of the analysis: forget the projection of a match whose archive it
+ * replaced, so that the next catch-up projects it again from the new file.
+ *
+ * The app wires `ProjectionService`, not the `MetricsRepository` it stores through: the forgetting
+ * waits its turn behind a projection in flight, which may have read the old file already and would
+ * otherwise save its projection back over the forgetting.
  */
 export interface ProjectionForgetter {
   /**

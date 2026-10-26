@@ -420,7 +420,8 @@ export class MatchDetailRepository {
   /**
    * Record that the refresh of a format-1 archive failed for good, so that it is never tried
    * again: the match stays `ready`, with its file and its size, and only its format changes.
-   * Nothing happens when the match is not stored.
+   * Nothing happens when the match is not stored, or no longer `ready` (reset in the meantime: it
+   * has no archive left to record a format for).
    *
    * @param accountId - The player.
    * @param matchId - The match.
@@ -428,9 +429,12 @@ export class MatchDetailRepository {
    */
   async markRefreshFinal(accountId: AccountId, matchId: MatchId): Promise<void> {
     const params = new SqlParams();
+    // The placeholders are numbered as the text is read, so each part is written after the one
+    // that precedes it.
     const sql = `UPDATE matches
        SET archive_format = ${params.bind(1)}
-       WHERE ${matchCondition(params, accountId, matchId)}`;
+       WHERE ${matchCondition(params, accountId, matchId)}
+         AND detail_status = ${params.bind(READY)}`;
     await this.#run(
       () => this.#database.execute(sql, params.values),
       'Could not record a refresh that failed for good',

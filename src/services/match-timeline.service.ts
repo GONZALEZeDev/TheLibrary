@@ -58,6 +58,7 @@ import type { MatchDetailRepository } from './match-detail.repository';
 import type {
   SoulsPoint,
   TimelineDeath,
+  TimelineKill,
   TimelinePositions,
   TimelinePurchase,
   TimelineSouls,
@@ -95,7 +96,10 @@ interface ArchiveTimeline {
   readonly context: MatchContext;
   /** The deaths of the tracked player, judged. */
   readonly judged: JudgedDeaths;
-  /** The hero each player of the match played, by their slot: the heroes of the killers. */
+  /**
+   * The hero each player of the match played, by their slot: the heroes of the killers and of the
+   * victims of the kills.
+   */
   readonly heroBySlot: ReadonlyMap<number, number>;
   /** The shop entries of the tracked player, sorted by time. */
   readonly shopEntries: readonly ItemEntry[];
@@ -189,6 +193,48 @@ function meanSoulsOf(
 }
 
 /**
+ * The hero a player of the match played, named by the hero catalogue.
+ *
+ * @param slot - The slot of the player.
+ * @param heroBySlot - The hero of each player of the match, by slot.
+ * @param heroes - The hero catalogue by id, or `null` when it could not be read.
+ * @returns The id of the hero, `null` when no player of the match has the slot, and its English
+ *   name, `null` when the hero is not known or the catalogue does not name it.
+ */
+function heroOf(
+  slot: number,
+  heroBySlot: ReadonlyMap<number, number>,
+  heroes: ReadonlyMap<number, HeroAsset> | null,
+): { readonly heroId: number | null; readonly name: string | null } {
+  const heroId = heroBySlot.get(slot) ?? null;
+  return { heroId, name: heroId === null ? null : (heroes?.get(heroId)?.name ?? null) };
+}
+
+/**
+ * The kills of the tracked player as the chart places them: the heroes they killed.
+ *
+ * @param context - The match.
+ * @param heroBySlot - The hero of each player of the match, by slot.
+ * @param heroes - The hero catalogue by id, or `null` when it could not be read.
+ * @returns The kills, sorted from the earliest, or `null` when they are unknown: the kills of the
+ *   match are known for all its players or for none of them.
+ */
+function killsOf(
+  context: MatchContext,
+  heroBySlot: ReadonlyMap<number, number>,
+  heroes: ReadonlyMap<number, HeroAsset> | null,
+): readonly TimelineKill[] | null {
+  return (
+    context.kills
+      ?.filter((kill) => kill.killerSlot === context.tracked.slot)
+      .map((kill) => ({
+        timeS: kill.timeS,
+        victim: heroOf(kill.victimSlot, heroBySlot, heroes),
+      })) ?? null
+  );
+}
+
+/**
  * The deaths of the tracked player as the tab lists them.
  *
  * Slot `0` is the world (troopers, the environment); any other slot is a hero. A killer slot that
@@ -204,24 +250,17 @@ function deathsOf(
   heroes: ReadonlyMap<number, HeroAsset> | null,
 ): readonly TimelineDeath[] | null {
   return (
-    read.judged.deaths?.map((death): TimelineDeath => {
-      const heroId = read.heroBySlot.get(death.killerSlot) ?? null;
-      return {
-        timeS: death.timeS,
-        killer:
-          death.killerSlot === 0
-            ? { kind: 'world' }
-            : {
-                kind: 'hero',
-                heroId,
-                name: heroId === null ? null : (heroes?.get(heroId)?.name ?? null),
-              },
-        timeToKillS: death.timeToKillS,
-        enemiesNear: death.nearby?.enemies ?? null,
-        alliesNear: death.nearby?.allies ?? null,
-        verdict: death.verdict,
-      };
-    }) ?? null
+    read.judged.deaths?.map((death): TimelineDeath => ({
+      timeS: death.timeS,
+      killer:
+        death.killerSlot === 0
+          ? { kind: 'world' }
+          : { kind: 'hero', ...heroOf(death.killerSlot, read.heroBySlot, heroes) },
+      timeToKillS: death.timeToKillS,
+      enemiesNear: death.nearby?.enemies ?? null,
+      alliesNear: death.nearby?.allies ?? null,
+      verdict: death.verdict,
+    })) ?? null
   );
 }
 
@@ -338,11 +377,7 @@ export class MatchTimelineService {
         endS,
       })),
       souls: soulsOf(context),
-      // The kills of the match are known for all its players or for none of them.
-      kills:
-        context.kills
-          ?.filter((kill) => kill.killerSlot === context.tracked.slot)
-          .map((kill) => kill.timeS) ?? null,
+      kills: killsOf(context, read.heroBySlot, catalogues.heroes),
       purchases: purchasesOf(read.shopEntries, catalogues.items),
       deaths: deathsOf(read, catalogues.heroes),
       avoidableCount: avoidableDeathCount(read.judged),

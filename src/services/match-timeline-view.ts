@@ -43,6 +43,25 @@ export type TimelineKiller =
     }
   | { readonly kind: 'world' };
 
+/** One kill of a hero by the tracked player. */
+export interface TimelineKill {
+  /** When the victim died, in seconds since the start of the match. */
+  readonly timeS: number;
+  /** The hero the tracked player killed. */
+  readonly victim: {
+    /**
+     * The hero the victim played, an id of the hero list; `null` when the archive names a victim
+     * slot that no player of the match has.
+     */
+    readonly heroId: number | null;
+    /**
+     * The English name of the hero, or `null` when the hero catalogue cannot be read or does not
+     * know the hero, or when the hero is not known: the page then writes "a hero".
+     */
+    readonly name: string | null;
+  };
+}
+
 /** One death of the tracked player, with who was near and the verdict. */
 export interface TimelineDeath {
   /** When the player died, in seconds since the start of the match. */
@@ -52,15 +71,16 @@ export interface TimelineDeath {
   /** How long the killer took to kill them, in seconds; `null` when the archive does not say. */
   readonly timeToKillS: number | null;
   /**
-   * The enemies near them when they died, the killer always counted when a hero killed; `null`
-   * when the positions of the other players are not known.
+   * The enemies near them when they died, the killer always counted when an enemy hero killed;
+   * `null` when the positions of the other players are not known.
    */
   readonly enemiesNear: number | null;
   /** The teammates near them when they died; `null` when the positions are not known. */
   readonly alliesNear: number | null;
   /**
    * `'avoidable'` when they died alone against several enemies, `'balanced'` for any other death
-   * by a hero; `null` for a death by the world, or when the positions are not known.
+   * by an enemy hero; `null` for any other death (by the world, a teammate, themselves), or when
+   * the positions are not known.
    */
   readonly verdict: DeathVerdict | null;
 }
@@ -144,10 +164,10 @@ export type TimelineTabView =
       /** The souls of the player and of their lane opponents. */
       readonly souls: TimelineSouls;
       /**
-       * When the tracked player killed a hero, sorted from the earliest; `null` when the kills are
+       * The heroes the tracked player killed, sorted from the earliest; `null` when the kills are
        * unknown (the death detail of some player of the match is incomplete).
        */
-      readonly kills: readonly number[] | null;
+      readonly kills: readonly TimelineKill[] | null;
       /** The shop items the player bought, sorted by time (one entry per purchase). */
       readonly purchases: readonly TimelinePurchase[];
       /**

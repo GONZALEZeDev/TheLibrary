@@ -655,10 +655,10 @@ export class ProjectionService {
   /**
    * Work out the review values of a match from its archive: the deaths of each phase, the first
    * purchase of each shop item and the deaths before it, the places on the scoreboard, the avoidable
-   * deaths. They come from four parts of the archive, each read on its own, so that a part that cannot be read costs
-   * the match its own values and no other: a scoreboard that cannot be read still leaves the deaths
-   * and the items, and so on. The metrics of the match do not depend on any of them, so the match is
-   * projected all the same, and the problem is told, once in a run.
+   * deaths. They come from four parts of the archive, each read on its own, so that a part that
+   * cannot be read costs the match its own values and no other: a scoreboard that cannot be read
+   * still leaves the deaths and the items, and so on. The metrics of the match do not depend on any
+   * of them, so the match is projected all the same, and the problem is told, once in a run.
    *
    * @param run - What the run counts, and what it told about.
    * @param tags - What every line about a match holds besides its own fields: the run it belongs to.

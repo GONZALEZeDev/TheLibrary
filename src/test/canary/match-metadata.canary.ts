@@ -33,8 +33,10 @@
  * Node's `fetch` instead of the Tauri plugin's) with the headers of its service, and the responses
  * are interpreted by its rules (`interpretResponse`). The detail then goes through what the app does
  * with it: the schema, the tracked player, the pruning, the envelope, the zstd codec, the facts
- * the detail page reads, the analysis (the context of the match, the snapshot counters and the
- * death details it reads, and the metrics projected from it), and what the match detail page reads
+ * the detail page reads, the movement paths of the twelve players and the positions of the deaths
+ * (what the timeline and the judgement of the avoidable deaths read), the analysis (the context of
+ * the match, the snapshot counters and the death details it reads, and the metrics projected from
+ * it), and what the match detail page reads
  * (the damage matrix and the damage sources projected from it, the tracked player's items, the
  * scoreboard, Paige's loadout in the hero catalogue, and the item catalogue that names the build,
  * the ability unlocks and the loadout by id and by class name). The review is checked on what it
@@ -55,6 +57,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { TauriHttpClient } from '../../adapters/tauri/tauri-http-client.adapter';
+import { judgeDeaths } from '../../core/analysis/avoidable-deaths';
 import { ANY_LENGTH_WINDOW, type Cohort } from '../../core/analysis/cohort';
 import { readDamageMatrix } from '../../core/analysis/damage-matrix';
 import { damageSourceKey, projectDamageSources } from '../../core/analysis/damage-sources';
@@ -221,6 +224,65 @@ const LIST_REQUEST: ApiRequest = {
 
 /** The part of the list the canary relies on: an array of rows that each carry a `match_id`. */
 const matchListSchema = z.array(z.looseObject({ match_id: z.int().min(1) })).min(1);
+
+/**
+ * The grid of the movement paths of a match: how many steps each coordinate of a sample goes up to.
+ * Every sample is decoded with it, so a resolution that disappears or is not a positive whole
+ * number would put every position of the map out of place.
+ */
+const pathGridSchema = z.looseObject({
+  x_resolution: z.int().positive(),
+  y_resolution: z.int().positive(),
+  paths: z.array(z.looseObject({ player_slot: z.int() })),
+});
+
+/**
+ * What one movement path needs to be read: the four world bounds of the player's own box, the
+ * coordinates of the samples, and their health. The canary is stricter than the app here: the app
+ * reads a path without a health array (it then tells a dead sample by its position alone), while
+ * the canary requires one, so that a payload that stops sending it is seen.
+ */
+const pathSamplesSchema = z.looseObject({
+  x_min: z.number(),
+  x_max: z.number(),
+  y_min: z.number(),
+  y_max: z.number(),
+  x_pos: z.array(z.number()),
+  y_pos: z.array(z.number()),
+  health: z.array(z.number()),
+});
+
+/**
+ * The part of a death detail that the avoidable-deaths judgement and the timeline read: the
+ * position (the `x` and `y` of the world), and how long the killer took.
+ */
+const deathPositionSchema = z.looseObject({
+  death_pos: z.looseObject({ x: z.number(), y: z.number() }),
+  time_to_kill_s: z.number(),
+});
+
+/** The part of a player that holds the details of their deaths (absent for a player who never died). */
+const playerDeathsSchema = z.looseObject({
+  death_details: z.array(z.unknown()).nullish(),
+});
+
+/** How many movement paths, and how many of them are readable, in a match. */
+interface PathShapeCounts {
+  /** Whether the grid (`x_resolution` and `y_resolution`) of the paths is readable. */
+  readonly gridReadable: boolean;
+  /** How many paths the match holds. */
+  readonly paths: number;
+  /** How many of them have the four bounds and `x_pos`, `y_pos` and `health` of the same length. */
+  readonly readablePaths: number;
+}
+
+/** How many death details a match holds, and how many of them are complete. */
+interface DeathShapeCounts {
+  /** How many death details the players of the match hold. */
+  readonly details: number;
+  /** How many of them have a numeric `death_pos.x` and `death_pos.y` and a numeric `time_to_kill_s`. */
+  readonly completeDetails: number;
+}
 
 /** A sender of requests that counts what it sends. */
 interface CountingApi {
@@ -538,6 +600,52 @@ function decreasingSteps(values: readonly number[]): number {
   return steps;
 }
 
+/**
+ * Count the movement paths of a match and the ones the app can read, the way the timeline and the
+ * judgement of the deaths read them.
+ *
+ * @param matchPaths - `match_info.match_paths` of the archive, or `undefined` when it has none.
+ * @returns The counts; a match with no paths, or whose grid is not readable, has none readable.
+ */
+function countPathShapes(matchPaths: unknown): PathShapeCounts {
+  const grid = pathGridSchema.safeParse(matchPaths);
+  if (!grid.success) {
+    return { gridReadable: false, paths: 0, readablePaths: 0 };
+  }
+  const readablePaths = grid.data.paths.filter((path) => {
+    const samples = pathSamplesSchema.safeParse(path);
+    // The three arrays must be as long as each other, and not empty.
+    return (
+      samples.success &&
+      samples.data.x_pos.length > 0 &&
+      samples.data.y_pos.length === samples.data.x_pos.length &&
+      samples.data.health.length === samples.data.x_pos.length
+    );
+  }).length;
+  return { gridReadable: true, paths: grid.data.paths.length, readablePaths };
+}
+
+/**
+ * Count the death details of the players of a match and the ones the app can place and time.
+ *
+ * @param players - The `match_info.players` of the archive.
+ * @returns The counts; a player with no list of details (never died) adds none.
+ */
+function countDeathShapes(players: readonly unknown[]): DeathShapeCounts {
+  let details = 0;
+  let completeDetails = 0;
+  for (const player of players) {
+    const parsed = playerDeathsSchema.safeParse(player);
+    for (const detail of parsed.success ? (parsed.data.death_details ?? []) : []) {
+      details += 1;
+      if (deathPositionSchema.safeParse(detail).success) {
+        completeDetails += 1;
+      }
+    }
+  }
+  return { details, completeDetails };
+}
+
 describe('deadlock-api match detail', () => {
   it('still goes through the archive pipeline and the review of the app', async ({ annotate }) => {
     const api = createCountingApi();
@@ -586,10 +694,18 @@ describe('deadlock-api match detail', () => {
       pruned.match_info.players.length,
       'players kept by the pruning (all of them are kept)',
     ).toBe(metadata.match_info.players.length);
-    const otherPaths = (pruned.match_info.match_paths?.paths ?? []).filter(
-      (path) => path.player_slot !== tracked.playerSlot,
+    // The movement paths of all the players are kept too: the avoidable deaths and the timeline need
+    // to know where everybody was. Every player slot must have its path, counted by slot.
+    const pathSlots = new Set(
+      (pruned.match_info.match_paths?.paths ?? []).map((p) => p.player_slot),
     );
-    expect(otherPaths.length, 'match_paths.paths of other players left after pruning').toBe(0);
+    const playersWithoutPath = pruned.match_info.players.filter(
+      (player) => !pathSlots.has(player.player_slot),
+    );
+    expect(
+      playersWithoutPath.length,
+      'players with no match_paths.paths entry left after pruning (all the paths are kept)',
+    ).toBe(0);
 
     // --- 5. The envelope, through the codec, and back ---
     const envelope = createArchiveEnvelope(pruned, accountId, Date.now());
@@ -602,6 +718,39 @@ describe('deadlock-api match detail', () => {
     await annotate(
       `archive: ${String(encoded.length)} bytes pruned, ${String(compressed.length)} bytes compressed`,
     );
+
+    // --- 5b. The paths and the deaths the timeline and the avoidable deaths read ---
+    // Counted on the decoded archive, so that what the codec gave back is what is checked. Counts
+    // and booleans only: a failure prints no coordinate.
+    const pathShapes = countPathShapes(decoded.payload.match_info.match_paths);
+    const deathShapes = countDeathShapes(decoded.payload.match_info.players);
+    // The judgement of the deaths of the app, as the projection runs it on the archive.
+    const judged = inStep('avoidable deaths', () => judgeDeaths(decoded));
+    await annotate(
+      `paths: ${String(pathShapes.readablePaths)} of ${String(pathShapes.paths)} readable, deaths: ${String(deathShapes.completeDetails)} of ${String(deathShapes.details)} details complete, positions known: ${String(judged.positionsKnown)}`,
+    );
+    expect(
+      pathShapes.gridReadable,
+      'match_paths.x_resolution and y_resolution are positive whole numbers',
+    ).toBe(true);
+    expect(pathShapes.paths, 'match_paths.paths in the archive (one per player)').toBe(
+      decoded.payload.match_info.players.length,
+    );
+    expect(
+      pathShapes.readablePaths,
+      'match_paths.paths with x_min, x_max, y_min, y_max and x_pos, y_pos, health of equal length',
+    ).toBe(pathShapes.paths);
+    expect(deathShapes.details, 'death details in the match (a match has deaths)').toBeGreaterThan(
+      0,
+    );
+    expect(
+      deathShapes.completeDetails,
+      'death details with a numeric death_pos.x, death_pos.y and time_to_kill_s',
+    ).toBe(deathShapes.details);
+    expect(
+      judged.positionsKnown,
+      'every player has a readable path, so the positions of the others are known',
+    ).toBe(true);
 
     // --- 6. The facts the detail page reads ---
     const facts = inStep('archive facts', () => summarizeArchive(decoded));

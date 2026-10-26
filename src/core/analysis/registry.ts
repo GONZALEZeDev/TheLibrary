@@ -34,7 +34,8 @@ import { teammateHealingMetric } from './metrics/teammate-healing.metric';
  * damage-source values of the match (`./damage-sources`): the damage of each source, the damage
  * dealt while each shop item was owned, and the time each ability was unlocked; and its review
  * values (`./review/review-values`): the deaths of each phase, the time each shop item was first
- * bought and the deaths before, the places on the scoreboard and Valve's top three.
+ * bought and the deaths before, the places on the scoreboard, Valve's top three and the number of
+ * avoidable deaths.
  *
  * Every projection is stored with the version that wrote it. Bumping the version makes every archive
  * be projected again at the next synchronisation, which projects the archived matches that lack a
@@ -48,9 +49,10 @@ import { teammateHealingMetric } from './metrics/teammate-healing.metric';
  * they are (a text, the layout of the page).
  *
  * The versions so far: 1 stored the values of the metrics; 2 also stored the damage-source values
- * of each match; 3 also stores the review values of each match.
+ * of each match; 3 also stored the review values of each match; 4 also stores the avoidable deaths
+ * of the tracked player.
  */
-export const PROJECTION_VERSION = 3;
+export const PROJECTION_VERSION = 4;
 
 /**
  * The thirteen metrics of the whole match, in the order they are shown: grouped by family (combat,

@@ -1,11 +1,12 @@
 /**
  * The review values the projection stores for a match: how many times the player died in each
  * phase, when they first bought each shop item and how many times they had died by then, the place
- * they took among the twelve players on each figure of the scoreboard, and Valve's top three.
+ * they took among the twelve players on each figure of the scoreboard, Valve's top three, and how
+ * many of their deaths were avoidable.
  *
  * They are plain numbers, stored one per key in the match's metrics, so that a later view can
  * compare the matches with each other and with the community without opening the archives again.
- * There are five families of keys, each with its own prefix, and one key apart:
+ * There are five families of keys, each with its own prefix, and two keys apart:
  * - `phase_deaths.<phase>`: the deaths of the player in the phase as played (all deaths, whoever or
  *   whatever caused them);
  * - `phase_deaths.<phase>.community_window`: their deaths over the stretch of the phase that the
@@ -15,12 +16,14 @@
  * - `deaths_before_item.<item id>`: the deaths of the player before that purchase;
  * - `scoreboard_place.<figure>` and `scoreboard_place_of.<figure>`: the place of the player on a
  *   figure of the scoreboard (1 for the best), and how many players have that figure;
- * - `valve_rank`: the place of the player in Valve's top three of the match, or `0` outside it.
+ * - `valve_rank`: the place of the player in Valve's top three of the match, or `0` outside it;
+ * - `avoidable_deaths`: how many of their deaths were avoidable (see `avoidable-deaths`).
  *
  * A value that is not known is not written, and never replaced by `0`: the deaths are unknown when
  * the death details of the archive are incomplete, the items when the archive holds none, the
- * places when it holds no scoreboard. A `0` is always a count of nothing, or a player outside the
- * top three.
+ * places when it holds no scoreboard, the avoidable deaths when the deaths or the positions of the
+ * other players are not known. A `0` is always a count of nothing, or a player outside the top
+ * three.
  *
  * @packageDocumentation
  */
@@ -54,9 +57,16 @@ const SCOREBOARD_PLACE_OF_PREFIX = 'scoreboard_place_of.';
 export const VALVE_RANK_KEY = 'valve_rank';
 
 /**
+ * The key of the number of avoidable deaths of the player in the match: `0` for a player who had
+ * none, whether they died or not. It has no prefix, as there is one value only, and it is left out
+ * when the count is not known.
+ */
+export const AVOIDABLE_DEATHS_KEY = 'avoidable_deaths';
+
+/**
  * The prefixes of the five families of keys, dot included, so that no other key can start with one
  * (`phase_deaths_x` does not, and `scoreboard_place_of.` does not start with `scoreboard_place.`).
- * {@link VALVE_RANK_KEY} is a key of its own and has none.
+ * {@link VALVE_RANK_KEY} and {@link AVOIDABLE_DEATHS_KEY} are keys of their own and have none.
  */
 export const REVIEW_KEY_PREFIXES = [
   PHASE_DEATHS_PREFIX,
@@ -163,6 +173,11 @@ export interface ReviewValuesInput {
   readonly items: readonly ItemEntry[] | null;
   /** The scoreboard of the match; `null` when it is not known. */
   readonly scoreboard: ScoreboardRead | null;
+  /**
+   * How many of the tracked player's deaths were avoidable (`avoidableDeathCount`); `null` when it
+   * is not known, which is when their deaths or the positions of the other players are not.
+   */
+  readonly avoidableDeaths: number | null;
 }
 
 /** One value to store, as a key and its number. */
@@ -287,13 +302,14 @@ function scoreboardEntries(scoreboard: ScoreboardRead): readonly ValueEntry[] {
 /**
  * Compute the review values to store for a match.
  *
- * Four kinds of values, see the module's description:
+ * Five kinds of values, see the module's description:
  * - the deaths of each phase the match reached and that lasts long enough to compare (see
  *   `PhaseSpan.comparable`), over the phase and, when the community data covers enough of it, over
  *   the stretch it covers (`communitySpan`);
  * - the first purchase of each shop item and the deaths before it;
  * - the place of the tracked player on each figure of the scoreboard, and how many players have it;
- * - their place in Valve's top three.
+ * - their place in Valve's top three;
+ * - their avoidable deaths, as counted by the caller.
  *
  * Each kind is written when its input is known, whatever the others are: a match whose death
  * details are incomplete still has its items and its places.
@@ -302,10 +318,12 @@ function scoreboardEntries(scoreboard: ScoreboardRead): readonly ValueEntry[] {
  * @returns The values by key; empty when nothing is known.
  */
 export function projectReviewValues(input: ReviewValuesInput): ReadonlyMap<string, number> {
-  const { durationS, deathTimesS, items, scoreboard } = input;
+  const { durationS, deathTimesS, items, scoreboard, avoidableDeaths } = input;
   return new Map([
     ...(deathTimesS === null ? [] : phaseDeathEntries(durationS, deathTimesS)),
     ...(items === null ? [] : itemEntries(items, deathTimesS)),
     ...(scoreboard === null ? [] : scoreboardEntries(scoreboard)),
+    // A count that is not known is not written: a `0` would say the player had no avoidable death.
+    ...(avoidableDeaths === null ? [] : [[AVOIDABLE_DEATHS_KEY, avoidableDeaths] as const]),
   ]);
 }

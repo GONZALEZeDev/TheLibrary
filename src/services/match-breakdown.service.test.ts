@@ -35,7 +35,11 @@ import type { DamageBreakdown, SourceKind } from '../core/analysis/damage-breakd
 import { damageSourceKey } from '../core/analysis/damage-sources';
 import { PERSONAL_WINDOW } from '../core/analysis/insights/thresholds';
 import { communityWindowKey, METRICS, PROJECTION_VERSION } from '../core/analysis/registry';
-import { REVIEW_KEY_PREFIXES, VALVE_RANK_KEY } from '../core/analysis/review/review-values';
+import {
+  AVOIDABLE_DEATHS_KEY,
+  REVIEW_KEY_PREFIXES,
+  VALVE_RANK_KEY,
+} from '../core/analysis/review/review-values';
 import {
   parseItemCatalogue,
   parseRankCatalogue,
@@ -100,6 +104,7 @@ function isMetricOrReviewKey(key: string): boolean {
   return (
     METRIC_KEYS.has(key) ||
     key === VALVE_RANK_KEY ||
+    key === AVOIDABLE_DEATHS_KEY ||
     REVIEW_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))
   );
 }

@@ -245,8 +245,8 @@ describe('METRICS', () => {
 });
 
 describe('PROJECTION_VERSION', () => {
-  it('is 3: the projection also stores the review values of each match', () => {
-    expect(PROJECTION_VERSION).toBe(3);
+  it('is 4: the projection also stores the avoidable deaths of each match', () => {
+    expect(PROJECTION_VERSION).toBe(4);
   });
 });
 

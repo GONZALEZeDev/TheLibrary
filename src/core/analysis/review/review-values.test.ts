@@ -21,6 +21,7 @@ import {
 import { PHASES } from '../phases';
 import { METRICS, communityWindowKey } from '../registry';
 import {
+  AVOIDABLE_DEATHS_KEY,
   REVIEW_KEY_PREFIXES,
   VALVE_RANK_KEY,
   deathsBeforeItemKey,
@@ -105,7 +106,14 @@ function scoreboardOf(
  * @returns The input.
  */
 function input(overrides: Partial<ReviewValuesInput> = {}): ReviewValuesInput {
-  return { durationS: 2_400, deathTimesS: null, items: null, scoreboard: null, ...overrides };
+  return {
+    durationS: 2_400,
+    deathTimesS: null,
+    items: null,
+    scoreboard: null,
+    avoidableDeaths: null,
+    ...overrides,
+  };
 }
 
 /**
@@ -128,9 +136,10 @@ describe('the keys of the review values', () => {
     expect(scoreboardPlaceKey('netWorth')).toBe('scoreboard_place.netWorth');
     expect(scoreboardPlaceOfKey('lastHits')).toBe('scoreboard_place_of.lastHits');
     expect(VALVE_RANK_KEY).toBe('valve_rank');
+    expect(AVOIDABLE_DEATHS_KEY).toBe('avoidable_deaths');
   });
 
-  it('lists the prefixes every key but the rank starts with', () => {
+  it('lists the prefixes every key but the rank and the avoidable deaths start with', () => {
     expect(REVIEW_KEY_PREFIXES).toEqual([
       'phase_deaths.',
       'item_bought_at.',
@@ -152,6 +161,9 @@ describe('the keys of the review values', () => {
       expect(REVIEW_KEY_PREFIXES.filter((prefix) => key.startsWith(prefix))).toHaveLength(1);
     }
     expect(REVIEW_KEY_PREFIXES.some((prefix) => VALVE_RANK_KEY.startsWith(prefix))).toBe(false);
+    expect(REVIEW_KEY_PREFIXES.some((prefix) => AVOIDABLE_DEATHS_KEY.startsWith(prefix))).toBe(
+      false,
+    );
   });
 });
 
@@ -388,6 +400,37 @@ describe('projectReviewValues', () => {
     });
   });
 
+  describe('the avoidable deaths', () => {
+    it('writes the count it is given under its own key', () => {
+      const values = projectReviewValues(input({ avoidableDeaths: 3 }));
+
+      expect(values).toEqual(new Map([[AVOIDABLE_DEATHS_KEY, 3]]));
+    });
+
+    it('writes 0 for a player who had no avoidable death', () => {
+      // A count of nothing is known and written: only an unknown count is left out.
+      const values = projectReviewValues(input({ avoidableDeaths: 0 }));
+
+      expect(values.get(AVOIDABLE_DEATHS_KEY)).toBe(0);
+    });
+
+    it('writes no key when the count is not known', () => {
+      const values = projectReviewValues(
+        input({ avoidableDeaths: null, deathTimesS: [100, 700], items: [shopItem(1, 300)] }),
+      );
+
+      expect(values.has(AVOIDABLE_DEATHS_KEY)).toBe(false);
+      expect(values.size).toBeGreaterThan(0);
+    });
+
+    it('is written whatever the other parts are', () => {
+      // The death times are unknown, but the count came from the positions: it is still stored.
+      const values = projectReviewValues(input({ deathTimesS: null, avoidableDeaths: 2 }));
+
+      expect(values).toEqual(new Map([[AVOIDABLE_DEATHS_KEY, 2]]));
+    });
+  });
+
   it('writes nothing for a match that holds nothing', () => {
     expect(projectReviewValues(input())).toEqual(new Map());
   });
@@ -404,6 +447,7 @@ describe('projectReviewValues', () => {
       deathTimesS: [100, 700, 2_000],
       items: [shopItem(FIRST_ITEM_ID, 300), abilityEntry(ABILITY_ID, 60)],
       scoreboard: scoreboardOf({ [TRACKED_SLOT]: { mvpRank: 1 } }),
+      avoidableDeaths: 1,
     });
     const built = [
       ...PHASES.flatMap((phase) => [phaseDeathsKey(phase), phaseDeathsWindowKey(phase)]),
@@ -414,6 +458,7 @@ describe('projectReviewValues', () => {
         scoreboardPlaceOfKey(stat),
       ]),
       VALVE_RANK_KEY,
+      AVOIDABLE_DEATHS_KEY,
     ];
     // The keys of the metrics, with their community windows, and the damage keys the damage
     // builders make: the other values of a match's projection.
@@ -425,6 +470,7 @@ describe('projectReviewValues', () => {
     ];
 
     expect(projected.size).toBeGreaterThan(0);
+    expect(projected.has(AVOIDABLE_DEATHS_KEY)).toBe(true);
     // No review key is a metric key or starts a family of damage keys...
     for (const key of new Set([...projected.keys(), ...built])) {
       expect(key.startsWith(damageSourceKey('')), key).toBe(false);
@@ -441,6 +487,7 @@ describe('projectReviewValues', () => {
         key,
       ).toBe(false);
       expect(key, key).not.toBe(VALVE_RANK_KEY);
+      expect(key, key).not.toBe(AVOIDABLE_DEATHS_KEY);
     }
   });
 });

@@ -27,6 +27,10 @@
       "empty": "Aucune partie sur cette période."
     }
   },
+  "result": {
+    "winShort": "V",
+    "lossShort": "D"
+  },
   "matches": {
     "title": "Parties",
     "empty": {

@@ -27,6 +27,10 @@
       "empty": "No match in this period."
     }
   },
+  "result": {
+    "winShort": "W",
+    "lossShort": "L"
+  },
   "matches": {
     "title": "Matches",
     "empty": {

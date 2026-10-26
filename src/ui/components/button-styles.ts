@@ -30,5 +30,11 @@ export const BUTTON_CLASSES = {
 /** The name of a look of {@link BUTTON_CLASSES}. */
 export type ButtonLook = keyof typeof BUTTON_CLASSES;
 
+/**
+ * Lays a button out as a row, so that its icon sits left of its text. Applied only to a button that
+ * has an icon: a text-only button keeps the plain layout it always had.
+ */
+export const BUTTON_WITH_ICON_CLASS = 'inline-flex items-center justify-center gap-2';
+
 /** Where the buttons of a dialog sit: on the right, under its text. */
 export const DIALOG_ACTIONS_CLASS = 'mt-6 flex justify-end gap-3';

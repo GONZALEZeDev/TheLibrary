@@ -24,6 +24,7 @@ import type { LinkedAccount } from '../../../core/account/linked-account';
 import type { AccountId } from '../../../core/domain/account';
 import { toAppError } from '../../../core/errors/app-error';
 import { Dialog } from '../../components/Dialog';
+import { Panel } from '../../components/Panel';
 import { ACCOUNT_QUERY_KEY, useLinkedAccount, useUnlinkAccount } from '../account/use-account';
 import { AccountSummary, type Confirmation } from './AccountSummary';
 import { UnlinkConfirmation } from './UnlinkConfirmation';
@@ -163,7 +164,7 @@ export function AccountSection() {
   }, [hasOutcome, confirmationClosed]);
 
   return (
-    <section aria-labelledby={headingId} className="rounded-xl border border-border bg-surface p-6">
+    <Panel padding="roomy" aria-labelledby={headingId}>
       <h2 id={headingId} className="text-base font-medium">
         {t('settings.account.title')}
       </h2>
@@ -190,6 +191,6 @@ export function AccountSection() {
           onConfirm={confirmUnlink}
         />
       </Dialog>
-    </section>
+    </Panel>
   );
 }

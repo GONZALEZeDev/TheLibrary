@@ -19,6 +19,7 @@ import type { TFunction } from 'i18next';
 import { useId, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TimelineTabView } from '../../../services/match-timeline-view';
+import { Panel } from '../../components/Panel';
 import { formatGameTime } from './analysis-format';
 import { killerName } from './DeathList';
 import {
@@ -288,7 +289,7 @@ export function TimelineChart({ view, selectedDeath, onSelectDeath }: TimelineCh
       <h2 id={titleId} className="text-base font-semibold">
         {title}
       </h2>
-      <div className="rounded-xl border border-border bg-surface p-3">
+      <Panel as="div" padding="normal">
         <svg
           role="img"
           aria-label={title}
@@ -336,7 +337,7 @@ export function TimelineChart({ view, selectedDeath, onSelectDeath }: TimelineCh
         {view.kills === null && (
           <p className="mt-2 text-xs text-fg-muted">{t('timeline.chart.noKills')}</p>
         )}
-      </div>
+      </Panel>
     </section>
   );
 }

@@ -24,6 +24,7 @@ import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { PHASE_STATS, type PhaseStat } from '../../../core/analysis/phases';
 import type { PhaseCellView, PhaseColumnView } from '../../../services/analysis-view';
+import { PANEL_CLASSES } from '../../components/Panel';
 import {
   formatDifference,
   formatGameTime,
@@ -187,7 +188,7 @@ export function PhaseTable({ phases }: PhaseTableProps) {
   return (
     // The box does not clip what it holds (no `overflow-hidden`): what a cell shows next to itself,
     // like a tooltip, may leave the box. The corner cell follows the corner of the box instead.
-    <div className="rounded-xl border border-border bg-surface">
+    <div className={PANEL_CLASSES.base}>
       <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm tabular-nums">
         <caption className="px-3 py-2 text-left text-base font-semibold">
           {t('analysis.phaseTable.title')}

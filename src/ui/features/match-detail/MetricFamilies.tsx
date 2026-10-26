@@ -21,6 +21,8 @@ import { DURATION_WINDOWS, type DurationWindow } from '../../../core/analysis/co
 import { RANK_TIER_NAMES } from '../../../core/domain/rank';
 import type { FamilyView, MetricRowView } from '../../../services/analysis-view';
 import type { CommunityState } from '../../../services/community-placement';
+import { PANEL_CLASSES } from '../../components/Panel';
+import { formatMediumDate, MS_PER_SECOND } from '../../format/date';
 import {
   formatDifference,
   formatMetricValue,
@@ -106,7 +108,8 @@ function availableSentence(
   if (!stale) {
     return sentence;
   }
-  const date = new Intl.DateTimeFormat(language, { dateStyle: 'medium' }).format(fetchedAt);
+  // `fetchedAt` is in milliseconds, the shared formatter wants seconds.
+  const date = formatMediumDate(Math.floor(fetchedAt / MS_PER_SECOND), language);
   return `${sentence} ${t('analysis.cohort.stale', { date })}`;
 }
 
@@ -268,7 +271,9 @@ export function MetricFamilies({ families, community, communityLoading }: Metric
                 >
                   {t(`analysis.family.${family}`)}
                 </h3>
-                <ul className="divide-y divide-border rounded-xl border border-border bg-surface p-1">
+                <ul
+                  className={`divide-y divide-border ${PANEL_CLASSES.base} ${PANEL_CLASSES.padding.tight}`}
+                >
                   {rows.map((row) => renderRow(row, t, i18n.language))}
                 </ul>
               </section>

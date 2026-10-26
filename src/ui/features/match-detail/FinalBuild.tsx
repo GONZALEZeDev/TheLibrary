@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next';
 import { ITEM_SLOTS, type ItemSlot } from '../../../core/deadlock-api/assets.schema';
 import type { BuildItemView } from '../../../services/match-breakdown-view';
 import { GamePicture } from '../../components/GamePicture';
+import { Panel } from '../../components/Panel';
 import { formatGameTime } from './analysis-format';
 
 /** Props of {@link FinalBuild}. */
@@ -91,7 +92,7 @@ export function FinalBuild({ build }: FinalBuildProps) {
               const items = build.filter((item) => (item.slot ?? 'other') === group);
               const groupTitleId = `${titleId}-${group}`;
               return items.length === 0 ? null : (
-                <div key={group} className="rounded-xl border border-border bg-surface p-3">
+                <Panel as="div" key={group} padding="normal">
                   <h3
                     id={groupTitleId}
                     className="mb-2 text-xs font-medium tracking-wide text-fg-muted uppercase"
@@ -101,7 +102,7 @@ export function FinalBuild({ build }: FinalBuildProps) {
                   <ul aria-labelledby={groupTitleId} className="space-y-2">
                     {items.map((item) => renderItem(item, t))}
                   </ul>
-                </div>
+                </Panel>
               );
             })}
           </div>

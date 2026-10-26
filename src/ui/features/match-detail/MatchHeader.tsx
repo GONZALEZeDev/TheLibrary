@@ -16,6 +16,7 @@ import type { HeroAsset } from '../../../core/domain/hero';
 import { matchTypeOf } from '../../../core/domain/match-type';
 import type { MatchListItem } from '../../../services/matches.service';
 import { GamePicture } from '../../components/GamePicture';
+import { formatMediumDateTime, MS_PER_SECOND } from '../../format/date';
 import { formatDuration } from '../../format/duration';
 import { formatMetricValue } from './analysis-format';
 
@@ -52,11 +53,8 @@ function renderFigure(label: string, value: string) {
  */
 export function MatchHeader({ match, hero }: MatchHeaderProps) {
   const { t, i18n } = useTranslation();
-  const dateTime = new Intl.DateTimeFormat(i18n.language, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  });
-  const startedAt = new Date(match.startTime * 1000);
+  // The machine-readable form of the start, for the `dateTime` of the `<time>` element.
+  const startedAtIso = new Date(match.startTime * MS_PER_SECOND).toISOString();
   // `null` for a pair of modes the app does not know: nothing is shown rather than a wrong label.
   const matchType = matchTypeOf(match);
 
@@ -78,7 +76,7 @@ export function MatchHeader({ match, hero }: MatchHeaderProps) {
         <span>{hero?.name ?? t('matches.table.unknownHero', { id: match.heroId })}</span>
       </li>
       <li>
-        <time dateTime={startedAt.toISOString()}>{dateTime.format(startedAt)}</time>
+        <time dateTime={startedAtIso}>{formatMediumDateTime(match.startTime, i18n.language)}</time>
       </li>
       {matchType !== null && <li>{t(`matchType.${matchType}`)}</li>}
       {/* Written like the result column of the match list: the word, and a colour. */}

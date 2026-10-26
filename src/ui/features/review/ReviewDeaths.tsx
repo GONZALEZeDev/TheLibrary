@@ -39,6 +39,7 @@ import type { TFunction } from 'i18next';
 import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Review } from '../../../services/review-view';
+import { formatMediumDateTime } from '../../format/date';
 import { REVIEW_LINK, REVIEW_SECTION_TITLE } from './review-layout';
 import { ReviewRowList } from './ReviewRowList';
 
@@ -56,9 +57,6 @@ export interface ReviewDeathsProps {
    */
   readonly recentCount: number;
 }
-
-/** Milliseconds in a second: start times are in seconds, the date formatter takes milliseconds. */
-const MS_PER_SECOND = 1_000;
 
 /**
  * The content of the resistance section.
@@ -104,7 +102,6 @@ function renderAvoidableMatches(
   }
   // The date and the time of the match: two matches of one day with as many avoidable deaths would
   // otherwise be two links of the same name.
-  const dayAndTime = new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' });
   return (
     <div className="space-y-1">
       <p id={labelId} className="text-sm font-medium">
@@ -121,7 +118,7 @@ function renderAvoidableMatches(
               className={REVIEW_LINK}
             >
               {t('review.deaths.avoidableLink', {
-                date: dayAndTime.format(match.startTime * MS_PER_SECOND),
+                date: formatMediumDateTime(match.startTime, language),
                 count: match.value,
               })}
             </Link>

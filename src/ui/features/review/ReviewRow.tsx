@@ -38,6 +38,7 @@ import { useTranslation } from 'react-i18next';
 import type { ReviewMark } from '../../../core/analysis/review/review-rules';
 import type { ReviewMatchValue, ReviewRow as ReviewRowData } from '../../../services/review-view';
 import type { ReviewTab } from '../../app/router';
+import { formatMediumDate, formatMediumDateTime } from '../../format/date';
 import { INSIGHT_STYLE, NO_VALUE } from '../match-detail/analysis-format';
 import { EvidencePanel } from '../match-detail/EvidencePanel';
 import {
@@ -66,9 +67,6 @@ export interface ReviewRowProps {
    */
   readonly tab?: ReviewTab;
 }
-
-/** How many milliseconds make a second: the start of a match is in seconds. */
-const MS_PER_SECOND = 1_000;
 
 /** What stands between the text of a match in the evidence panel and the word of its flag. */
 const EVIDENCE_FLAG_SEPARATOR = '·';
@@ -193,7 +191,7 @@ function renderTierCell(row: ReviewRowData, t: TFunction, language: string) {
  *
  * @param match - The match.
  * @param unit - What the value of the point counts.
- * @param dateFormat - How the start of the match is written.
+ * @param writeDate - How the start of the match is written: by its day, or by its day and time.
  * @param t - Translation function.
  * @param language - The language of the interface.
  * @returns The date and the value of the match, and the word of the flag after a match that was weak
@@ -202,12 +200,12 @@ function renderTierCell(row: ReviewRowData, t: TFunction, language: string) {
 function matchLine(
   match: ReviewMatchValue,
   unit: ReviewRowData['unit'],
-  dateFormat: Intl.DateTimeFormat,
+  writeDate: typeof formatMediumDate,
   t: TFunction,
   language: string,
 ): string {
   const line = t('review.evidence.match', {
-    date: dateFormat.format(match.startTime * MS_PER_SECOND),
+    date: writeDate(match.startTime, language),
     value: formatReviewValue(match.value, unit, language, t),
   });
   return match.mark === null
@@ -247,17 +245,15 @@ function numberRepeats(lines: readonly string[]): string[] {
  * @returns The lines, all different from one another.
  */
 function evidenceLines(row: ReviewRowData, t: TFunction, language: string): string[] {
-  const day = new Intl.DateTimeFormat(language, { dateStyle: 'medium' });
-  const dayAndTime = new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' });
   const dated = row.matches.map((match) => ({
     match,
-    line: matchLine(match, row.unit, day, t, language),
+    line: matchLine(match, row.unit, formatMediumDate, t, language),
   }));
   return numberRepeats(
     dated.map(({ match, line }) =>
       dated.filter((other) => other.line === line).length === 1
         ? line
-        : matchLine(match, row.unit, dayAndTime, t, language),
+        : matchLine(match, row.unit, formatMediumDateTime, t, language),
     ),
   );
 }

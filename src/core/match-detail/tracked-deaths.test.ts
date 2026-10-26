@@ -287,6 +287,52 @@ describe('readTrackedDeaths', () => {
     ]);
   });
 
+  it('reads an unknown time to kill (-1) as null', () => {
+    // The API writes -1 when it does not know the time to kill: unknown, never a negative time.
+    const deaths = readTrackedDeaths(
+      archive({
+        deaths: 2,
+        death_details: [rawPlacedDeath(100, { time_to_kill_s: -1 }), rawPlacedDeath(200)],
+      }),
+    );
+
+    expect(deaths).toEqual([
+      expect.objectContaining({ timeS: 100, timeToKillS: null }),
+      expect.objectContaining({ timeS: 200, timeToKillS: 7.5 }),
+    ]);
+  });
+
+  it('reads an unknown respawn wait (-1) as null', () => {
+    const deaths = readTrackedDeaths(
+      archive({
+        deaths: 2,
+        death_details: [rawPlacedDeath(100, { death_duration_s: -1 }), rawPlacedDeath(200)],
+      }),
+    );
+
+    expect(deaths).toEqual([
+      expect.objectContaining({ timeS: 100, respawnS: null }),
+      expect.objectContaining({ timeS: 200, respawnS: 20 }),
+    ]);
+  });
+
+  it('refuses a time to kill that is no number with the field path only', () => {
+    const error = catchAppError(() =>
+      readTrackedDeaths(
+        archive({
+          deaths: 2,
+          death_details: [rawPlacedDeath(100), rawPlacedDeath(200, { time_to_kill_s: 'S3CR3T' })],
+        }),
+      ),
+    );
+
+    expect(error.kind).toBe('invalid_payload');
+    expect(error.context.issue).toBe('players.3.death_details.1.time_to_kill_s: invalid_type');
+    expect(JSON.stringify({ message: error.message, context: error.context })).not.toContain(
+      'S3CR3T',
+    );
+  });
+
   it('keeps a death to troopers with killer slot 0', () => {
     const deaths = readTrackedDeaths(
       archive({ deaths: 1, death_details: [rawPlacedDeath(100, { killer_player_slot: 0 })] }),

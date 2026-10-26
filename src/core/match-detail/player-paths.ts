@@ -15,6 +15,8 @@
  * line between two deaths, from the start of the match (no shift) to its end (the shift that the
  * extra samples make).
  *
+ * Each path is read on its own: one whose fields (or those of its player) are not what is expected
+ * is left out, like a path whose samples cannot be read, rather than the paths of the whole match.
  * Like every reader of an archive, it never puts a value of the payload in an error: the payload
  * belongs to players (account ids), and the errors end up in the logs.
  *
@@ -37,8 +39,8 @@ export interface MapPoint {
 const TRACK = Symbol('player path track');
 
 /**
- * The samples of a path as the payload holds them: the arrays are the payload's own (not copies),
- * and are only read. They all have the same length.
+ * The samples of a path: the arrays are the validated copies the schema of the path gives, and are
+ * only read. They all have the same length.
  */
 interface PathSamples {
   /** The coordinates of each sample, from 0 to the resolution. */
@@ -93,8 +95,9 @@ export interface PlayerPath {
 /** The movement paths of a match. */
 export interface PlayerPaths {
   /**
-   * The readable paths, by slot. A player whose path is unreadable (its arrays differ in length or
-   * are empty, another path has the same slot) has none, and neither has a path with no player.
+   * The readable paths, by slot. A player whose path is unreadable (a field of the path or of the
+   * player has the wrong type, its arrays differ in length or are empty, another path has the same
+   * slot) has none, and neither has a path with no player.
    */
   readonly bySlot: ReadonlyMap<number, PlayerPath>;
 }
@@ -117,12 +120,15 @@ const pathSchema = z.looseObject({
   health: z.array(z.number()).nullish(),
 });
 
-/** The fields of `match_info.match_paths` that are needed (loose, like the path). */
+/**
+ * The fields of `match_info.match_paths` that are needed (loose, like the path). Each path is only
+ * checked to be there: it is read on its own with {@link pathSchema}.
+ */
 const matchPathsSchema = z.looseObject({
   interval_s: z.number().positive(),
   x_resolution: z.int().positive(),
   y_resolution: z.int().positive(),
-  paths: z.array(pathSchema),
+  paths: z.array(z.unknown()),
 });
 
 /**
@@ -143,11 +149,12 @@ const playerSchema = z.looseObject({
  * computed here, once.
  *
  * @param envelope - The decoded archive; it is not modified.
- * @returns The paths, or `null` when the match has no `match_paths`.
- * @throws AppError of kind `invalid_payload` when a field is not what is expected. The context
- *   `issue` is `match_paths.<path>: <code>` (`<path>` for instance `paths.<position>.x_pos.<index>`)
- *   or `players.<index>.<path>: <code>` (`<index>` being the position of the player in
- *   `match_info.players`); never a value of the payload.
+ * @returns The paths, or `null` when the match has no `match_paths`. A path whose fields, or those
+ *   of its player, are not what is expected is left out.
+ * @throws AppError of kind `invalid_payload` when a field of `match_paths` itself (the interval,
+ *   the resolutions, the list of the paths) is not what is expected: no path can be read then. The
+ *   context `issue` is `match_paths.<path>: <code>` (`<path>` for instance `interval_s`); never a
+ *   value of the payload.
  */
 export function readPlayerPaths(envelope: ArchiveEnvelope): PlayerPaths | null {
   const matchInfo = envelope.payload.match_info;
@@ -155,13 +162,11 @@ export function readPlayerPaths(envelope: ArchiveEnvelope): PlayerPaths | null {
     return null;
   }
   const matchPaths = readArchiveFields(matchPathsSchema, matchInfo.match_paths, 'match_paths');
-  const players = matchInfo.players.map((entry, index) =>
-    readArchiveFields(playerSchema, entry, `players.${String(index)}`),
-  );
-  const playersBySlot = uniqueBySlot(players);
+  // A player or a path whose fields cannot be read is left out here: its path is then unknown.
+  const playersBySlot = uniqueBySlot(readableEntries(playerSchema, matchInfo.players));
 
   const bySlot = new Map<number, PlayerPath>();
-  for (const [slot, path] of uniqueBySlot(matchPaths.paths)) {
+  for (const [slot, path] of uniqueBySlot(readableEntries(pathSchema, matchPaths.paths))) {
     const player = playersBySlot.get(slot);
     const samples: PathSamples = {
       xPos: path.x_pos,
@@ -209,6 +214,23 @@ export function positionAt(path: PlayerPath, timeS: number): MapPoint | null {
     x: bounds.xMin + (x / resolution.x) * (bounds.xMax - bounds.xMin),
     y: bounds.yMin + (y / resolution.y) * (bounds.yMax - bounds.yMin),
   };
+}
+
+/**
+ * Read each entry of a list on its own with a schema, keeping the ones it validates.
+ *
+ * @param schema - The schema of an entry.
+ * @param entries - The entries, as the payload holds them.
+ * @returns The validated entries, in their order; an entry the schema refuses is left out.
+ */
+function readableEntries<Schema extends z.ZodType>(
+  schema: Schema,
+  entries: readonly unknown[],
+): z.output<Schema>[] {
+  return entries.flatMap((entry) => {
+    const parsed = schema.safeParse(entry);
+    return parsed.success ? [parsed.data] : [];
+  });
 }
 
 /**
@@ -332,8 +354,9 @@ function deadRunStarts(samples: PathSamples): readonly number[] {
 /**
  * Read the clock of a path at a second: the straight line between the anchors around it.
  *
- * Before the first anchor and past the last one the shift stays that of the nearest anchor. Two
- * anchors at the same second give the later one's shift.
+ * Before the first anchor and past the last one the shift stays that of the nearest anchor. Of two
+ * anchors at the same second, the earlier one in the order gives the shift at that second, and the
+ * line after it starts from the later one.
  *
  * @param anchors - The clock, ordered by time.
  * @param timeS - The second of the match.
@@ -345,11 +368,10 @@ function shiftAt(anchors: readonly ShiftAnchor[], timeS: number): number {
     return previous?.shift ?? 0;
   }
   for (const next of anchors.slice(1)) {
+    // `timeS` is past `previous` here, so `next` is later still and the span is never 0.
     if (timeS <= next.timeS) {
       const span = next.timeS - previous.timeS;
-      return span === 0
-        ? next.shift
-        : previous.shift + ((timeS - previous.timeS) / span) * (next.shift - previous.shift);
+      return previous.shift + ((timeS - previous.timeS) / span) * (next.shift - previous.shift);
     }
     previous = next;
   }

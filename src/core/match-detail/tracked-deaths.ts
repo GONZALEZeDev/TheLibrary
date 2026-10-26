@@ -40,6 +40,10 @@ const playerDeathTimesSchema = z.looseObject({
  *
  * The position is required here, unlike in {@link playerDeathTimesSchema}: a death that cannot be
  * placed cannot be judged. The rest of each object is loose and ignored.
+ *
+ * The two durations accept any number: the API writes `-1` when it does not know the time to kill
+ * (about 2 % of the deaths), so a negative value is not an invalid payload. It means unknown, and
+ * {@link readTrackedDeaths} reads it as `null`, never as a time.
  */
 const playerDeathDetailsSchema = z.looseObject({
   deaths: archiveCount,
@@ -48,8 +52,8 @@ const playerDeathDetailsSchema = z.looseObject({
       z.looseObject({
         game_time_s: z.number().nonnegative(),
         killer_player_slot: archiveCount,
-        time_to_kill_s: z.number().nonnegative().nullish(),
-        death_duration_s: z.number().nonnegative().nullish(),
+        time_to_kill_s: z.number().nullish(),
+        death_duration_s: z.number().nullish(),
         death_pos: z.looseObject({ x: z.number(), y: z.number() }),
       }),
     )
@@ -66,9 +70,12 @@ export interface TrackedDeath {
   readonly timeS: number;
   /** The slot of the hero who killed them, `0` when no hero did (the environment, a trooper…). */
   readonly killerSlot: number;
-  /** How long the killer took to kill them, in seconds; `null` when the payload does not say. */
+  /**
+   * How long the killer took to kill them, in seconds; `null` when the payload does not say, or
+   * writes `-1` because the API does not know it.
+   */
   readonly timeToKillS: number | null;
-  /** How long they waited to respawn, in seconds; `null` when the payload does not say. */
+  /** How long they waited to respawn, in seconds; `null` when the payload does not say (or `-1`). */
   readonly respawnS: number | null;
   /** Where they died, on the map. */
   readonly position: MapPoint;
@@ -122,6 +129,17 @@ function completeDetails<Detail>(player: {
     return null;
   }
   return details;
+}
+
+/**
+ * A duration of a death when the payload knows it.
+ *
+ * @param seconds - The duration as the payload gives it: left out, `null`, or a number; the API
+ *   writes `-1` when it does not know the time to kill.
+ * @returns The duration, or `null` when it is left out or negative (unknown, never a time).
+ */
+function knownDuration(seconds: number | null | undefined): number | null {
+  return seconds === null || seconds === undefined || seconds < 0 ? null : seconds;
 }
 
 /**
@@ -180,9 +198,10 @@ export function readTrackedDeaths(envelope: ArchiveEnvelope): readonly TrackedDe
     .map((death): TrackedDeath => ({
       timeS: death.game_time_s,
       killerSlot: death.killer_player_slot,
-      // The API may leave out the durations of a death: they are unknown then, not zero.
-      timeToKillS: death.time_to_kill_s ?? null,
-      respawnS: death.death_duration_s ?? null,
+      // The API may leave out the durations of a death, or write -1 when it does not know them:
+      // they are unknown then, not zero and not a negative time.
+      timeToKillS: knownDuration(death.time_to_kill_s),
+      respawnS: knownDuration(death.death_duration_s),
       position: { x: death.death_pos.x, y: death.death_pos.y },
     }))
     .toSorted((first, second) => first.timeS - second.timeS);

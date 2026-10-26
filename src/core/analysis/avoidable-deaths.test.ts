@@ -266,6 +266,29 @@ describe('judgeDeaths and avoidableDeathCount', () => {
     expect(avoidableDeathCount(judged)).toBe(0);
   });
 
+  it.each([
+    ['a teammate', 10],
+    ['the player themselves', TRACKED_SLOT],
+    // No player of a match of twelve has slot 13: the side of that killer is not known.
+    ['no player of the match', 13],
+  ])('leaves a death killed by %s without a label', (_name, killerSlot) => {
+    // Two enemies are near, but the killer is no enemy: not counted among them, and not judged.
+    const judged = judgeDeaths(
+      archive({
+        deaths: [{ killerSlot }],
+        placements: new Map([
+          [3, east(500)],
+          [4, east(1_000)],
+        ]),
+      }),
+    );
+
+    expect(judged.deaths).toEqual([
+      expect.objectContaining({ nearby: { enemies: 2, allies: 0 }, verdict: null }),
+    ]);
+    expect(avoidableDeathCount(judged)).toBe(0);
+  });
+
   it('never counts a dead player as near', () => {
     // A dead sample decodes to the corner (0, 0), within the distance of the death: still not near.
     const judged = judgeDeaths(

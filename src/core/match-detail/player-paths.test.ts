@@ -446,22 +446,39 @@ describe('readPlayerPaths and positionAt', () => {
     expect(envelope).toEqual(before);
   });
 
-  it('refuses a path field of the wrong type with the field path only', () => {
-    // The path of slot 9 is the fourth one (index 3), the broken sample its second (index 1).
-    const path = rawPath(SLOT, DURATION_S + 1);
-    const broken = { ...path, x_pos: [1, 'S3CR3T', ...path.x_pos.slice(2)] };
+  it.each([
+    [
+      'a sample that is no number',
+      {
+        paths: pathsWith({
+          ...rawPath(SLOT, DURATION_S + 1),
+          x_pos: [1, 'S3CR3T', ...rawPath(SLOT, DURATION_S + 1).x_pos.slice(2)],
+        } as unknown as RawPath),
+      },
+    ],
+    [
+      'bounds that are not numbers',
+      {
+        paths: pathsWith({
+          ...rawPath(SLOT, DURATION_S + 1),
+          y_max: 'S3CR3T',
+        } as unknown as RawPath),
+      },
+    ],
+    [
+      'a death time that is no number',
+      { playerFields: { deaths: 1, death_details: [{ game_time_s: 'S3CR3T' }] } },
+    ],
+  ] satisfies [string, ArchiveOptions][])(
+    'leaves out a path with a field of the wrong type: %s',
+    (_name, options) => {
+      // One badly typed path is that path unreadable, not the paths of the whole match.
+      const read = readPaths(archive(options));
 
-    const error = catchAppError(() =>
-      readPlayerPaths(archive({ paths: pathsWith(broken as RawPath) })),
-    );
-
-    expect(error.kind).toBe('invalid_payload');
-    expect(error.context.issue).toBe('match_paths.paths.3.x_pos.1: invalid_type');
-    // The path and the code of the problem, never the value.
-    expect(JSON.stringify({ message: error.message, context: error.context })).not.toContain(
-      'S3CR3T',
-    );
-  });
+      expect(read.bySlot.has(SLOT)).toBe(false);
+      expect(read.bySlot.size).toBe(11);
+    },
+  );
 
   it.each([
     [
@@ -478,21 +495,6 @@ describe('readPlayerPaths and positionAt', () => {
       'a resolution that is no integer',
       { matchPathsFields: { x_resolution: 16_383.5 } },
       'match_paths.x_resolution: invalid_type',
-    ],
-    [
-      'bounds that are not numbers',
-      {
-        paths: pathsWith({
-          ...rawPath(SLOT, DURATION_S + 1),
-          y_max: 'S3CR3T',
-        } as unknown as RawPath),
-      },
-      'match_paths.paths.3.y_max: invalid_type',
-    ],
-    [
-      'a death time that is no number',
-      { playerFields: { deaths: 1, death_details: [{ game_time_s: 'S3CR3T' }] } },
-      'players.3.death_details.0.game_time_s: invalid_type',
     ],
   ] satisfies [string, ArchiveOptions, string][])(
     'reports %s by path and code only',

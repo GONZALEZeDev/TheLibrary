@@ -241,9 +241,9 @@ export const PROGRESS_MIN_Z = 1;
 export const NEARBY_DISTANCE = 1500;
 
 /**
- * The fewest enemies near the tracked player, the killer always among them, from which a death with
- * no ally near is avoidable: alone against two heroes or more is a fight the player should not have
- * been in, while one against one is an even duel that can go either way.
+ * The fewest enemies near the tracked player, an enemy killer always among them, from which a death
+ * with no ally near is avoidable: alone against two heroes or more is a fight the player should not
+ * have been in, while one against one is an even duel that can go either way.
  *
  * It changes a projected value, the count of avoidable deaths: a change of it needs a bump of
  * `PROJECTION_VERSION` (see the header of this file).

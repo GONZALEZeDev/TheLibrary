@@ -4,10 +4,12 @@
  *
  * A death is avoidable when the player died alone, with no ally near, against at least
  * {@link AVOIDABLE_MIN_ENEMIES} enemies: a fight they should not have taken. Any other death killed
- * by a hero is balanced. "Near" is within {@link NEARBY_DISTANCE} of where they died, alive at the
- * second of the death, read on the movement paths of the other players. The killer always counts
- * among the enemies, wherever they stood: a hero who killed from afar still took part in the fight.
- * A death with no hero killer (troopers, the environment) is not judged at all.
+ * by an enemy hero is balanced. "Near" is within {@link NEARBY_DISTANCE} of where they died, alive
+ * at the second of the death, read on the movement paths of the other players. An enemy killer
+ * always counts among the enemies, wherever they stood: a hero who killed from afar still took part
+ * in the fight. A death with no enemy hero killer is not judged at all: troopers or the environment
+ * killed the player, or a teammate, or they killed themselves, or the killer is no player of the
+ * match.
  *
  * The rule is an estimate: the paths only sample the players at intervals, and a player just
  * outside the distance may still have weighed in the fight.
@@ -27,14 +29,14 @@ import type { TrackedDeath } from '../match-detail/tracked-deaths';
 import { AVOIDABLE_MIN_ENEMIES, NEARBY_DISTANCE } from './insights/thresholds';
 
 /**
- * The verdict on a death killed by a hero: `'avoidable'` when the player was alone against several
- * enemies, `'balanced'` otherwise.
+ * The verdict on a death killed by an enemy hero: `'avoidable'` when the player was alone against
+ * several enemies, `'balanced'` otherwise.
  */
 export type DeathVerdict = 'avoidable' | 'balanced';
 
 /** The players near the tracked player when they died, by side; the tracked player is not counted. */
 export interface NearbyCount {
-  /** The enemies near, the killer always among them when a hero killed. */
+  /** The enemies near, the killer always among them when an enemy hero killed. */
   readonly enemies: number;
   /** The teammates near. */
   readonly allies: number;
@@ -45,8 +47,8 @@ export interface JudgedDeath extends TrackedDeath {
   /** Who was near when they died; `null` when the positions of the other players are not known. */
   readonly nearby: NearbyCount | null;
   /**
-   * The verdict; `null` when no hero killed them (troopers, the environment) or when who was near
-   * is not known.
+   * The verdict; `null` when no enemy hero killed them (troopers, the environment, a teammate,
+   * themselves) or when who was near is not known.
    */
   readonly verdict: DeathVerdict | null;
 }
@@ -66,11 +68,39 @@ export interface JudgedDeaths {
 }
 
 /**
+ * Tell whether an enemy hero killed the tracked player: the one test of the killer that both the
+ * count of who was near and the verdict use.
+ *
+ * The killer's team is read on their path. Slot 0 is no hero (troopers, the environment); a killer
+ * of the tracked player's own team, or the tracked player themselves, is no enemy; and a killer slot
+ * with no path is no player of the match whose side is known.
+ *
+ * @param death - The death.
+ * @param paths - The movement paths of the match.
+ * @param trackedSlot - The slot of the tracked player.
+ * @param trackedTeam - The team of the tracked player.
+ * @returns `true` when the killer is a player of the other team.
+ */
+export function hasEnemyHeroKiller(
+  death: TrackedDeath,
+  paths: PlayerPaths,
+  trackedSlot: number,
+  trackedTeam: number,
+): boolean {
+  if (death.killerSlot === 0 || death.killerSlot === trackedSlot) {
+    return false;
+  }
+  const killer = paths.bySlot.get(death.killerSlot);
+  return killer !== undefined && killer.team !== trackedTeam;
+}
+
+/**
  * Count the players near the tracked player when they died, by side.
  *
  * A player is near when they are alive at the second of the death and within
  * {@link NEARBY_DISTANCE} of where the tracked player died (a player exactly at the distance is
- * near). The killer, when a hero killed, counts once among the enemies, near or not, alive or not.
+ * near). The killer, when an enemy hero killed (see {@link hasEnemyHeroKiller}), counts once among
+ * the enemies, near or not, alive or not; any other killer is counted like any other player.
  *
  * @param death - The death.
  * @param paths - The movement paths of the match.
@@ -84,8 +114,10 @@ export function nearbyAt(
   trackedSlot: number,
   trackedTeam: number,
 ): NearbyCount {
-  // Slot 0 is no hero: there is no killer to count.
-  const killerSlot = death.killerSlot > 0 ? death.killerSlot : null;
+  // Only an enemy hero killer is counted ahead of the others: none for any other death.
+  const killerSlot = hasEnemyHeroKiller(death, paths, trackedSlot, trackedTeam)
+    ? death.killerSlot
+    : null;
   let enemies = killerSlot === null ? 0 : 1;
   let allies = 0;
   for (const path of paths.bySlot.values()) {
@@ -114,14 +146,18 @@ export function nearbyAt(
 /**
  * Give the verdict on a death from who was near.
  *
- * @param death - The death.
+ * @param killedByEnemyHero - Whether an enemy hero killed the player (see
+ *   {@link hasEnemyHeroKiller}).
  * @param nearby - Who was near, or `null` when it is not known.
  * @returns `'avoidable'` when no ally was near and at least {@link AVOIDABLE_MIN_ENEMIES} enemies
- *   were, `'balanced'` otherwise; `null` when no hero killed the player (slot 0) or when who was
- *   near is not known.
+ *   were, `'balanced'` otherwise; `null` when no enemy hero killed the player or when who was near
+ *   is not known.
  */
-export function verdictOf(death: TrackedDeath, nearby: NearbyCount | null): DeathVerdict | null {
-  if (death.killerSlot === 0 || nearby === null) {
+export function verdictOf(
+  killedByEnemyHero: boolean,
+  nearby: NearbyCount | null,
+): DeathVerdict | null {
+  if (!killedByEnemyHero || nearby === null) {
     return null;
   }
   return nearby.allies === 0 && nearby.enemies >= AVOIDABLE_MIN_ENEMIES ? 'avoidable' : 'balanced';
@@ -152,8 +188,13 @@ export function judgeDeaths(envelope: ArchiveEnvelope): JudgedDeaths {
       : null;
   const judged =
     deaths?.map((death): JudgedDeath => {
-      const nearby = knownPaths === null ? null : nearbyAt(death, knownPaths, playerSlot, team);
-      return { ...death, nearby, verdict: verdictOf(death, nearby) };
+      // Without the positions, neither who was near nor the side of the killer is known.
+      if (knownPaths === null) {
+        return { ...death, nearby: null, verdict: null };
+      }
+      const nearby = nearbyAt(death, knownPaths, playerSlot, team);
+      const killedByEnemyHero = hasEnemyHeroKiller(death, knownPaths, playerSlot, team);
+      return { ...death, nearby, verdict: verdictOf(killedByEnemyHero, nearby) };
     }) ?? null;
   return { deaths: judged, positionsKnown: knownPaths !== null };
 }

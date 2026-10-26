@@ -44,7 +44,6 @@ import { phaseSpans } from '../core/analysis/phases';
 import type { AccountId } from '../core/domain/account';
 import type { HeroAsset } from '../core/domain/hero';
 import type { MatchId } from '../core/domain/match';
-import { errorLogContext, isAppError, issueOf, toAppError } from '../core/errors/app-error';
 import type { ArchiveEnvelope } from '../core/match-detail/archive-envelope';
 import { isDetailEligible } from '../core/match-detail/detail-status';
 import { readTrackedItems, type ItemEntry } from '../core/match-detail/tracked-items';
@@ -52,6 +51,7 @@ import type { AccountSource } from '../ports/account-source.port';
 import type { Logger } from '../ports/logger.port';
 import { archivedAccountOf } from './analysis-subject';
 import type { ArchiveReaderService } from './archive-reader.service';
+import { readCatalogues, readOrReport } from './archive-tab-reading';
 import type { GameAssetService, ItemCatalogue } from './game-asset.service';
 import type { HeroCatalogService } from './hero-catalog.service';
 import type { MatchDetailRepository } from './match-detail.repository';
@@ -359,7 +359,12 @@ export class MatchTimelineService {
       // The reader told why; the detail view of the match explains the archive.
       return { kind: 'unreadable' };
     }
-    const read = this.#readOrReport(matchId, () => readArchiveTimeline(archive.envelope));
+    const read = readOrReport(
+      this.#reports,
+      matchId,
+      'The timeline of a match could not be read',
+      () => readArchiveTimeline(archive.envelope),
+    );
     if (read === null) {
       return { kind: 'unreadable' };
     }
@@ -434,55 +439,16 @@ export class MatchTimelineService {
    *   level in that case, whatever the number of catalogues that failed.
    */
   async #readCatalogues(matchId: MatchId): Promise<TimelineCatalogues> {
-    const failures: unknown[] = [];
-    const keepFailure = (error: unknown): null => {
-      failures.push(error);
-      return null;
-    };
-    // Both are asked at once: they share the asset budget, and each shares its run among the calls
-    // that overlap, so the page asking twice downloads each catalogue once.
-    const [heroes, items] = await Promise.all([
-      this.#heroes.getHeroAssets().catch(keepFailure),
-      this.#assets.getItemCatalogue().catch(keepFailure),
-    ]);
-    if (failures.length > 0) {
-      // The catalogue services logged what a refresh that fell back on the cache could not do; this
-      // is the one that has no cache to fall back on. The first failure tells the state of the
-      // network as well as all of them would.
-      this.#logger.log('info', LOG_SCOPE, 'A catalogue of the game could not be read', {
-        ...errorLogContext(toAppError(failures[0])),
-        matchId,
-      });
-    }
+    const { first: heroes, second: items } = await readCatalogues(
+      this.#logger,
+      LOG_SCOPE,
+      matchId,
+      () => this.#heroes.getHeroAssets(),
+      () => this.#assets.getItemCatalogue(),
+    );
     return {
       heroes: heroes === null ? null : new Map(heroes.map((hero) => [hero.id, hero])),
       items,
     };
-  }
-
-  /**
-   * Read the timeline out of an archive whose payload may not be what is expected.
-   *
-   * @param matchId - The match.
-   * @param read - Reads it out of the decoded archive of the match.
-   * @returns What `read` returns, or `null` when the archive lacks what is read or holds it in a
-   *   shape that is not expected: that says something about the archive, not about the match, so it
-   *   is reported (once, see `#reports`) and the view is `unreadable`. The match is not changed:
-   *   the archive passed the checks of the door when it was written.
-   * @throws Error when the reading fails for any other reason: that is a bug, which must be seen as
-   *   one.
-   */
-  #readOrReport<Read>(matchId: MatchId, read: () => Read): Read | null {
-    try {
-      return read();
-    } catch (error) {
-      if (!isAppError(error) || error.kind !== 'invalid_payload') {
-        throw error;
-      }
-      this.#reports.warn(matchId, 'The timeline of a match could not be read', {
-        issue: issueOf(error),
-      });
-      return null;
-    }
   }
 }

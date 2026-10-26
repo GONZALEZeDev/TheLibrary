@@ -50,7 +50,6 @@ import { PROJECTION_VERSION } from '../core/analysis/registry';
 import type { CatalogueRank } from '../core/deadlock-api/assets.schema';
 import { PAIGE_HERO_ID, type HeroLoadout } from '../core/domain/hero';
 import type { MatchId } from '../core/domain/match';
-import { errorLogContext, isAppError, issueOf, toAppError } from '../core/errors/app-error';
 import { placesOf, readScoreboard } from '../core/match-detail/scoreboard';
 import { finalBuildOf, readTrackedItems } from '../core/match-detail/tracked-items';
 import type { AccountSource } from '../ports/account-source.port';
@@ -61,6 +60,7 @@ import {
   type AnalysisSubjectDependencies,
 } from './analysis-subject';
 import type { ArchiveReaderService } from './archive-reader.service';
+import { readCatalogues, readOrReport } from './archive-tab-reading';
 import type { GameAssetService, ItemCatalogue } from './game-asset.service';
 import type { HeroCatalogService } from './hero-catalog.service';
 import {
@@ -182,8 +182,11 @@ export class MatchBreakdownService {
       // The reader told why; the detail view of the match explains the archive.
       return { kind: 'unreadable' };
     }
-    const build = this.#readOrReport(matchId, 'The items of a match could not be read', () =>
-      finalBuildOf(readTrackedItems(archive.envelope)),
+    const build = readOrReport(
+      this.#reports,
+      matchId,
+      'The items of a match could not be read',
+      () => finalBuildOf(readTrackedItems(archive.envelope)),
     );
     if (build === null) {
       return { kind: 'unreadable' };
@@ -242,7 +245,8 @@ export class MatchBreakdownService {
       // The reader told why; the detail view of the match explains the archive.
       return { kind: 'unreadable' };
     }
-    const scoreboard = this.#readOrReport(
+    const scoreboard = readOrReport(
+      this.#reports,
       matchId,
       'The scoreboard of a match could not be read',
       () => readScoreboard(archive.envelope),
@@ -275,30 +279,25 @@ export class MatchBreakdownService {
    *   catalogues that failed.
    */
   async #readDamageCatalogues(matchId: MatchId): Promise<DamageCatalogues | null> {
-    try {
-      // Both are asked at once: they share the asset budget, and each shares its run among the
-      // calls that overlap, so the page asking twice downloads each catalogue once.
-      const [heroes, items] = await Promise.all([
-        this.#heroes.getHeroAssets(),
-        this.#assets.getItemCatalogue(),
-      ]);
-      const loadout = heroes.find((hero) => hero.id === PAIGE_HERO_ID)?.loadout ?? null;
-      if (loadout !== null) {
-        return { loadout, items };
-      }
+    // A failure of either is a catalogue that cannot be had, and `readCatalogues` logged it.
+    const { first: heroes, second: items } = await readCatalogues(
+      this.#logger,
+      LOG_SCOPE,
+      matchId,
+      () => this.#heroes.getHeroAssets(),
+      () => this.#assets.getItemCatalogue(),
+    );
+    if (heroes === null || items === null) {
+      return null;
+    }
+    const loadout = heroes.find((hero) => hero.id === PAIGE_HERO_ID)?.loadout ?? null;
+    if (loadout === null) {
       this.#logger.log('info', LOG_SCOPE, 'The hero catalogue holds no loadout for Paige', {
         matchId,
       });
-    } catch (error) {
-      // Any failure is a catalogue that cannot be had: offline with nothing cached, a refused
-      // request, a spent budget or a pause. The catalogue services logged what a refresh that fell
-      // back on the cache could not do; this is the one that has no cache to fall back on.
-      this.#logger.log('info', LOG_SCOPE, 'A catalogue of the game could not be read', {
-        ...errorLogContext(toAppError(error)),
-        matchId,
-      });
+      return null;
     }
-    return null;
+    return { loadout, items };
   }
 
   /**
@@ -316,56 +315,16 @@ export class MatchBreakdownService {
    *   `info` level in that case, whatever the number of catalogues that failed.
    */
   async #readPlayerCatalogues(matchId: MatchId): Promise<PlayerCatalogues> {
-    const failures: unknown[] = [];
-    const keepFailure = (error: unknown): null => {
-      failures.push(error);
-      return null;
-    };
-    // Both are asked at once: they share the asset budget, and each shares its run among the calls
-    // that overlap, so the page asking twice downloads each catalogue once.
-    const [heroes, ranks] = await Promise.all([
-      this.#heroes.getHeroAssets().catch(keepFailure),
-      this.#assets.getRankCatalogue().catch(keepFailure),
-    ]);
-    if (failures.length > 0) {
-      // The catalogue services logged what a refresh that fell back on the cache could not do; this
-      // is the one that has no cache to fall back on. The first failure tells the state of the
-      // network as well as all of them would.
-      this.#logger.log('info', LOG_SCOPE, 'A catalogue of the game could not be read', {
-        ...errorLogContext(toAppError(failures[0])),
-        matchId,
-      });
-    }
+    const { first: heroes, second: ranks } = await readCatalogues(
+      this.#logger,
+      LOG_SCOPE,
+      matchId,
+      () => this.#heroes.getHeroAssets(),
+      () => this.#assets.getRankCatalogue(),
+    );
     return {
       heroes: new Map((heroes ?? []).map((hero) => [hero.id, hero])),
       ranks: ranks ?? new Map<number, CatalogueRank>(),
     };
-  }
-
-  /**
-   * Read something out of an archive whose payload may not be what is expected: the build or the
-   * scoreboard.
-   *
-   * @param matchId - The match.
-   * @param message - The line to log when the payload is not what is expected: what could not be
-   *   read.
-   * @param read - Reads it out of the decoded archive of the match.
-   * @returns What `read` returns, or `null` when the archive lacks what is read or holds it in a
-   *   shape that is not expected: that says something about the archive, not about the match, so it
-   *   is reported (once, see `#reports`) and the view is `unreadable`. The match is not changed:
-   *   the archive passed the checks of the door when it was written.
-   * @throws Error when the reading fails for any other reason: that is a bug, which must be seen as
-   *   one.
-   */
-  #readOrReport<Read>(matchId: MatchId, message: string, read: () => Read): Read | null {
-    try {
-      return read();
-    } catch (error) {
-      if (!isAppError(error) || error.kind !== 'invalid_payload') {
-        throw error;
-      }
-      this.#reports.warn(matchId, message, { issue: issueOf(error) });
-      return null;
-    }
   }
 }

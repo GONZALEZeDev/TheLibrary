@@ -18,11 +18,15 @@
  *   each team in each lane, the same number being the same lane for both teams), in a ranked match
  *   the `player_rank_data` with the badge the player had at the start, and the snapshot counters
  *   `boss_damage`, `shots_hit`, `shots_missed`, `teammate_healing` and `teammate_barriering`;
- * - `match_paths`: one path per player with a position every second;
+ * - `match_paths`: one path per player with a position and a health every second, on the grid of the
+ *   real paths; a dead player is at `(0, 0)` with no health until they respawn;
  * - `damage_matrix`: one dealer per player, plus the non-player dealer (slot 0).
  *
- * The deaths form one ledger (who killed whom, when) from which the deaths, the kills and the
- * `death_details` of all the players are read, so the numbers of the match agree with each other.
+ * The deaths form one ledger (who killed whom, when, how fast) from which the deaths, the kills, the
+ * `death_details` and the dead seconds of the paths of all the players are read, so the numbers of
+ * the match agree with each other. The paths have no drift: the last alive sample of a life is the
+ * second of the death. At the tracked player's deaths the other players are walked into place, so
+ * that about one death in three is a fight lost alone (see {@link placeAroundTrackedDeaths}).
  * The damage matrix and the items form another (`match-damage.fixture.ts`), from which the
  * `player_damage` of every snapshot is read: it is the same number as the sum of the player's
  * sources in the matrix.
@@ -33,6 +37,7 @@
  *
  * @packageDocumentation
  */
+import { NEARBY_DISTANCE } from '../../../core/analysis/insights/thresholds';
 import type { AccountId } from '../../../core/domain/account';
 import type { MatchId } from '../../../core/domain/match';
 import { RANKED_MATCH_MODE } from '../../../core/match-detail/detail-status';
@@ -65,16 +70,27 @@ interface Seat {
   readonly badge: number;
 }
 
-/** One death of the match: who died, who killed them, and when. */
+/** One death of the match: who died, who killed them, when, and how fast. */
 interface Death {
   readonly victim: number;
   readonly killer: number;
   /** When it happened, in seconds since the match start. */
   readonly timeS: number;
+  /** How long the killer took to kill them, in seconds, with one decimal. */
+  readonly timeToKillS: number;
 }
 
-/** The movement path of one player, in the shape of the API's `match_paths.paths[]`. */
+/**
+ * Where one player walks, a position every second: the API's `match_paths.paths[]` without the
+ * health, and with a position even while they are dead (see {@link recordedPath}).
+ */
 type Path = ReturnType<typeof createPath>;
+
+/** A position on the map, in game units. */
+interface MapPoint {
+  readonly x: number;
+  readonly y: number;
+}
 
 /** The parts of a match that depend on each other and are built once for all the players. */
 interface Timeline {
@@ -169,13 +185,64 @@ const FIRST_DEATH_S = 60;
 const MAX_RESPAWN_S = 60;
 
 /**
- * Positions of the paths are whole numbers from 0 to this value, decoded with the bounds of the
- * path (`x_min`…`x_max`). A coarse grid keeps the 12 × `duration_s` positions small.
+ * Mixed into the match id to seed the generator of what the deaths add to the paths: the times to
+ * kill, the health of the fights and where the players stand at the tracked player's deaths. It
+ * never shares a sequence with the others, so the walks and every other figure stay as they were.
  */
-const MAP_RESOLUTION = 255;
+const DEATHS_SEED = 0x3c6ef372;
+
+/**
+ * Positions of the paths are whole numbers from 0 to this value, decoded with the bounds of the
+ * path (`x_min`…`x_max`), like the real paths.
+ */
+const PATH_RESOLUTION = 16_383;
+
+/**
+ * The players walk on a coarse grid of this many steps across the map, written at
+ * {@link PATH_RESOLUTION}: one step is about 64 game units.
+ */
+const WALK_GRID = 255;
 
 /** Half of the side of the square map, in game units: the paths go from `-` this to `+` this. */
 const MAP_HALF_SIZE = 8_192;
+
+/** The health of a player who has not been hit, in percent. */
+const FULL_HEALTH = 100;
+
+/** The health a player is left with at the second of their death (their last alive sample). */
+const MIN_LAST_HEALTH = 1;
+const MAX_LAST_HEALTH = 19;
+
+/** The shortest and the longest time to kill, in tenths of a second. */
+const MIN_TIME_TO_KILL_DS = 8;
+const MAX_TIME_TO_KILL_DS = 60;
+
+/**
+ * The tracked player's deaths that are fights lost alone: every this many, from an index that
+ * depends on the match (see {@link isCaughtAlone}).
+ */
+const CAUGHT_ALONE_EVERY = 3;
+
+/**
+ * How far from the tracked player's death the players of the fight are put, in game units: the
+ * killer and the other enemy of a fight lost alone, the ally of any other. It stays under the 800
+ * units of a fight.
+ */
+const FIGHT_MIN_DISTANCE = 200;
+const FIGHT_MAX_DISTANCE = 700;
+
+/**
+ * How far from the death everybody else is sent when the tracked player is caught alone, in game
+ * units: well past the distance at which the analysis counts a player as near.
+ */
+const AWAY_DISTANCE = NEARBY_DISTANCE + 1_000;
+
+/**
+ * Over how many seconds before and after a death a player who is put in place walks there and back,
+ * so that the path stays plausible: crossing the whole map takes them under 1,200 game units per
+ * second, a fast move in the real paths.
+ */
+const PLACING_RAMP_S = 20;
 
 /**
  * The item at an index of a list the caller knows to be long enough. The type checker cannot know
@@ -253,13 +320,15 @@ export function createMatchMetadataFixture(row: RawMatchHistoryRow, accountId: A
   // The lanes, the badges and the totals the analysis reads come from their own generator, so that
   // adding or changing them never moves the figures drawn from `random`.
   const analysisRandom = createRandom(row.match_id ^ ANALYSIS_SEED);
+  // What the deaths add to the paths (the times to kill, the health, the placing of the players at
+  // the tracked player's deaths) has its own generator too.
+  const deathsRandom = createRandom(row.match_id ^ DEATHS_SEED);
   const durationS = row.match_duration_s;
   const seats = seatPlayers(random, analysisRandom, row, accountId);
-  const timeline: Timeline = {
-    deaths: createDeaths(random, row, seats),
-    paths: seats.map((seat) => createPath(random, seat, durationS)),
-    snapshotTimes: snapshotTimes(durationS),
-  };
+  const deaths = createDeaths(random, deathsRandom, row, seats);
+  const paths = seats.map((seat) => createPath(random, seat, durationS));
+  placeAroundTrackedDeaths(deathsRandom, row.match_id, seats, deaths, paths);
+  const timeline: Timeline = { deaths, paths, snapshotTimes: snapshotTimes(durationS) };
   // The items and the damage matrix have a generator of their own too. The `player_damage` of the
   // snapshots is read from the matrix, so the two always agree.
   const damage = createMatchDamage(createRandom(row.match_id ^ DAMAGE_SEED), seats, durationS);
@@ -288,9 +357,13 @@ export function createMatchMetadataFixture(row: RawMatchHistoryRow, accountId: A
       match_paths: {
         version: 1,
         interval_s: 1,
-        x_resolution: MAP_RESOLUTION,
-        y_resolution: MAP_RESOLUTION,
-        paths: timeline.paths,
+        x_resolution: PATH_RESOLUTION,
+        y_resolution: PATH_RESOLUTION,
+        // The paths record the walks with the deaths: the fights wear the health down, and a dead
+        // player is at the origin until they respawn.
+        paths: timeline.paths.map((path) =>
+          recordedPath(deathsRandom, path, deathsOf(deaths, path.player_slot), durationS),
+        ),
       },
       damage_matrix: damage.matrix,
     },
@@ -421,11 +494,17 @@ function nearbyBadge(random: Random, trackedBadge: number): number {
  * killer. Every other death has a killer of the other team.
  *
  * @param random - The generator.
+ * @param deathsRandom - The generator of the times to kill, so that `random` draws as it always did.
  * @param row - The history row of the match.
  * @param seats - The twelve seats.
  * @returns Every death of the match, in no particular order.
  */
-function createDeaths(random: Random, row: RawMatchHistoryRow, seats: readonly Seat[]): Death[] {
+function createDeaths(
+  random: Random,
+  deathsRandom: Random,
+  row: RawMatchHistoryRow,
+  seats: readonly Seat[],
+): Death[] {
   const tracked = at(
     seats.filter((seat) => seat.tracked),
     0,
@@ -460,15 +539,70 @@ function createDeaths(random: Random, row: RawMatchHistoryRow, seats: readonly S
   ).map((death, index): Death => ({
     ...death,
     killer: index < row.player_kills ? tracked.slot : pick(random, teammateSlots),
+    timeToKillS: timeToKill(deathsRandom),
   }));
   const teamDeaths = teamDeathCounts.flatMap(({ slot, count }) =>
     deathTimes(random, count, durationS).map((timeS): Death => ({
       victim: slot,
       killer: pick(random, opponentSlots),
       timeS,
+      timeToKillS: timeToKill(deathsRandom),
     })),
   );
   return [...opponentDeaths, ...teamDeaths];
+}
+
+/**
+ * Draw how long a killer took to kill: from 0.8 to 6 seconds, with one decimal.
+ *
+ * @param random - The generator.
+ * @returns The time to kill, in seconds.
+ */
+function timeToKill(random: Random): number {
+  return between(random, MIN_TIME_TO_KILL_DS, MAX_TIME_TO_KILL_DS) / 10;
+}
+
+/**
+ * The wait before a player who died at a time respawns: it grows with the match, up to the longest
+ * respawn.
+ *
+ * @param timeS - When they died, in seconds since the match start.
+ * @returns The wait, in seconds.
+ */
+function respawnWaitS(timeS: number): number {
+  return Math.min(MAX_RESPAWN_S, 10 + Math.floor(timeS / 60));
+}
+
+/**
+ * The deaths of one player, from the earliest.
+ *
+ * @param deaths - Every death of the match.
+ * @param slot - The slot of the player.
+ * @returns The deaths where they are the victim, sorted by time.
+ */
+function deathsOf(deaths: readonly Death[], slot: number): Death[] {
+  return deaths
+    .filter((death) => death.victim === slot)
+    .toSorted((first, second) => first.timeS - second.timeS);
+}
+
+/**
+ * Whether a player is dead at a second: after one of their deaths, before they respawn.
+ *
+ * The second of the death itself is the last of their life, they are still alive then.
+ *
+ * @param deaths - Every death of the match.
+ * @param slot - The slot of the player.
+ * @param timeS - The second of the match.
+ * @returns `true` while they wait to respawn.
+ */
+function isDeadAt(deaths: readonly Death[], slot: number, timeS: number): boolean {
+  return deaths.some(
+    (death) =>
+      death.victim === slot &&
+      death.timeS < timeS &&
+      timeS <= death.timeS + respawnWaitS(death.timeS),
+  );
 }
 
 /**
@@ -518,29 +652,32 @@ function snapshotTimes(durationS: number): number[] {
  * Invent the movement path of one player: a position every second, from second 0 to the end of the
  * match (`duration_s + 1` positions).
  *
- * The player starts in the base of their team and wanders around it with some inertia.
+ * The player starts in the base of their team and wanders around it with some inertia, on the
+ * coarse grid of {@link WALK_GRID} steps, written at the resolution of the paths. The walk goes on
+ * while they are dead: {@link recordedPath} writes the dead seconds over it.
  *
  * @param random - The generator.
  * @param seat - The player.
  * @param durationS - Length of the match, in seconds.
- * @returns The path in the shape of the API's `match_paths.paths[]` (without the arrays it does not
- *   need).
+ * @returns The walk in the shape of the API's `match_paths.paths[]`, without the health (and
+ *   without the arrays it does not need).
  */
 function createPath(random: Random, seat: Seat, durationS: number) {
-  const baseOffset = seat.team === 0 ? 30 : MAP_RESOLUTION - 30;
+  const baseOffset = seat.team === 0 ? 30 : WALK_GRID - 30;
   let x = baseOffset + between(random, -8, 8);
   let y = baseOffset + between(random, -8, 8);
   let speedX = 0;
   let speedY = 0;
+  const onPathGrid = (step: number) => Math.round((step / WALK_GRID) * PATH_RESOLUTION);
   const xPos: number[] = [];
   const yPos: number[] = [];
   for (let second = 0; second <= durationS; second += 1) {
-    xPos.push(x);
-    yPos.push(y);
+    xPos.push(onPathGrid(x));
+    yPos.push(onPathGrid(y));
     speedX = clamp(speedX + between(random, -1, 1), -3, 3);
     speedY = clamp(speedY + between(random, -1, 1), -3, 3);
-    x = clamp(x + speedX, 0, MAP_RESOLUTION);
-    y = clamp(y + speedY, 0, MAP_RESOLUTION);
+    x = clamp(x + speedX, 0, WALK_GRID);
+    y = clamp(y + speedY, 0, WALK_GRID);
   }
   return {
     player_slot: seat.slot,
@@ -562,8 +699,226 @@ function createPath(random: Random, seat: Seat, durationS: number) {
  */
 function positionAt(path: Path, timeS: number): { x: number; y: number; z: number } {
   const decode = (position: number) =>
-    Math.round(-MAP_HALF_SIZE + (position / MAP_RESOLUTION) * 2 * MAP_HALF_SIZE);
+    Math.round(-MAP_HALF_SIZE + (position / PATH_RESOLUTION) * 2 * MAP_HALF_SIZE);
   return { x: decode(at(path.x_pos, timeS)), y: decode(at(path.y_pos, timeS)), z: 0 };
+}
+
+/**
+ * Encode a coordinate of the map on the grid of the paths, the reverse of the decoding of
+ * {@link positionAt}.
+ *
+ * @param coordinate - A coordinate in game units.
+ * @returns The whole number of the grid, kept on the map (0 to {@link PATH_RESOLUTION}).
+ */
+function onPath(coordinate: number): number {
+  return clamp(
+    Math.round(((coordinate + MAP_HALF_SIZE) / (2 * MAP_HALF_SIZE)) * PATH_RESOLUTION),
+    0,
+    PATH_RESOLUTION,
+  );
+}
+
+/**
+ * The distance between two positions on the flat map.
+ *
+ * @param first - A position, in game units.
+ * @param second - Another one.
+ * @returns The distance, in game units.
+ */
+function distanceBetween(first: MapPoint, second: MapPoint): number {
+  return Math.hypot(first.x - second.x, first.y - second.y);
+}
+
+/**
+ * Whether a death of the tracked player is a fight lost alone: one in {@link CAUGHT_ALONE_EVERY}
+ * of their deaths, counted from the first, the cycle starting at an index the match id gives.
+ *
+ * @param matchId - The match id.
+ * @param index - The position of the death among the tracked player's deaths, from the earliest.
+ * @returns `true` for the deaths where the tracked player is caught alone.
+ */
+function isCaughtAlone(matchId: number, index: number): boolean {
+  return (matchId + index) % CAUGHT_ALONE_EVERY === 0;
+}
+
+/**
+ * Put the other players in place at each death of the tracked player, so that the analysis finds
+ * fights lost alone and fights fought together.
+ *
+ * At a death that {@link isCaughtAlone} picks, the killer and one more enemy (any other enemy who
+ * is alive then) are put in the fight, within {@link FIGHT_MAX_DISTANCE} of the death, and every
+ * other player who is alive and nearer than {@link AWAY_DISTANCE} is sent that far. It needs the
+ * killer and one more enemy alive at that second: when they are not, the death is fought together
+ * like the others. At the other deaths, when no ally is in the fight already, one ally who is
+ * alive is put in it. A player who is dead at that second is never moved: the dead seconds of the
+ * paths stay those of the ledger.
+ *
+ * A player is put in place on the second of the death only, walked there over the seconds before
+ * and back over the seconds after (see {@link walkTo}), never over another death of the tracked
+ * player.
+ *
+ * @param random - The generator of the placing.
+ * @param matchId - The match id, for {@link isCaughtAlone}.
+ * @param seats - The twelve seats, ordered by slot.
+ * @param deaths - Every death of the match.
+ * @param paths - The walks of the twelve players, ordered by slot; changed in place.
+ */
+function placeAroundTrackedDeaths(
+  random: Random,
+  matchId: number,
+  seats: readonly Seat[],
+  deaths: readonly Death[],
+  paths: readonly Path[],
+): void {
+  const tracked = at(
+    seats.filter((seat) => seat.tracked),
+    0,
+  );
+  const pathOf = (seat: Seat) => at(paths, seat.slot - 1);
+  const trackedDeaths = deathsOf(deaths, tracked.slot);
+  trackedDeaths.forEach((death, index) => {
+    const { timeS } = death;
+    const deathPos = positionAt(pathOf(tracked), timeS);
+    // The walk to the place and back never reaches the previous or the next death.
+    const previousS = trackedDeaths[index - 1]?.timeS ?? -Infinity;
+    const nextS = trackedDeaths[index + 1]?.timeS ?? Infinity;
+    const rampS = Math.min(PLACING_RAMP_S, timeS - previousS, nextS - timeS);
+    const distanceOf = (seat: Seat) => distanceBetween(positionAt(pathOf(seat), timeS), deathPos);
+    const moveTo = (seat: Seat, target: MapPoint) => {
+      walkTo(pathOf(seat), timeS, target, rampS);
+    };
+
+    const alive = seats.filter((seat) => !seat.tracked && !isDeadAt(deaths, seat.slot, timeS));
+    const allies = alive.filter((seat) => seat.team === tracked.team);
+    const killer = at(seats, death.killer - 1);
+    const otherEnemies = alive.filter((seat) => seat.team !== tracked.team && seat !== killer);
+    if (isCaughtAlone(matchId, index) && alive.includes(killer) && otherEnemies.length > 0) {
+      // A fight lost alone: the killer and one more enemy in it...
+      const secondEnemy = pick(random, otherEnemies);
+      moveTo(killer, fightPoint(random, deathPos));
+      moveTo(secondEnemy, fightPoint(random, deathPos));
+      // ...and everybody else who is alive and not far enough is sent away, each in a direction of
+      // their own.
+      const tooNear = [...allies, ...otherEnemies.filter((seat) => seat !== secondEnemy)].filter(
+        (seat) => distanceOf(seat) < AWAY_DISTANCE,
+      );
+      tooNear.forEach((seat, position) => {
+        moveTo(seat, awayPoint(deathPos, position, tooNear.length));
+      });
+    } else if (allies.length > 0 && allies.every((seat) => distanceOf(seat) > FIGHT_MAX_DISTANCE)) {
+      // Any other fight is fought together: an ally alive is put in it, unless one is there already.
+      moveTo(pick(random, allies), fightPoint(random, deathPos));
+    }
+  });
+}
+
+/**
+ * Draw a place in a fight: a little way from a death, in any direction.
+ *
+ * @param random - The generator.
+ * @param deathPos - Where the death happened, in game units.
+ * @returns A place from {@link FIGHT_MIN_DISTANCE} to {@link FIGHT_MAX_DISTANCE} from it (nearer
+ *   once {@link walkTo} keeps it on the map).
+ */
+function fightPoint(random: Random, deathPos: MapPoint): MapPoint {
+  const distance = between(random, FIGHT_MIN_DISTANCE, FIGHT_MAX_DISTANCE);
+  const angle = random() * 2 * Math.PI;
+  return {
+    x: deathPos.x + distance * Math.cos(angle),
+    y: deathPos.y + distance * Math.sin(angle),
+  };
+}
+
+/**
+ * A place {@link AWAY_DISTANCE} from a death, towards the middle of the map.
+ *
+ * The directions of the players sent away are spread over the quarter of the map that faces its
+ * middle: each coordinate moves towards 0 by at most the distance, so the place is always on the
+ * map and exactly that far.
+ *
+ * @param deathPos - Where the death happened, in game units.
+ * @param position - The position of the player among those sent away.
+ * @param count - How many players are sent away.
+ * @returns The place.
+ */
+function awayPoint(deathPos: MapPoint, position: number, count: number): MapPoint {
+  const angle = ((position + 1) / (count + 1)) * (Math.PI / 2);
+  const towardsMiddle = (coordinate: number) => (coordinate > 0 ? -1 : 1);
+  return {
+    x: deathPos.x + towardsMiddle(deathPos.x) * AWAY_DISTANCE * Math.cos(angle),
+    y: deathPos.y + towardsMiddle(deathPos.y) * AWAY_DISTANCE * Math.sin(angle),
+  };
+}
+
+/**
+ * Walk a player to a place at a second, and back to their own walk.
+ *
+ * The move is spread over the seconds around it: the farther a second is from `timeS`, the less of
+ * the move it takes, none from `rampS` seconds away. At `timeS` the player is at the place.
+ *
+ * @param path - The walk of the player; changed in place.
+ * @param timeS - The second they must be at the place.
+ * @param target - The place, in game units; kept on the map.
+ * @param rampS - Over how many seconds before and after the move is spread (1 or more).
+ */
+function walkTo(path: Path, timeS: number, target: MapPoint, rampS: number): void {
+  const moveX = onPath(target.x) - at(path.x_pos, timeS);
+  const moveY = onPath(target.y) - at(path.y_pos, timeS);
+  const first = Math.max(0, timeS - rampS + 1);
+  const last = Math.min(path.x_pos.length - 1, timeS + rampS - 1);
+  for (let second = first; second <= last; second += 1) {
+    const share = 1 - Math.abs(second - timeS) / rampS;
+    path.x_pos[second] = clamp(
+      Math.round(at(path.x_pos, second) + share * moveX),
+      0,
+      PATH_RESOLUTION,
+    );
+    path.y_pos[second] = clamp(
+      Math.round(at(path.y_pos, second) + share * moveY),
+      0,
+      PATH_RESOLUTION,
+    );
+  }
+}
+
+/**
+ * Record the path of a player as the API does: their walk, with a health every second and their
+ * dead seconds.
+ *
+ * Over the seconds a fight lasted (the time to kill, rounded up) the health falls from full to a
+ * sliver, left at the second of the death: the last alive sample. From the next second, for the
+ * respawn wait (cut at the end of the match), the player is dead: at `(0, 0)` with no health.
+ *
+ * @param random - The generator of the health left at each death.
+ * @param path - The walk of the player; not modified.
+ * @param ownDeaths - Their deaths, from the earliest.
+ * @param durationS - Length of the match, in seconds.
+ * @returns The path in the shape of the API's `match_paths.paths[]` (without the arrays it does not
+ *   need).
+ */
+function recordedPath(random: Random, path: Path, ownDeaths: readonly Death[], durationS: number) {
+  const xPos = [...path.x_pos];
+  const yPos = [...path.y_pos];
+  const health = xPos.map(() => FULL_HEALTH);
+  // The fights first, the dead seconds after: a fight that starts before the player has respawned
+  // from the previous death never writes over a dead second.
+  for (const death of ownDeaths) {
+    const lastHealth = between(random, MIN_LAST_HEALTH, MAX_LAST_HEALTH);
+    const fightS = Math.ceil(death.timeToKillS);
+    for (let second = Math.max(0, death.timeS - fightS + 1); second <= death.timeS; second += 1) {
+      const progress = (second - (death.timeS - fightS)) / fightS;
+      health[second] = Math.round(FULL_HEALTH - progress * (FULL_HEALTH - lastHealth));
+    }
+  }
+  for (const death of ownDeaths) {
+    const lastDeadS = Math.min(durationS, death.timeS + respawnWaitS(death.timeS));
+    for (let second = death.timeS + 1; second <= lastDeadS; second += 1) {
+      xPos[second] = 0;
+      yPos[second] = 0;
+      health[second] = 0;
+    }
+  }
+  return { ...path, x_pos: xPos, y_pos: yPos, health };
 }
 
 /**
@@ -614,9 +969,7 @@ function createPlayer(
         }
       : {}),
   };
-  const ownDeaths = deaths
-    .filter((death) => death.victim === seat.slot)
-    .toSorted((first, second) => first.timeS - second.timeS);
+  const ownDeaths = deathsOf(deaths, seat.slot);
   const kills = deaths.filter((death) => death.killer === seat.slot).length;
 
   return {
@@ -641,13 +994,16 @@ function createPlayer(
       damage.damageAt(seat.slot, timeS),
     ),
     items: damage.itemsOf(seat.slot),
+    // The positions are read on the walks: the victim is alive at the second of their death, and a
+    // killer of the ledger who is dead then (the ledger does not know the respawns) is where their
+    // walk is, not at the origin.
     death_details: ownDeaths.map((death) => ({
       game_time_s: death.timeS,
+      time_to_kill_s: death.timeToKillS,
       killer_player_slot: death.killer,
       death_pos: positionAt(at(paths, seat.slot - 1), death.timeS),
       killer_pos: positionAt(at(paths, death.killer - 1), death.timeS),
-      // The wait grows with the match, up to the longest respawn.
-      death_duration_s: Math.min(MAX_RESPAWN_S, 10 + Math.floor(death.timeS / 60)),
+      death_duration_s: respawnWaitS(death.timeS),
     })),
   };
 }

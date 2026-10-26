@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { judgeDeaths } from '../../../core/analysis/avoidable-deaths';
 import { readDamageMatrix } from '../../../core/analysis/damage-matrix';
 import {
   abilityUnlockKey,
@@ -19,6 +20,7 @@ import { parseMatchMetadata } from '../../../core/deadlock-api/match-metadata.sc
 import { PAIGE_HERO_ID } from '../../../core/domain/hero';
 import { createArchiveEnvelope } from '../../../core/match-detail/archive-envelope';
 import type { ArchiveEnvelope } from '../../../core/match-detail/archive-envelope';
+import { positionAt, readPlayerPaths } from '../../../core/match-detail/player-paths';
 import { findTrackedPlayer, pruneForPlayer } from '../../../core/match-detail/pruning';
 import { testAccountId, testMatchId } from '../../../test/test-data';
 import {
@@ -82,6 +84,12 @@ const MATRIX_STEP_S = 180;
 
 /** The most shop items a player owns at the end of a match: the inventory has 12 slots. */
 const MAX_KEPT_ITEMS = 12;
+
+/** The coordinate that stands for the far edge of a path's bounds, as in the real paths. */
+const PATH_RESOLUTION = 16_383;
+
+/** How close to a death a player stands to be in the fight, in world units. */
+const FIGHT_RANGE = 800;
 
 /** `upgrade_id` of an ability unlock, and of a shop item (any other value is an ability upgrade). */
 const ABILITY_UNLOCK_ID = 0;
@@ -151,6 +159,7 @@ const detailSchema = z.looseObject({
         death_details: z.array(
           z.looseObject({
             game_time_s: z.int(),
+            time_to_kill_s: z.number(),
             killer_player_slot: z.int(),
             death_duration_s: z.int(),
             death_pos: z.looseObject({ x: z.int(), y: z.int(), z: z.int() }),
@@ -160,11 +169,20 @@ const detailSchema = z.looseObject({
       }),
     ),
     match_paths: z.looseObject({
+      version: z.int(),
+      interval_s: z.number(),
+      x_resolution: z.int(),
+      y_resolution: z.int(),
       paths: z.array(
         z.looseObject({
           player_slot: z.int(),
+          x_min: z.number(),
+          x_max: z.number(),
+          y_min: z.number(),
+          y_max: z.number(),
           x_pos: z.array(z.int()),
           y_pos: z.array(z.int()),
+          health: z.array(z.int()),
         }),
       ),
     }),
@@ -729,19 +747,126 @@ describe('createMatchMetadataFixture', () => {
     }
   });
 
-  it('gives each player a movement path with a position every second', () => {
+  it('writes the real path fields for all twelve players', () => {
     const info = detailOf(rowWith({ match_duration_s: 1_500 }));
-    const { paths } = info.match_paths;
+    const { paths, ...envelope } = info.match_paths;
 
+    expect(envelope).toEqual({
+      version: 1,
+      interval_s: 1,
+      x_resolution: PATH_RESOLUTION,
+      y_resolution: PATH_RESOLUTION,
+    });
     expect(paths.map((path) => path.player_slot).toSorted((a, b) => a - b)).toEqual([
       1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
     ]);
     for (const path of paths) {
+      expect(path.x_min).toBeLessThan(path.x_max);
+      expect(path.y_min).toBeLessThan(path.y_max);
+      // A sample every second, from second 0 to the end of the match.
       expect(path.x_pos).toHaveLength(1_501);
       expect(path.y_pos).toHaveLength(1_501);
-      // Small whole numbers, like the grid of the real paths.
-      expect([...path.x_pos, ...path.y_pos].every((position) => position >= 0)).toBe(true);
+      expect(path.health).toHaveLength(1_501);
+      // Whole numbers on the grid of the real paths, and a health in percent.
+      const inGrid = (position: number) => position >= 0 && position <= PATH_RESOLUTION;
+      expect([...path.x_pos, ...path.y_pos].every(inGrid)).toBe(true);
+      expect(path.health.every((health) => health >= 0 && health <= 100)).toBe(true);
     }
+  });
+
+  it('marks a dead player with zero health at the origin', () => {
+    for (const row of PAIGE_ROWS.slice(0, 30)) {
+      const info = detailOf(row);
+      const paths = readPlayerPaths(envelopeOf(row)) ?? expect.unreachable('the match has paths');
+
+      for (const player of info.players) {
+        const path =
+          info.match_paths.paths.find(
+            (candidate) => candidate.player_slot === player.player_slot,
+          ) ?? expect.unreachable('every player has a path');
+        // The seconds they spend dead: from the second after each death, for the respawn wait.
+        const deadSeconds = new Set(
+          player.death_details.flatMap((death) =>
+            Array.from(
+              { length: death.death_duration_s },
+              (_, offset) => death.game_time_s + 1 + offset,
+            ),
+          ),
+        );
+        // Dead: no health at the origin; alive: some health left. One check for the whole path.
+        const wrongSeconds = path.health.flatMap((health, second) => {
+          const right = deadSeconds.has(second)
+            ? health === 0 && path.x_pos[second] === 0 && path.y_pos[second] === 0
+            : health > 0;
+          return right ? [] : [second];
+        });
+        expect(wrongSeconds).toEqual([]);
+        const read = paths.bySlot.get(player.player_slot) ?? expect.unreachable('readable');
+        for (const death of player.death_details) {
+          // The second of the death is their last alive sample, barely alive, where they died: the
+          // core reads it there, so the path has no drift.
+          expect(path.health[death.game_time_s]).toBeLessThan(20);
+          const position = positionAt(read, death.game_time_s) ?? expect.unreachable('alive');
+          expect(Math.abs(position.x - death.death_pos.x)).toBeLessThanOrEqual(1);
+          expect(Math.abs(position.y - death.death_pos.y)).toBeLessThanOrEqual(1);
+          if (death.game_time_s < info.duration_s) {
+            expect(positionAt(read, death.game_time_s + 1)).toBeNull();
+          }
+        }
+      }
+    }
+  });
+
+  it('gives every death a time to kill', () => {
+    for (const row of PAIGE_ROWS.slice(0, 30)) {
+      for (const death of detailOf(row).players.flatMap((player) => player.death_details)) {
+        // One decimal, from 0.8 to 6 seconds.
+        expect(Math.round(death.time_to_kill_s * 10) / 10).toBe(death.time_to_kill_s);
+        expect(death.time_to_kill_s).toBeGreaterThanOrEqual(0.8);
+        expect(death.time_to_kill_s).toBeLessThanOrEqual(6);
+      }
+    }
+  });
+
+  it('catches the tracked player alone at some deaths', () => {
+    const verdicts: (string | null)[] = [];
+    for (const row of PAIGE_ROWS.slice(0, 40)) {
+      const envelope = envelopeOf(row);
+      const judged = judgeDeaths(envelope);
+      const paths = readPlayerPaths(envelope) ?? expect.unreachable('the match has paths');
+      const { playerSlot, team } = findTrackedPlayer(envelope.payload, FIXTURE_ACCOUNT_ID);
+
+      expect(judged.positionsKnown).toBe(true);
+      for (const death of judged.deaths ?? expect.unreachable('the deaths are known')) {
+        verdicts.push(death.verdict);
+        // Who stood in the fight: the other players alive within 800 units of the death.
+        const inFight = [...paths.bySlot.values()].filter((path) => {
+          const position = positionAt(path, death.timeS);
+          return (
+            path.slot !== playerSlot &&
+            position !== null &&
+            Math.hypot(position.x - death.position.x, position.y - death.position.y) <= FIGHT_RANGE
+          );
+        });
+        const alliesInFight = inFight.filter((path) => path.team === team);
+        if (death.verdict === 'avoidable') {
+          // Alone against their killer and one more enemy.
+          expect(death.nearby).toEqual({ enemies: 2, allies: 0 });
+          expect(inFight.map((path) => path.slot)).toContain(death.killerSlot);
+          expect(inFight).toHaveLength(2);
+        } else {
+          // Every other death has an ally in the fight.
+          expect(death.verdict).toBe('balanced');
+          expect(alliesInFight.length).toBeGreaterThan(0);
+        }
+      }
+    }
+    // About one death in three is avoidable.
+    const avoidableShare =
+      verdicts.filter((verdict) => verdict === 'avoidable').length / verdicts.length;
+    expect(verdicts).toContain('balanced');
+    expect(avoidableShare).toBeGreaterThan(0.2);
+    expect(avoidableShare).toBeLessThan(0.4);
   });
 
   it('has one damage dealer per player plus the non-player slot 0, with at most one value per sample', () => {

@@ -59,7 +59,8 @@
         "ready": "Archived",
         "waiting": "Waiting",
         "unavailable": "Unavailable",
-        "invalid": "Invalid"
+        "invalid": "Invalid",
+        "evicted": "Removed (storage)"
       }
     },
     "sync": {
@@ -91,6 +92,8 @@
     "invalid": "The detail of this match could not be read.",
     "missing": "The archive of this match is missing: it will be downloaded again.",
     "lost": "The archive of this match is gone: matches older than 90 days are not downloaded again.",
+    "evicted": "This match's archive was removed to free space: it is being downloaded again.",
+    "evictedLost": "This match's archive was removed to free space, and matches older than 90 days are not downloaded again.",
     "retry": "Retry",
     "tabs": {
       "label": "Match sections",

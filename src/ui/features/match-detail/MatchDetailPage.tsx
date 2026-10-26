@@ -22,8 +22,10 @@
  * Any other match says why it has no archive, and has no tabs: the app does not archive it, it waits
  * for its first or its next attempt, deadlock-api could not give its detail, the detail cannot be
  * read, or the archive file is gone (the match is then downloaded again, or, past the 90 days,
- * never). A match that failed for good has a "Retry" button. A failure to read the archive file or to
- * decompress it is not an explanation of the match but an error of the page, shown like any other.
+ * never). An archive file removed to free space is the same: inside the 90 days the page starts the
+ * download itself when it opens, with no button. A match that failed for good has a "Retry"
+ * button. A failure to read the archive file or to decompress it is not an explanation of the match
+ * but an error of the page, shown like any other.
  *
  * Every archived match is analysed after each synchronisation, so the page usually finds the analysis
  * made. A match still not analysed (opened before the end of the synchronisation that archived it, or
@@ -39,7 +41,7 @@
 import { getRouteApi, Link } from '@tanstack/react-router';
 import type { TFunction } from 'i18next';
 import { ArrowLeft, RotateCw, UserRound } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { MatchId } from '../../../core/domain/match';
 import type { ArchiveFacts } from '../../../core/match-detail/archive-facts';
@@ -316,6 +318,12 @@ function renderView(
     case 'lost':
       // Nothing to retry: the queue only downloads the matches of the last 90 days.
       return renderExplanation([t('matchDetail.lost')]);
+    case 'evicted':
+      // No button: the page starts the download itself (see `MatchDetailPage`).
+      return renderExplanation([t('matchDetail.evicted')]);
+    case 'evicted_lost':
+      // Nothing to retry either: the match is past the 90 days the queue downloads.
+      return renderExplanation([t('matchDetail.evictedLost')]);
   }
 }
 
@@ -332,6 +340,22 @@ export function MatchDetailPage() {
   const navigate = matchDetailRoute.useNavigate();
   const detail = useMatchDetail(matchId);
   const retry = useRetryDetail(matchId);
+  const viewKind = detail.data?.kind;
+  // An evicted match (its archive file was removed to free space, and the match is inside the 90
+  // days) was put back in the queue when the service read it, but nothing starts the queue for it:
+  // the next scheduled synchronisation would take it, which can be a long wait for a page the player
+  // is looking at. So the page starts the detail run of the match itself, with the same hook as the
+  // "Retry" button, once per match: the ref stops a re-render, or the replayed effect of the strict
+  // mode, from starting it again (the view turns `waiting` as soon as the match is read again).
+  const downloadStartedFor = useRef<MatchId | null>(null);
+  const { mutate: retryDownload } = retry;
+  useEffect(() => {
+    if (viewKind !== 'evicted' || downloadStartedFor.current === matchId) {
+      return;
+    }
+    downloadStartedFor.current = matchId;
+    retryDownload();
+  }, [matchId, viewKind, retryDownload]);
   const syncRunning = useSyncRunning();
   // A synchronisation changes what the page shows (the queue archives a waiting match, a retry
   // changes the state of the match): the page reads the match again whenever one runs or advances.

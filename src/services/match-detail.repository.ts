@@ -20,7 +20,7 @@ import type { AccountId } from '../core/domain/account';
 import { PAIGE_HERO_ID } from '../core/domain/hero';
 import { matchIdSchema, type MatchId, type MatchSummary } from '../core/domain/match';
 import { AppError } from '../core/errors/app-error';
-import type { ArchiveFormat } from '../core/match-detail/archive-envelope';
+import { ARCHIVE_FORMAT, type ArchiveFormat } from '../core/match-detail/archive-envelope';
 import {
   ARCHIVED_GAME_MODE,
   ARCHIVED_MATCH_MODES,
@@ -44,6 +44,9 @@ const RETRY: DetailStatus = 'retry';
 /** The detail is archived. */
 const READY: DetailStatus = 'ready';
 
+/** The detail was archived, but its file was removed to free space. */
+const EVICTED: DetailStatus = 'evicted';
+
 /** The next match the queue should download the detail of. */
 export interface DueMatch {
   readonly matchId: MatchId;
@@ -60,12 +63,15 @@ export interface StoredDetail {
   readonly nextAttemptAt: number | null;
   /** Error code of the last counted failure; `null` when there is none. */
   readonly lastError: string | null;
-  /** Size of the archive file in bytes; `null` unless the detail is `ready`. */
+  /**
+   * Size of the archive file in bytes; `null` unless the detail is `ready`, or `evicted` (the size
+   * of the file that was removed).
+   */
   readonly archivedBytes: number | null;
   /**
    * Format of the archive file: `2` for a current one, `1` for a format-1 file whose refresh
    * failed for good, and `null` for a file written before the format was recorded (a format-1 file
-   * that was never tried for a refresh) or when the detail is not `ready`.
+   * that was never tried for a refresh) or when the detail is neither `ready` nor `evicted`.
    */
   readonly archiveFormat: ArchiveFormat | null;
   /**
@@ -85,6 +91,16 @@ export interface DetailSummary {
   readonly unavailable: number;
   /** Details the API answered with but the app cannot use, in the window. */
   readonly invalid: number;
+  /** Details archived once whose file was removed to free space (`evicted`), in the window. */
+  readonly evicted: number;
+}
+
+/** An archive the storage may remove to free space, with the size it frees. */
+export interface EvictionCandidate {
+  /** The match whose archive file may be removed. */
+  readonly matchId: MatchId;
+  /** Size of its archive file, in bytes. */
+  readonly archivedBytes: number;
 }
 
 /** Schema of a counter of attempts. */
@@ -119,6 +135,21 @@ const countRowSchema = z.object({
   detail_status: z.enum(DETAIL_STATUSES),
   total: z.int().nonnegative(),
 });
+
+/** Schema of a size of archive file, in bytes. */
+const bytesSchema = z.int().nonnegative();
+
+/** Schema of a row `listEvictionCandidates` reads. */
+const candidateRowSchema = z.object({ match_id: matchIdSchema, archived_bytes: bytesSchema });
+
+/** Schema of the row `sumArchivedBytes` reads. */
+const totalBytesRowSchema = z.object({ total: bytesSchema });
+
+/** Schema of the row `averageArchiveBytes` reads: SQLite's `AVG` is a real, `NULL` over no row. */
+const averageBytesRowSchema = z.object({ average: z.number().nonnegative().nullable() });
+
+/** Schema of a row `listReadyMatchIds` reads. */
+const matchIdRowSchema = z.object({ match_id: matchIdSchema });
 
 /**
  * The values of one statement, with the placeholders that name them.
@@ -437,13 +468,41 @@ export class MatchDetailRepository {
   }
 
   /**
+   * Record that the archive file of a match was removed to free space: the match goes from `ready`
+   * to `evicted`. Its archive size and its format are kept, as the record of what was removed.
+   * Nothing happens when the match is not stored, or not `ready` (only an archive can be evicted).
+   *
+   * @param accountId - The player.
+   * @param matchId - The match.
+   * @returns Whether the match was `ready` and is now `evicted`; `false` when nothing changed, so
+   *   that the caller leaves the file of a row someone else changed meanwhile alone.
+   * @throws AppError of kind `storage` when the database fails.
+   */
+  async markEvicted(accountId: AccountId, matchId: MatchId): Promise<boolean> {
+    const params = new SqlParams();
+    // The placeholders are numbered as the text is read, so each part is written after the one
+    // that precedes it.
+    const sql = `UPDATE matches
+       SET detail_status = ${params.bind(EVICTED)}
+       WHERE ${matchCondition(params, accountId, matchId)}
+         AND detail_status = ${params.bind(READY)}`;
+    // The statement changes one row (the account and the match make the key) or none.
+    const changed = await this.#run(
+      () => this.#database.execute(sql, params.values),
+      'Could not record an evicted archive',
+    );
+    return changed > 0;
+  }
+
+  /**
    * Count the Paige matches of a player by state of the queue, in the one statement.
    *
    * The matches the queue never archives (Street Brawl, private lobbies, other heroes) are not
    * counted, whatever their status. The 90 days of the window apply to the matches still to do or
    * given up on, but not to the archived ones: an archive stays on disk, and is still shown by the
    * list and the match page, once its match is older than 90 days, so the count of the archives
-   * keeps it too.
+   * keeps it too. An evicted match has no file left, so it is counted apart, within the window like
+   * the others.
    *
    * @param accountId - The player.
    * @param now - The current time, in Unix milliseconds.
@@ -468,6 +527,7 @@ export class MatchDetailRepository {
       ready: 0,
       unavailable: 0,
       invalid: 0,
+      evicted: 0,
     };
     for (const row of rows) {
       const { detail_status: status, total } = parseRow(
@@ -482,7 +542,116 @@ export class MatchDetailRepository {
       waiting: counts.pending + counts.retry,
       unavailable: counts.unavailable,
       invalid: counts.invalid,
+      evicted: counts.evicted,
     };
+  }
+
+  /**
+   * The archives the storage may remove to free space, in the order it removes them: every `ready`
+   * match of a player but the `protectedCount` newest `ready` Paige matches, oldest first.
+   *
+   * Only Paige archives are protected, since only they feed the review and the analysis: an archive
+   * of another hero, if one is ever stored, is a candidate whatever its age. Matches are ordered by
+   * start time, and by match id when two started at the same second, so the order is total: the
+   * protected ones are the last in that order, and the candidates come from its start.
+   *
+   * @param accountId - The player.
+   * @param protectedCount - How many of the newest Paige archives are never candidates: a whole
+   *   number, 0 or more.
+   * @returns The candidates with the size of their file, oldest first; a `ready` match with no size
+   *   recorded counts as 0 bytes, as {@link MatchDetailRepository.sumArchivedBytes} counts it.
+   * @throws AppError of kind `storage` when the database fails or returns an invalid row.
+   */
+  async listEvictionCandidates(
+    accountId: AccountId,
+    protectedCount: number,
+  ): Promise<readonly EvictionCandidate[]> {
+    const params = new SqlParams();
+    // The placeholders are numbered as the text is read, so each part is written after the one
+    // that precedes it.
+    const sql = `SELECT match_id, COALESCE(archived_bytes, 0) AS archived_bytes FROM matches
+       WHERE account_id = ${params.bind(accountId)}
+         AND detail_status = ${params.bind(READY)}
+         AND match_id NOT IN (
+           SELECT match_id FROM matches
+           WHERE account_id = ${params.bind(accountId)}
+             AND detail_status = ${params.bind(READY)}
+             AND hero_id = ${params.bind(PAIGE_HERO_ID)}
+           ORDER BY start_time DESC, match_id DESC
+           LIMIT ${params.bind(protectedCount)})
+       ORDER BY start_time ASC, match_id ASC`;
+    const rows = await this.#run(
+      () => this.#database.select(sql, params.values),
+      'Could not read the archives to evict',
+    );
+    return rows.map((row) => {
+      const candidate = parseRow(candidateRowSchema, row, 'A stored archive size is invalid');
+      return { matchId: candidate.match_id, archivedBytes: candidate.archived_bytes };
+    });
+  }
+
+  /**
+   * How many bytes the archive files of a player take: the sizes of the `ready` matches, whatever
+   * their hero or age. An evicted match has no file left, so it is not counted.
+   *
+   * @param accountId - The player.
+   * @returns The total, in bytes; 0 without an archive.
+   * @throws AppError of kind `storage` when the database fails or returns an invalid row.
+   */
+  async sumArchivedBytes(accountId: AccountId): Promise<number> {
+    const params = new SqlParams();
+    // `SUM` over no row is `NULL`, hence the `COALESCE`; a row with no size adds nothing.
+    const sql = `SELECT COALESCE(SUM(archived_bytes), 0) AS total FROM matches
+       WHERE account_id = ${params.bind(accountId)}
+         AND detail_status = ${params.bind(READY)}`;
+    const rows = await this.#run(
+      () => this.#database.select(sql, params.values),
+      'Could not sum the archive sizes',
+    );
+    return parseRow(totalBytesRowSchema, rows[0], 'A stored archive size is invalid').total;
+  }
+
+  /**
+   * The mean size of an archive file of a player, over the `ready` matches archived in the current
+   * format: an older format holds less, so it would make the mean too small.
+   *
+   * @param accountId - The player.
+   * @returns The mean, in bytes (not rounded), or `null` when the player has no archive in the
+   *   current format.
+   * @throws AppError of kind `storage` when the database fails or returns an invalid row.
+   */
+  async averageArchiveBytes(accountId: AccountId): Promise<number | null> {
+    const params = new SqlParams();
+    const sql = `SELECT AVG(archived_bytes) AS average FROM matches
+       WHERE account_id = ${params.bind(accountId)}
+         AND detail_status = ${params.bind(READY)}
+         AND archive_format = ${params.bind(ARCHIVE_FORMAT)}`;
+    const rows = await this.#run(
+      () => this.#database.select(sql, params.values),
+      'Could not average the archive sizes',
+    );
+    return parseRow(averageBytesRowSchema, rows[0], 'A stored archive size is invalid').average;
+  }
+
+  /**
+   * The matches of a player whose detail is archived (`ready`), whatever their hero or age.
+   *
+   * @param accountId - The player.
+   * @returns Their ids.
+   * @throws AppError of kind `storage` when the database fails or returns an invalid row.
+   */
+  async listReadyMatchIds(accountId: AccountId): Promise<ReadonlySet<MatchId>> {
+    const params = new SqlParams();
+    const sql = `SELECT match_id FROM matches
+       WHERE account_id = ${params.bind(accountId)}
+         AND detail_status = ${params.bind(READY)}`;
+    const rows = await this.#run(
+      () => this.#database.select(sql, params.values),
+      'Could not read the archived matches',
+    );
+    return new Set(
+      rows.map((row) => parseRow(matchIdRowSchema, row, 'A stored match id is invalid').match_id),
+    );
   }
 
   /**

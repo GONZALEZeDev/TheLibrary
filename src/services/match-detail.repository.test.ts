@@ -533,7 +533,7 @@ describe('MatchDetailRepository', () => {
 
   it('counts the eligible matches by status', async () => {
     const { repository } = await createRepositories([
-      // Eligible: 2 pending, 1 retry, 2 ready, 1 unavailable, 1 invalid.
+      // Eligible: 2 pending, 1 retry, 2 ready, 1 unavailable, 1 invalid, 1 evicted.
       matchSummary({ matchId: 1, startTime: daysAgo(1) }),
       matchSummary({ matchId: 2, startTime: daysAgo(2) }),
       matchSummary({ matchId: 3, startTime: daysAgo(3) }),
@@ -541,6 +541,7 @@ describe('MatchDetailRepository', () => {
       matchSummary({ matchId: 5, startTime: daysAgo(5) }),
       matchSummary({ matchId: 6, startTime: daysAgo(6) }),
       matchSummary({ matchId: 7, startTime: daysAgo(7) }),
+      matchSummary({ matchId: 12, startTime: daysAgo(8) }),
       // Not counted, whatever their status: Street Brawl, another hero, another player; and a
       // match older than 90 days that was never archived.
       matchSummary({ matchId: 8, startTime: daysAgo(1), gameMode: 4 }),
@@ -563,14 +564,18 @@ describe('MatchDetailRepository', () => {
       nextAttemptAt: null,
       lastError: 'invalid_payload',
     });
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(12), 100, ARCHIVE_FORMAT);
+    await repository.markEvicted(TEST_ACCOUNT_ID, testMatchId(12));
     await repository.markReady(TEST_ACCOUNT_ID, testMatchId(8), 100, ARCHIVE_FORMAT);
     await repository.markReady(TEST_ACCOUNT_ID, testMatchId(9), 100, ARCHIVE_FORMAT);
 
+    // The evicted match is counted apart: its file is gone, so it is not an archive any more.
     await expect(repository.summary(TEST_ACCOUNT_ID, NOW)).resolves.toEqual({
       archived: 2,
       waiting: 3,
       unavailable: 1,
       invalid: 1,
+      evicted: 1,
     });
   });
 
@@ -618,6 +623,7 @@ describe('MatchDetailRepository', () => {
       waiting: 0,
       unavailable: 0,
       invalid: 0,
+      evicted: 0,
     });
   });
 
@@ -629,7 +635,170 @@ describe('MatchDetailRepository', () => {
       waiting: 0,
       unavailable: 0,
       invalid: 0,
+      evicted: 0,
     });
+  });
+
+  it('marks only a ready match evicted and keeps its size and format', async () => {
+    const { repository } = await createRepositories([
+      matchSummary({ matchId: 1, startTime: daysAgo(1) }),
+      matchSummary({ matchId: 2, startTime: daysAgo(2) }),
+      matchSummary({ matchId: 3, startTime: daysAgo(3) }),
+      matchSummary({ matchId: 4, startTime: daysAgo(4) }),
+      matchSummary({ matchId: 1, startTime: daysAgo(1), accountId: testAccountId(42) }),
+    ]);
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(1), 52_431, ARCHIVE_FORMAT);
+    // A format-1 archive whose refresh failed for good keeps its format 1 too.
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(2), 7_000, ARCHIVE_FORMAT);
+    await repository.markRefreshFinal(TEST_ACCOUNT_ID, testMatchId(2));
+    await repository.saveState(TEST_ACCOUNT_ID, testMatchId(3), {
+      status: 'unavailable',
+      attempts: 6,
+      nextAttemptAt: null,
+      lastError: 'http_404',
+    });
+    // Match 4 stays pending. Another player's match 1 is archived too.
+    await repository.markReady(testAccountId(42), testMatchId(1), 9_999, ARCHIVE_FORMAT);
+    const notReady = await Promise.all(
+      [3, 4].map((id) => repository.getDetail(TEST_ACCOUNT_ID, testMatchId(id))),
+    );
+
+    // It answers whether it changed the row: only the ready ones change.
+    for (const [id, changed] of [
+      [1, true],
+      [2, true],
+      [3, false],
+      [4, false],
+    ] as const) {
+      await expect(repository.markEvicted(TEST_ACCOUNT_ID, testMatchId(id))).resolves.toBe(changed);
+    }
+    // Evicting it twice, or evicting a match that is not stored, changes nothing.
+    await expect(repository.markEvicted(TEST_ACCOUNT_ID, testMatchId(1))).resolves.toBe(false);
+    await expect(repository.markEvicted(TEST_ACCOUNT_ID, testMatchId(99))).resolves.toBe(false);
+
+    await expect(repository.getDetail(TEST_ACCOUNT_ID, testMatchId(1))).resolves.toMatchObject({
+      status: 'evicted',
+      attempts: 0,
+      archivedBytes: 52_431,
+      archiveFormat: ARCHIVE_FORMAT,
+    });
+    await expect(repository.getDetail(TEST_ACCOUNT_ID, testMatchId(2))).resolves.toMatchObject({
+      status: 'evicted',
+      archivedBytes: 7_000,
+      archiveFormat: 1,
+    });
+    // A match that was not ready is left exactly as it was, and so is another player's.
+    await expect(
+      Promise.all([3, 4].map((id) => repository.getDetail(TEST_ACCOUNT_ID, testMatchId(id)))),
+    ).resolves.toEqual(notReady);
+    await expect(repository.getDetail(testAccountId(42), testMatchId(1))).resolves.toMatchObject({
+      status: 'ready',
+      archivedBytes: 9_999,
+    });
+  });
+
+  it('lists eviction candidates oldest first outside the newest protected archives', async () => {
+    const otherHero = PAIGE_HERO_ID + 1;
+    const { repository } = await createRepositories([
+      // Paige archives: 5 and 10 started at the same second, and so did 3 and 4.
+      matchSummary({ matchId: 1, startTime: daysAgo(1) }),
+      matchSummary({ matchId: 2, startTime: daysAgo(2) }),
+      matchSummary({ matchId: 3, startTime: daysAgo(3) }),
+      matchSummary({ matchId: 4, startTime: daysAgo(3) }),
+      matchSummary({ matchId: 5, startTime: daysAgo(5) }),
+      matchSummary({ matchId: 10, startTime: daysAgo(5) }),
+      // Newer than every archive, but not archives: a pending match and an evicted one. They take
+      // no place among the protected ones, and are never candidates.
+      matchSummary({ matchId: 6, startTime: daysAgo(0.5) }),
+      matchSummary({ matchId: 8, startTime: daysAgo(0.1) }),
+      // The newest archive, of another hero: never protected, so always a candidate.
+      matchSummary({ matchId: 7, startTime: daysAgo(0.25), heroId: otherHero }),
+      // Another player's newest archive: never listed, and protects nothing.
+      matchSummary({ matchId: 9, startTime: daysAgo(0), accountId: testAccountId(42) }),
+    ]);
+    for (const id of [1, 2, 3, 4, 5, 10, 7, 8]) {
+      await repository.markReady(TEST_ACCOUNT_ID, testMatchId(id), 100 + id, ARCHIVE_FORMAT);
+    }
+    await repository.markEvicted(TEST_ACCOUNT_ID, testMatchId(8));
+    await repository.markReady(testAccountId(42), testMatchId(9), 109, ARCHIVE_FORMAT);
+    const candidate = (id: number) => ({ matchId: testMatchId(id), archivedBytes: 100 + id });
+
+    // The 3 newest Paige archives are 1, 2 and 4 (the higher id of the two at the same second).
+    await expect(repository.listEvictionCandidates(TEST_ACCOUNT_ID, 3)).resolves.toEqual(
+      [5, 10, 3, 7].map(candidate),
+    );
+    // Nothing protected: every archive, oldest first, the lower id first at the same second.
+    await expect(repository.listEvictionCandidates(TEST_ACCOUNT_ID, 0)).resolves.toEqual(
+      [5, 10, 3, 4, 2, 1, 7].map(candidate),
+    );
+    // More protected than there are Paige archives: only the other hero's is left.
+    await expect(repository.listEvictionCandidates(TEST_ACCOUNT_ID, 100)).resolves.toEqual([
+      candidate(7),
+    ]);
+  });
+
+  it('sums the bytes of ready archives only', async () => {
+    const { repository } = await createRepositories([
+      matchSummary({ matchId: 1, startTime: daysAgo(1) }),
+      matchSummary({ matchId: 2, startTime: daysAgo(200) }),
+      matchSummary({ matchId: 3, startTime: daysAgo(3), heroId: PAIGE_HERO_ID + 1 }),
+      matchSummary({ matchId: 4, startTime: daysAgo(4) }),
+      matchSummary({ matchId: 5, startTime: daysAgo(5) }),
+      matchSummary({ matchId: 1, startTime: daysAgo(1), accountId: testAccountId(42) }),
+    ]);
+    // Counted: every archive of the player, whatever its age or hero.
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(1), 100, ARCHIVE_FORMAT);
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(2), 250, ARCHIVE_FORMAT);
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(3), 4_000, ARCHIVE_FORMAT);
+    // Not counted: an evicted match (its file is gone), a pending one and another player's.
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(4), 1_000_000, ARCHIVE_FORMAT);
+    await repository.markEvicted(TEST_ACCOUNT_ID, testMatchId(4));
+    await repository.markReady(testAccountId(42), testMatchId(1), 5_000_000, ARCHIVE_FORMAT);
+
+    await expect(repository.sumArchivedBytes(TEST_ACCOUNT_ID)).resolves.toBe(4_350);
+    await expect(repository.sumArchivedBytes(testAccountId(43))).resolves.toBe(0);
+  });
+
+  it('averages the bytes of format-2 archives', async () => {
+    const { repository } = await createRepositories([
+      matchSummary({ matchId: 1, startTime: daysAgo(1) }),
+      matchSummary({ matchId: 2, startTime: daysAgo(2) }),
+      matchSummary({ matchId: 3, startTime: daysAgo(3) }),
+      matchSummary({ matchId: 4, startTime: daysAgo(4) }),
+      matchSummary({ matchId: 1, startTime: daysAgo(1), accountId: testAccountId(42) }),
+    ]);
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(1), 100, ARCHIVE_FORMAT);
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(2), 300, ARCHIVE_FORMAT);
+    // Not averaged: a format-1 archive, an evicted one and another player's.
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(3), 50_000, ARCHIVE_FORMAT);
+    await repository.markRefreshFinal(TEST_ACCOUNT_ID, testMatchId(3));
+    await repository.markReady(TEST_ACCOUNT_ID, testMatchId(4), 70_000, ARCHIVE_FORMAT);
+    await repository.markEvicted(TEST_ACCOUNT_ID, testMatchId(4));
+    await repository.markReady(testAccountId(42), testMatchId(1), 90_000, ARCHIVE_FORMAT);
+
+    await expect(repository.averageArchiveBytes(TEST_ACCOUNT_ID)).resolves.toBe(200);
+    // Without a format-2 archive there is no average.
+    await expect(repository.averageArchiveBytes(testAccountId(43))).resolves.toBeNull();
+  });
+
+  it('lists the ids of the ready matches', async () => {
+    const { repository } = await createRepositories([
+      matchSummary({ matchId: 1, startTime: daysAgo(1) }),
+      matchSummary({ matchId: 2, startTime: daysAgo(200) }),
+      matchSummary({ matchId: 3, startTime: daysAgo(3) }),
+      matchSummary({ matchId: 4, startTime: daysAgo(4) }),
+      matchSummary({ matchId: 5, startTime: daysAgo(1), accountId: testAccountId(42) }),
+    ]);
+    for (const id of [1, 2, 3]) {
+      await repository.markReady(TEST_ACCOUNT_ID, testMatchId(id), 100, ARCHIVE_FORMAT);
+    }
+    await repository.markEvicted(TEST_ACCOUNT_ID, testMatchId(3));
+    await repository.markReady(testAccountId(42), testMatchId(5), 100, ARCHIVE_FORMAT);
+
+    // Not the evicted match 3, the pending match 4, or another player's match 5.
+    await expect(repository.listReadyMatchIds(TEST_ACCOUNT_ID)).resolves.toEqual(
+      new Set([1, 2].map(testMatchId)),
+    );
   });
 
   it('keeps the detail state when the history is synchronised again', async () => {
@@ -738,6 +907,11 @@ describe('MatchDetailRepository', () => {
         repository.saveState(TEST_ACCOUNT_ID, matchId, state),
         repository.resetToPending(TEST_ACCOUNT_ID, matchId),
         repository.summary(TEST_ACCOUNT_ID, NOW),
+        repository.markEvicted(TEST_ACCOUNT_ID, matchId),
+        repository.listEvictionCandidates(TEST_ACCOUNT_ID, 40),
+        repository.sumArchivedBytes(TEST_ACCOUNT_ID),
+        repository.averageArchiveBytes(TEST_ACCOUNT_ID),
+        repository.listReadyMatchIds(TEST_ACCOUNT_ID),
       ];
       for (const call of calls) {
         await expect(call).rejects.toMatchObject({
@@ -814,10 +988,23 @@ describe('MatchDetailRepository', () => {
     await repository.summary(TEST_ACCOUNT_ID, NOW);
     await repository.nextStale(TEST_ACCOUNT_ID, NOW, new Set([testMatchId(987_654_322)]));
     await repository.markRefreshFinal(TEST_ACCOUNT_ID, matchId);
+    await repository.markEvicted(TEST_ACCOUNT_ID, matchId);
+    await repository.listEvictionCandidates(TEST_ACCOUNT_ID, 7_777_777);
+    await repository.sumArchivedBytes(TEST_ACCOUNT_ID);
+    await repository.averageArchiveBytes(TEST_ACCOUNT_ID);
+    await repository.listReadyMatchIds(TEST_ACCOUNT_ID);
 
-    expect(statements).toHaveLength(8);
+    expect(statements).toHaveLength(13);
     for (const sql of statements) {
-      for (const value of [TEST_ACCOUNT_ID, 987_654_321, 987_654_322, NOW, 4_242_424, 5_555_555]) {
+      for (const value of [
+        TEST_ACCOUNT_ID,
+        987_654_321,
+        987_654_322,
+        NOW,
+        4_242_424,
+        5_555_555,
+        7_777_777,
+      ]) {
         expect(sql).not.toContain(String(value));
       }
     }

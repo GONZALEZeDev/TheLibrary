@@ -711,6 +711,50 @@ describe('ProjectionService.catchUp', () => {
     expect(linesOf(logger, 'Projection done')).toHaveLength(1);
   });
 
+  it('never resets an evicted match when projecting', async () => {
+    const context = await setUp();
+    const { service, metrics, details, logger, archived } = context;
+    const evicted = archived[1] ?? expect.unreachable('the history holds several archived matches');
+    // Every match holds the projection an older version left, so a version bump lists them all.
+    for (const matchId of archived) {
+      await metrics.saveProjection(
+        ACCOUNT,
+        matchId,
+        {
+          version: PROJECTION_VERSION - 1,
+          playerBadge: null,
+          hasLeaver: true,
+          failed: false,
+          projectedAt: 1,
+        },
+        new Map([['stale_metric', 1]]),
+      );
+    }
+    // One of them had its archive file removed to free space: the row keeps the size of the file.
+    const archivedBytes = (await details.getDetail(ACCOUNT, evicted))?.archivedBytes;
+    await deleteArchive(context, evicted);
+    await details.markEvicted(ACCOUNT, evicted);
+    await expect(metrics.listToProject(ACCOUNT, PROJECTION_VERSION)).resolves.toEqual(
+      archived.filter((matchId) => matchId !== evicted),
+    );
+
+    const report = await service.catchUp(ACCOUNT, RUN);
+
+    // The other matches are projected; the evicted one is not listed, not read (its file is gone, and
+    // reading it would reset it to pending) and not reset.
+    expect(report).toEqual({ ...NOTHING, projected: archived.length - 1 });
+    await expect(details.getDetail(ACCOUNT, evicted)).resolves.toMatchObject({
+      status: 'evicted',
+      archivedBytes,
+    });
+    // Its stored projection is what it was: the metrics of an evicted match are kept.
+    await expect(metrics.getProjection(ACCOUNT, evicted)).resolves.toMatchObject({
+      version: PROJECTION_VERSION - 1,
+    });
+    expect((await metrics.getValues(ACCOUNT, evicted)).has('stale_metric')).toBe(true);
+    expectNoAccountId(logger);
+  });
+
   it.each([
     {
       bump: 'the version 2 bump, which added the damage sources',

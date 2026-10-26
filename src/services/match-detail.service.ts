@@ -210,6 +210,18 @@ export type MatchDetailView =
    * days: the archive is gone for good.
    */
   | { readonly kind: 'lost' }
+  /**
+   * The archive file of the match was removed to keep the archive folder under its size limit, and
+   * the match is still inside the 90 days. It was put back to `pending`: the page asks for the
+   * download that fetches it again.
+   */
+  | { readonly kind: 'evicted' }
+  /**
+   * The archive file of the match was removed to keep the archive folder under its size limit, and
+   * the match is past the 90 days. It stays `evicted` (its stored metrics are kept), and the queue
+   * only downloads the matches of the last 90 days: the archive is gone for good.
+   */
+  | { readonly kind: 'evicted_lost' }
   /** The detail is archived: what the page shows of it, and the size of the archive file. */
   | { readonly kind: 'ready'; readonly facts: ArchiveFacts; readonly archivedBytes: number };
 
@@ -420,8 +432,13 @@ export class MatchDetailService {
    * 1. a match the app does not know is `not_eligible`;
    * 2. an archived (`ready`) match is read, whatever its age: the file is there, so the page shows
    *    it even once the match has aged past the 90 days of the window;
-   * 3. any other match that the queue would not archive (`isDetailEligible`) is `not_eligible`;
-   * 4. a `pending` or `retry` match is `waiting`, and an `unavailable` or `invalid` one says so,
+   * 3. an `evicted` match (its file was removed to keep the archive folder under its size limit) is
+   *    told before the eligibility check, so that an old one is not taken for a match the app never
+   *    archives: inside the 90 days it is put back to `pending` and the view is `evicted` (the page
+   *    asks for the download that fetches it again), past them the view is `evicted_lost` and the
+   *    row is left as it is;
+   * 4. any other match that the queue would not archive (`isDetailEligible`) is `not_eligible`;
+   * 5. a `pending` or `retry` match is `waiting`, and an `unavailable` or `invalid` one says so,
    *    with the code of its last failure.
    *
    * An archive that is absent, or whose content cannot be used at any step (it does not
@@ -457,7 +474,19 @@ export class MatchDetailService {
       return this.#showArchive(accountId, matchId, stored);
     }
     // The rule is the core's, with the fields the repository read: a copy of it here would drift.
-    if (!isDetailEligible(stored.match, this.#now())) {
+    const eligible = isDetailEligible(stored.match, this.#now());
+    // An evicted match is told before the eligibility check: it did have an archive, so a match past
+    // the 90 days is "gone" (`evicted_lost`) rather than one the app never archives.
+    if (stored.status === 'evicted') {
+      if (!eligible) {
+        return { kind: 'evicted_lost' };
+      }
+      // The file is gone, and the queue downloads a `pending` match: put it back, as for an archive
+      // that cannot be read. The download itself is asked for by the page (see `resetForRetry`).
+      await this.#repository.resetToPending(accountId, matchId);
+      return { kind: 'evicted' };
+    }
+    if (!eligible) {
       return { kind: 'not_eligible' };
     }
     switch (stored.status) {
@@ -473,13 +502,15 @@ export class MatchDetailService {
   }
 
   /**
-   * Put a failed match back in the queue, for the "Retry" action: only an `unavailable` or an
-   * `invalid` match goes back to `pending`, so that the next run downloads it again. Any other
-   * match is left as it is (a match that waits for its retry date, or is archived, has nothing to
-   * retry), and so is one the app does not know. Without a linked account, nothing happens.
+   * Put a match whose detail is missing back in the queue, for the "Retry" action and for the
+   * download of an evicted match: only an `unavailable`, an `invalid` or an `evicted` match goes
+   * back to `pending`, so that the next run downloads it again. Any other match is left as it is (a
+   * match that waits for its retry date, or is archived, has nothing to retry), and so is one the
+   * app does not know. Without a linked account, nothing happens.
    *
    * The state is read, then written, which is not atomic. That is harmless: the queue never takes
-   * an `unavailable` or an `invalid` match, so nothing changes it in between except this same call.
+   * an `unavailable`, an `invalid` or an `evicted` match, so nothing changes it in between except
+   * this same call (and `getMatchDetail`, which puts an `evicted` match back the same way).
    *
    * @param matchId - The match.
    * @throws AppError of kind `storage` when the database fails.
@@ -490,7 +521,11 @@ export class MatchDetailService {
       return;
     }
     const stored = await this.#repository.getDetail(accountId, matchId);
-    if (stored?.status === 'unavailable' || stored?.status === 'invalid') {
+    if (
+      stored?.status === 'unavailable' ||
+      stored?.status === 'invalid' ||
+      stored?.status === 'evicted'
+    ) {
       await this.#repository.resetToPending(accountId, matchId);
     }
   }

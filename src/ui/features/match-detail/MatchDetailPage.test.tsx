@@ -28,7 +28,7 @@
  */
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createFixtureApi,
   jsonResponse,
@@ -42,8 +42,10 @@ import { AppError } from '../../../core/errors/app-error';
 import { MAX_RETRY_DELAY_MS } from '../../../core/match-detail/detail-status';
 import type { Language } from '../../../core/settings/language';
 import type { AppServices } from '../../../services/app-services';
+import { MatchDetailRepository } from '../../../services/match-detail.repository';
 import { MatchDetailService, type MatchDetailView } from '../../../services/match-detail.service';
 import { MatchesRepository } from '../../../services/matches.repository';
+import { SyncService } from '../../../services/sync.service';
 import {
   createTestQueryClient,
   createTestServices,
@@ -82,6 +84,7 @@ import {
 } from '../../../test/match-detail-page';
 import { matchSummary, testMatchId } from '../../../test/test-data';
 import type { MatchTab } from '../../app/router';
+import { DETAILS_QUERY_KEY } from '../matches/use-matches';
 
 /** The URL of a match detail request. */
 const METADATA_URL = /\/v1\/matches\/\d+\/metadata/;
@@ -111,6 +114,21 @@ const TAB_NAMES: Readonly<Record<MatchTab, string>> = {
   timeline: 'Timeline',
   damage: 'Damage and build',
   players: 'Players',
+};
+
+/** What the page says of an evicted match, by language (the shared strings of the tests lack them). */
+const EVICTED_STRINGS: Readonly<Record<Language, { evicted: string; evictedLost: string }>> = {
+  en: {
+    evicted: "This match's archive was removed to free space: it is being downloaded again.",
+    evictedLost:
+      "This match's archive was removed to free space, and matches older than 90 days are not downloaded again.",
+  },
+  fr: {
+    evicted:
+      "L'archive de cette partie a été supprimée pour faire de la place : elle est téléchargée à nouveau.",
+    evictedLost:
+      "L'archive de cette partie a été supprimée pour faire de la place, et les parties de plus de 90 jours ne sont plus téléchargées.",
+  },
 };
 
 /** The title of the damage tab in English: the proof that the tab shows the damage of the match. */
@@ -830,6 +848,143 @@ describe('MatchDetailPage', () => {
     expect(screen.queryByText(STRINGS.en.missing)).not.toBeInTheDocument();
   });
 
+  it('downloads an evicted match again, once, when its page opens', async () => {
+    const testServices = await synchronised();
+    const { details, sync } = testServices.services;
+    await new MatchDetailRepository(testServices.database).markEvicted(
+      testServices.accountId ?? expect.unreachable('the services have a linked account'),
+      ARCHIVED_ID,
+    );
+    // The download is held until the test lets it go, so that the page can be seen while it runs.
+    let release = (): void => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const retryDetail = vi.spyOn(sync, 'retryDetail').mockImplementation(() => released);
+
+    // Inside `<StrictMode>`, which replays the effects: the page must still ask for one download.
+    await renderMatchDetail(ARCHIVED_ID, testServices, { strict: true });
+
+    try {
+      expect(await screen.findByText(EVICTED_STRINGS.en.evicted)).toBeInTheDocument();
+      // The download is automatic: no button, no tabs.
+      expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+      await waitFor(() => {
+        expect(retryDetail).toHaveBeenCalledTimes(1);
+      });
+      expect(retryDetail).toHaveBeenCalledWith(ARCHIVED_ID);
+      // The service put the match back to pending when the page read it.
+      await expect(details.getMatchDetail(ARCHIVED_ID)).resolves.toMatchObject({
+        kind: 'waiting',
+      });
+    } finally {
+      // Whatever the assertions said, the download ends: a failing test leaves nothing blocked.
+      release();
+    }
+
+    // The page reads the match again once the download is over, and does not ask for it twice.
+    await settle();
+    expect(retryDetail).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks for the download of each evicted match its page shows, and for none twice', async () => {
+    const [first, second] = ARCHIVED_IDS;
+    if (first === undefined || second === undefined) {
+      throw new Error('The synthetic history archives two matches');
+    }
+    const testServices = createTestServices({ now: () => NOW });
+    const retryDetail = vi.spyOn(testServices.services.sync, 'retryDetail').mockResolvedValue();
+    // Every read says the archive was removed, and the views are in the cache before the page
+    // renders: it has a view from its very first render, so under `<StrictMode>` the effect that
+    // asks for the download runs, and is replayed, with the view in hand.
+    vi.spyOn(MatchDetailService.prototype, 'getMatchDetail').mockResolvedValue({ kind: 'evicted' });
+    const queryClient = createTestQueryClient(testServices.logger);
+    for (const matchId of [first, second]) {
+      queryClient.setQueryData([...DETAILS_QUERY_KEY, 'match', matchId], { kind: 'evicted' });
+    }
+
+    const { router } = await renderMatchDetail(first, testServices, { queryClient, strict: true });
+
+    expect(await screen.findByText(EVICTED_STRINGS.en.evicted)).toBeInTheDocument();
+    // The run settles and the page reads the match again (still evicted): no second download.
+    await settle();
+    expect(retryDetail.mock.calls).toEqual([[first]]);
+
+    // Another evicted match on the same page is another download, and only one.
+    await router.navigate({
+      to: '/matches/$matchId',
+      params: { matchId: second },
+      search: { tab: 'analysis' },
+    });
+    await waitFor(() => {
+      expect(retryDetail.mock.calls).toEqual([[first], [second]]);
+    });
+    await settle();
+    expect(retryDetail.mock.calls).toEqual([[first], [second]]);
+  });
+
+  it('refreshes the counts and the matches, once, when it puts an evicted match back', async () => {
+    const testServices = await synchronised();
+    await new MatchDetailRepository(testServices.database).markEvicted(
+      testServices.accountId ?? expect.unreachable('the services have a linked account'),
+      ARCHIVED_ID,
+    );
+    // The download never ends in this test, so only the refresh of the read itself is seen.
+    vi.spyOn(testServices.services.sync, 'retryDetail').mockImplementation(
+      () => new Promise<void>(() => undefined),
+    );
+    const queryClient = createTestQueryClient(testServices.logger);
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    await renderMatchDetail(ARCHIVED_ID, testServices, { queryClient });
+
+    expect(await screen.findByText(EVICTED_STRINGS.en.evicted)).toBeInTheDocument();
+    // The service put the match back to pending, so the banner and the list changed.
+    expect(invalidate.mock.calls.map(([filters]) => filters)).toEqual([
+      { queryKey: ['details', 'summary'] },
+      { queryKey: ['matches'] },
+    ]);
+  });
+
+  it('shows an evicted match again once the download fetched its archive', async () => {
+    const testServices = await synchronised();
+    await new MatchDetailRepository(testServices.database).markEvicted(
+      testServices.accountId ?? expect.unreachable('the services have a linked account'),
+      ARCHIVED_ID,
+    );
+
+    await renderMatchDetail(ARCHIVED_ID, testServices);
+
+    // The real download runs: the archive is written again and the page shows it.
+    await screen.findByText(ARCHIVE_LINE_START.en);
+    const view = await archivedView(testServices.services, ARCHIVED_ID);
+    expect(await findArchiveLine('en', view)).toBeInTheDocument();
+    expect(screen.queryByText(EVICTED_STRINGS.en.evicted)).not.toBeInTheDocument();
+  });
+
+  it('says an evicted match older than 90 days is gone, and asks for no download', async () => {
+    // The clock of the services moves on by hand: the match is archived now and shown 91 days later.
+    let clock = NOW;
+    const testServices = await synchronised({ now: () => clock });
+    await new MatchDetailRepository(testServices.database).markEvicted(
+      testServices.accountId ?? expect.unreachable('the services have a linked account'),
+      ARCHIVED_ID,
+    );
+    clock = NOW + 91 * 24 * 60 * 60_000;
+    const retryDetail = vi.spyOn(testServices.services.sync, 'retryDetail');
+    const syncNow = vi.spyOn(testServices.services.sync, 'syncNow');
+
+    await renderMatchDetail(ARCHIVED_ID, testServices);
+
+    expect(await screen.findByText(EVICTED_STRINGS.en.evictedLost)).toBeInTheDocument();
+    expect(screen.queryByText(EVICTED_STRINGS.en.evicted)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    await settle();
+    expect(retryDetail).not.toHaveBeenCalled();
+    expect(syncNow).not.toHaveBeenCalled();
+  });
+
   it('says why the detail cannot be shown when it cannot be read', async () => {
     vi.spyOn(MatchDetailService.prototype, 'getMatchDetail').mockRejectedValue(
       new AppError('storage', 'The detail cannot be read'),
@@ -1160,6 +1315,19 @@ const EXPLAINED_VIEWS: readonly ExplainedView[] = [
     says: (strings) => [strings.lost],
     offersRetry: false,
   },
+  {
+    // The download is automatic, so there is no button to press.
+    name: 'a match whose archive was evicted',
+    view: { kind: 'evicted' },
+    says: (_strings, language) => [EVICTED_STRINGS[language].evicted],
+    offersRetry: false,
+  },
+  {
+    name: 'a match whose evicted archive is gone',
+    view: { kind: 'evicted_lost' },
+    says: (_strings, language) => [EVICTED_STRINGS[language].evictedLost],
+    offersRetry: false,
+  },
 ];
 
 /** The kinds of view of a match the app stores and archives, whose detail the page cannot show. */
@@ -1168,12 +1336,19 @@ const NO_DETAIL_KINDS: readonly MatchDetailView['kind'][] = [
   'invalid',
   'missing',
   'lost',
+  'evicted',
+  'evicted_lost',
 ];
 
 /** The explained views of {@link NO_DETAIL_KINDS}: the header must stay over their sentence. */
 const NO_DETAIL_VIEWS = EXPLAINED_VIEWS.filter(({ view }) => NO_DETAIL_KINDS.includes(view.kind));
 
 describe.each(['en', 'fr'] as const)('MatchDetailPage in %s', (language) => {
+  beforeEach(() => {
+    // The page of an evicted match asks for its download: these tests play the views, not the run.
+    vi.spyOn(SyncService.prototype, 'retryDetail').mockResolvedValue();
+  });
+
   it.each(NO_DETAIL_VIEWS)('shows the header of $name', async ({ view, says, offersRetry }) => {
     // The match is stored and synchronised; only what the services say of its detail is played.
     const testServices = await synchronised();

@@ -59,7 +59,8 @@
         "ready": "Archivée",
         "waiting": "En attente",
         "unavailable": "Indisponible",
-        "invalid": "Invalide"
+        "invalid": "Invalide",
+        "evicted": "Supprimée (stockage)"
       }
     },
     "sync": {
@@ -91,6 +92,8 @@
     "invalid": "Le détail de cette partie est illisible.",
     "missing": "L'archive de cette partie est introuvable : elle sera téléchargée à nouveau.",
     "lost": "L'archive de cette partie a disparu : les parties de plus de 90 jours ne sont plus téléchargées.",
+    "evicted": "L'archive de cette partie a été supprimée pour faire de la place : elle est téléchargée à nouveau.",
+    "evictedLost": "L'archive de cette partie a été supprimée pour faire de la place, et les parties de plus de 90 jours ne sont plus téléchargées.",
     "retry": "Réessayer",
     "tabs": {
       "label": "Sections de la partie",

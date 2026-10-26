@@ -581,6 +581,7 @@ describe('MatchDetailService.runQueue', () => {
       waiting: MISSING_ROWS.length,
       unavailable: 0,
       invalid: 0,
+      evicted: 0,
     });
     // One line at the info level, the one the log file keeps, and it holds only counters.
     expect(logger.entries.filter((entry) => entry.level === 'info')).toEqual([
@@ -980,6 +981,7 @@ describe('MatchDetailService.runQueue', () => {
         waiting: ELIGIBLE_ROWS.length,
         unavailable: 0,
         invalid: 0,
+        evicted: 0,
       });
       await expect(storedDetail(repository, SERVED)).resolves.toEqual(UNTOUCHED);
       await expect(storedDetail(repository, MISSING)).resolves.toEqual(UNTOUCHED);
@@ -1047,6 +1049,7 @@ describe('MatchDetailService.runQueue', () => {
       waiting: 3,
       unavailable: 0,
       invalid: 0,
+      evicted: 0,
     });
   }, 30_000);
 
@@ -1062,6 +1065,7 @@ describe('MatchDetailService.runQueue', () => {
       waiting: ELIGIBLE_ROWS.length,
       unavailable: 0,
       invalid: 0,
+      evicted: 0,
     });
     await expect(storedDetail(repository, MISSING)).resolves.toEqual(UNTOUCHED);
     // The pause is respected before any request is sent.
@@ -1143,6 +1147,7 @@ describe('MatchDetailService.runQueue', () => {
       waiting: ELIGIBLE_ROWS.length - report.archived,
       unavailable: 0,
       invalid: 0,
+      evicted: 0,
     });
     expect(archive.files.size).toBe(report.archived);
   });
@@ -1656,6 +1661,7 @@ describe('MatchDetailService.runQueue', () => {
       waiting: MISSING_ROWS.length,
       unavailable: 0,
       invalid: 0,
+      evicted: 0,
     });
   }, 60_000);
 });
@@ -1856,6 +1862,7 @@ describe('MatchDetailService.runQueue, refresh of the format-1 archives', () => 
         waiting: 0,
         unavailable: 0,
         invalid: 0,
+        evicted: 0,
       });
       // One line, with the match and the code of the failure only.
       expect(refreshFailures(logger)).toEqual([
@@ -2199,6 +2206,7 @@ describe('MatchDetailService.getSummary', () => {
       waiting: 2,
       unavailable: 1,
       invalid: 1,
+      evicted: 0,
       lastStop: null,
     });
 
@@ -2210,6 +2218,7 @@ describe('MatchDetailService.getSummary', () => {
       waiting: 0,
       unavailable: 0,
       invalid: 0,
+      evicted: 0,
       lastStop: null,
     });
   });
@@ -2697,6 +2706,50 @@ describe('MatchDetailService.getMatchDetail', () => {
     });
   });
 
+  it('downloads an evicted match again when its page opens within 90 days', async () => {
+    const { service, repository } = await setUp({ matches: summariesOf([SERVED]) });
+    await service.runQueue(ACCOUNT, RUN);
+    await repository.markEvicted(ACCOUNT, matchOf(SERVED));
+
+    // The page says the archive is being downloaded again, and the match is back in the queue.
+    await expect(service.getMatchDetail(matchOf(SERVED))).resolves.toEqual({ kind: 'evicted' });
+    await expect(repository.getDetail(ACCOUNT, matchOf(SERVED))).resolves.toMatchObject({
+      status: 'pending',
+      attempts: 0,
+      nextAttemptAt: null,
+      lastError: null,
+      archivedBytes: null,
+    });
+    // From then on it is a match like any other that waits for its download.
+    await expect(service.getMatchDetail(matchOf(SERVED))).resolves.toEqual({
+      kind: 'waiting',
+      nextAttemptAt: null,
+    });
+
+    // The next run of the queue takes it and archives it again.
+    await expect(service.runQueue(ACCOUNT, 'run-0002')).resolves.toEqual({
+      ...NOTHING,
+      archived: 1,
+    });
+    await expect(service.getMatchDetail(matchOf(SERVED))).resolves.toMatchObject({ kind: 'ready' });
+  });
+
+  it('says an evicted match older than 90 days is gone', async () => {
+    const { service, repository, clock } = await setUp({ matches: summariesOf([SERVED]) });
+    await service.runQueue(ACCOUNT, RUN);
+    await repository.markEvicted(ACCOUNT, matchOf(SERVED));
+    const before = await repository.getDetail(ACCOUNT, matchOf(SERVED));
+    clock.now = START + 91 * DAY;
+
+    // Not `not_eligible`: the match did have an archive, which was removed and will not come back.
+    await expect(service.getMatchDetail(matchOf(SERVED))).resolves.toEqual({
+      kind: 'evicted_lost',
+    });
+    // The row is left as it is: the match keeps its status and the size of the file it lost.
+    await expect(repository.getDetail(ACCOUNT, matchOf(SERVED))).resolves.toEqual(before);
+    expect(before).toMatchObject({ status: 'evicted' });
+  });
+
   it('says a match is not archived when it is not eligible', async () => {
     // What makes a match one the queue never archives; each is tried in every status but `ready`.
     const reasons: readonly [string, Parameters<typeof matchSummary>[0]][] = [
@@ -2800,6 +2853,24 @@ describe('MatchDetailService.resetForRetry', () => {
     }
     // A match the app never stored is not created by the call.
     await expect(detailOf(9_999)).resolves.toBeNull();
+  });
+
+  it('puts an evicted match back to pending', async () => {
+    const { service, repository } = await setUp({ matches: [eligibleMatch(1)] });
+    await repository.markReady(ACCOUNT, testMatchId(1), 52_431, ARCHIVE_FORMAT);
+    await repository.markEvicted(ACCOUNT, testMatchId(1));
+
+    await service.resetForRetry(testMatchId(1));
+
+    // The file is gone: the match starts again, with the size and the format of the lost file
+    // forgotten.
+    await expect(repository.getDetail(ACCOUNT, testMatchId(1))).resolves.toMatchObject({
+      status: 'pending',
+      attempts: 0,
+      nextAttemptAt: null,
+      lastError: null,
+      archivedBytes: null,
+    });
   });
 
   it('does nothing without a linked account', async () => {

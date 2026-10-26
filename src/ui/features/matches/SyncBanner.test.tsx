@@ -445,9 +445,14 @@ describe('SyncBanner', () => {
   });
 
   it('mentions invalid details only when there are some', async () => {
-    const getSummary = vi
-      .spyOn(MatchDetailService.prototype, 'getSummary')
-      .mockResolvedValue({ archived: 5, waiting: 2, unavailable: 1, invalid: 3, lastStop: null });
+    const getSummary = vi.spyOn(MatchDetailService.prototype, 'getSummary').mockResolvedValue({
+      archived: 5,
+      waiting: 2,
+      unavailable: 1,
+      invalid: 3,
+      evicted: 0,
+      lastStop: null,
+    });
     const { queryClient } = await renderBanner();
 
     expect(
@@ -461,6 +466,7 @@ describe('SyncBanner', () => {
       waiting: 1,
       unavailable: 1,
       invalid: 0,
+      evicted: 0,
       lastStop: null,
     });
     await act(() => queryClient.invalidateQueries({ queryKey: ['details'] }));
@@ -483,6 +489,7 @@ describe('SyncBanner', () => {
       waiting: 0,
       unavailable: 0,
       invalid: 0,
+      evicted: 0,
       lastStop: null,
     });
     expect(screen.queryByText(/Paige match details/)).not.toBeInTheDocument();
@@ -499,9 +506,14 @@ describe('SyncBanner', () => {
   });
 
   it('refreshes the progress of the match details whenever a synchronisation runs', async () => {
-    const getSummary = vi
-      .spyOn(MatchDetailService.prototype, 'getSummary')
-      .mockResolvedValue({ archived: 1, waiting: 4, unavailable: 0, invalid: 0, lastStop: null });
+    const getSummary = vi.spyOn(MatchDetailService.prototype, 'getSummary').mockResolvedValue({
+      archived: 1,
+      waiting: 4,
+      unavailable: 0,
+      invalid: 0,
+      evicted: 0,
+      lastStop: null,
+    });
     const fixtures = createFixtureApi({ now: NOW, matchCount: MATCH_COUNT });
     const { services } = await renderBanner({
       // The network is down for the details: the queue stops at the first one without recording
@@ -521,6 +533,7 @@ describe('SyncBanner', () => {
       waiting: 2,
       unavailable: 0,
       invalid: 0,
+      evicted: 0,
       lastStop: null,
     });
     await services.sync.syncNow('manual');
@@ -624,6 +637,7 @@ describe('SyncBanner', () => {
       waiting: 0,
       unavailable: 0,
       invalid: 0,
+      evicted: 0,
       lastStop: 'storage',
     });
 
@@ -642,6 +656,7 @@ describe('SyncBanner', () => {
         waiting: 4,
         unavailable: 0,
         invalid: 0,
+        evicted: 0,
         lastStop,
       });
 
@@ -661,6 +676,7 @@ describe('SyncBanner', () => {
       waiting: 2,
       unavailable: 0,
       invalid: 0,
+      evicted: 0,
       lastStop: 'storage',
     });
 
@@ -690,6 +706,7 @@ describe('SyncBanner', () => {
       waiting: 2,
       unavailable: 1,
       invalid: 3,
+      evicted: 0,
       lastStop: null,
     });
 

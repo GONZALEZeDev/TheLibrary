@@ -19,8 +19,18 @@ import { PAIGE_HERO_ID } from '../domain/hero';
  * - `unavailable`: every attempt failed; the queue gives up on this match.
  * - `invalid`: the API answered, but with a detail the app cannot use; trying again would get the
  *   same answer, so the queue gives up at once.
+ * - `evicted`: the detail was archived, but its file was removed to keep the archive folder under
+ *   its size limit; the match keeps its archive size, its format and its stored metrics. The queue
+ *   never takes it on its own.
  */
-export const DETAIL_STATUSES = ['pending', 'retry', 'ready', 'unavailable', 'invalid'] as const;
+export const DETAIL_STATUSES = [
+  'pending',
+  'retry',
+  'ready',
+  'unavailable',
+  'invalid',
+  'evicted',
+] as const;
 
 /** One of the {@link DETAIL_STATUSES}. */
 export type DetailStatus = (typeof DETAIL_STATUSES)[number];

@@ -42,6 +42,7 @@ const DETAIL_STATUS_LABEL_KEYS = {
   ready: 'matches.table.detailStatus.ready',
   unavailable: 'matches.table.detailStatus.unavailable',
   invalid: 'matches.table.detailStatus.invalid',
+  evicted: 'matches.table.detailStatus.evicted',
 } as const satisfies Record<DetailStatus, string>;
 
 /**

@@ -10,6 +10,10 @@
  * - **The deaths** are one list of the three phases, in the order of the match, under a sentence that
  *   says where the tier's deaths come from: the counters of its matches, which can differ by one per
  *   match from the death details the player's deaths are read from.
+ * - **The avoidable deaths** are one row, under a caption that says what counts as one and that the
+ *   row has no figure of the community. The matches the row does not count have no positions of the
+ *   players, and a line says how many were left out. Under it, the matches that had avoidable deaths
+ *   link to the timeline of the match, where those deaths are marked.
  * - **The resistance** is two lists. The first holds the points about the twelve items as a whole: the
  *   minute of the first resistance item, whichever it is, and the deaths before it. The second holds
  *   the twelve items in the order of their list, two rows for each: the minute the player buys it,
@@ -30,18 +34,31 @@
  *
  * @packageDocumentation
  */
+import { Link } from '@tanstack/react-router';
 import type { TFunction } from 'i18next';
 import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Review } from '../../../services/review-view';
-import { REVIEW_SECTION_TITLE } from './review-layout';
+import { REVIEW_LINK, REVIEW_SECTION_TITLE } from './review-layout';
 import { ReviewRowList } from './ReviewRowList';
 
 /** Props of {@link ReviewDeaths}. */
 export interface ReviewDeathsProps {
-  /** The deaths of each phase, and the resistance items with the deaths before the first one. */
+  /**
+   * The deaths of each phase, the avoidable deaths, and the resistance items with the deaths before
+   * the first one.
+   */
   readonly deaths: Review['deaths'];
+  /**
+   * How many matches the review covers (`Review['recent'].count`). The avoidable deaths are counted
+   * over the matches that have the positions of the players, so the matches the row does not count
+   * are the ones left out for lack of them.
+   */
+  readonly recentCount: number;
 }
+
+/** Milliseconds in a second: start times are in seconds, the date formatter takes milliseconds. */
+const MS_PER_SECOND = 1_000;
 
 /**
  * The content of the resistance section.
@@ -66,15 +83,69 @@ function renderResistance(resistance: Review['deaths']['resistance'], t: TFuncti
 }
 
 /**
+ * The list of the matches that had avoidable deaths, each one a link to the timeline of the match.
+ *
+ * @param avoidable - The avoidable deaths row: its matches are the ones that have the positions of
+ *   the players, most recent first, with their number of avoidable deaths.
+ * @param labelId - The id of the element that names the list.
+ * @param t - Translation function.
+ * @param language - The language of the interface.
+ * @returns The title of the list and the list, or `null` when no match had an avoidable death.
+ */
+function renderAvoidableMatches(
+  avoidable: Review['deaths']['avoidable'],
+  labelId: string,
+  t: TFunction,
+  language: string,
+) {
+  const withDeaths = avoidable.matches.filter((match) => match.value >= 1);
+  if (withDeaths.length === 0) {
+    return null;
+  }
+  // The date and the time of the match: two matches of one day with as many avoidable deaths would
+  // otherwise be two links of the same name.
+  const dayAndTime = new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' });
+  return (
+    <div className="space-y-1">
+      <p id={labelId} className="text-sm font-medium">
+        {t('review.deaths.avoidableMatches')}
+      </p>
+      <ul aria-labelledby={labelId} className="space-y-1 text-sm">
+        {withDeaths.map((match) => (
+          <li key={match.matchId}>
+            {/* No `replace`: the link leaves the review, and going back returns to it. */}
+            <Link
+              to="/matches/$matchId"
+              params={{ matchId: match.matchId }}
+              search={{ tab: 'timeline' }}
+              className={REVIEW_LINK}
+            >
+              {t('review.deaths.avoidableLink', {
+                date: dayAndTime.format(match.startTime * MS_PER_SECOND),
+                count: match.value,
+              })}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
  * The deaths and resistance of the review.
  *
- * @returns The deaths of each phase, then the resistance items, stacked.
+ * @returns The deaths of each phase, then the avoidable deaths, then the resistance items, stacked.
  */
-export function ReviewDeaths({ deaths }: ReviewDeathsProps) {
-  const { t } = useTranslation();
+export function ReviewDeaths({ deaths, recentCount }: ReviewDeathsProps) {
+  const { t, i18n } = useTranslation();
   const idPrefix = useId();
   const phasesId = `${idPrefix}-phases`;
+  const avoidableId = `${idPrefix}-avoidable`;
+  const avoidableMatchesId = `${idPrefix}-avoidable-matches`;
   const resistanceId = `${idPrefix}-resistance`;
+  // The matches the row does not count have no positions of the players in their archive.
+  const leftOut = recentCount - deaths.avoidable.count;
 
   return (
     <div className="space-y-6">
@@ -84,6 +155,19 @@ export function ReviewDeaths({ deaths }: ReviewDeathsProps) {
         </h2>
         <p className="text-sm text-fg-muted">{t('review.deaths.tierCaveat')}</p>
         <ReviewRowList rows={deaths.phases} />
+      </section>
+      <section aria-labelledby={avoidableId} className="space-y-2">
+        <h2 id={avoidableId} className={REVIEW_SECTION_TITLE}>
+          {t('review.deaths.avoidable')}
+        </h2>
+        <p className="text-sm text-fg-muted">{t('review.deaths.avoidableCaption')}</p>
+        <ReviewRowList rows={[deaths.avoidable]} />
+        {leftOut > 0 && (
+          <p className="text-sm text-fg-muted">
+            {t('review.deaths.noPositions', { count: leftOut })}
+          </p>
+        )}
+        {renderAvoidableMatches(deaths.avoidable, avoidableMatchesId, t, i18n.language)}
       </section>
       <section aria-labelledby={resistanceId} className="space-y-2">
         <h2 id={resistanceId} className={REVIEW_SECTION_TITLE}>

@@ -48,7 +48,7 @@ import {
   reviewLabel,
 } from './review-format';
 import { ReviewFigure } from './ReviewFigure';
-import { REVIEW_ROW_GRID } from './review-layout';
+import { REVIEW_LINK, REVIEW_ROW_GRID } from './review-layout';
 
 /** Props of {@link ReviewRow}. */
 export interface ReviewRowProps {
@@ -88,14 +88,6 @@ const SIDE_OF_MARK = {
  * next, with rounded corners for its tint and room above and below its figures.
  */
 const ROW = `${REVIEW_ROW_GRID} rounded-lg py-1.5`;
-
-/**
- * The look of the name of a point that links to its tab: the colour of the text, as the names of the
- * other rows, with an underline that says it is a link and darkens under the pointer, and the outline
- * of the focus of the app.
- */
-const LINKED_NAME =
-  'rounded-sm underline decoration-fg-muted underline-offset-4 hover:decoration-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-bright';
 
 /** The classes of the text of a figure that is a small print: the marks, the progress, the gap. */
 const SMALL_FIGURE = 'text-xs text-fg-muted tabular-nums';
@@ -298,7 +290,7 @@ export function ReviewRow({ row, picture, tab }: ReviewRowProps) {
           ) : (
             // `replace`, as the tabs of the page: the summary and the tab it opens are one entry of
             // the history, and going back leaves the review.
-            <Link to="/review" search={{ tab }} replace className={LINKED_NAME}>
+            <Link to="/review" search={{ tab }} replace className={REVIEW_LINK}>
               {label}
             </Link>
           )}

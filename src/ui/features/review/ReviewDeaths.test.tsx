@@ -3,7 +3,9 @@
  * (the deaths the service builds are tested with the service), in English and in French: the deaths of
  * the three phases, the first resistance item with the deaths before it, the twelve resistance items
  * with the minute row before the rate row of each and the picture of each, an item the catalogue does
- * not know, and the sentence that says the item names are unavailable.
+ * not know, the sentence that says the item names are unavailable, and the avoidable deaths: their
+ * row with its caption, the matches left out for lack of positions, and the links to the timeline of
+ * the matches that had some.
  *
  * The rows are the ones of the review, drawn by `ReviewRow` (tested on its own); the tests here are
  * about which rows the tab lists, in which order, under which heading and with which picture. The
@@ -11,7 +13,15 @@
  *
  * @packageDocumentation
  */
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from '@tanstack/react-router';
 import { render, screen, within } from '@testing-library/react';
+import { userEvent } from '@testing-library/user-event';
 import type { ReactElement } from 'react';
 import { I18nextProvider } from 'react-i18next';
 import { describe, expect, it } from 'vitest';
@@ -23,9 +33,12 @@ import type {
   ResistanceItemView,
   ResistanceReview,
   Review,
+  ReviewMatchValue,
   ReviewRow as ReviewRowData,
   ReviewSubject,
 } from '../../../services/review-view';
+import { testMatchId } from '../../../test/test-data';
+import { matchDetailSearchSchema } from '../../app/router';
 import { createI18n } from '../../i18n/i18n';
 import { REVIEW_SECTION_TITLE } from './review-layout';
 import { ReviewDeaths } from './ReviewDeaths';
@@ -44,6 +57,11 @@ const STRINGS = {
     tierAndGap: 'Tier above · Gap',
     deathsCaveat:
       "The tier's deaths come from its match counters and can differ by one per match from yours.",
+    avoidableTitle: 'Avoidable deaths',
+    avoidableCaption: 'Alone, no ally near you, facing at least 2 enemies. No community figure.',
+    avoidableMatches: 'Matches with avoidable deaths',
+    avoidableLinks: ['{{date}} · 2 avoidable', '{{date}} · 1 avoidable'],
+    noPositions: ['1 match without positions, left out', '3 matches without positions, left out'],
   },
   fr: {
     deathsTitle: 'Tes morts par phase',
@@ -57,11 +75,20 @@ const STRINGS = {
     tierAndGap: 'Palier au-dessus · Écart',
     deathsCaveat:
       "Les morts du palier viennent des compteurs de ses parties et peuvent différer d'une par partie des tiennes.",
+    avoidableTitle: 'Morts évitables',
+    avoidableCaption:
+      'Seul, sans allié près de toi, face à au moins 2 ennemis. Pas de chiffre de la communauté.',
+    avoidableMatches: 'Parties avec des morts évitables',
+    avoidableLinks: ['{{date}} · 2 évitables', '{{date}} · 1 évitable'],
+    noPositions: ['1 partie sans positions, mise à part', '3 parties sans positions, mises à part'],
   },
 } as const;
 
 /** The languages of the interface, for the tests that run in each. */
 const LANGUAGES = ['en', 'fr'] as const satisfies readonly Language[];
+
+/** How many matches the review covers in the tests: all of them have positions, unless a test says otherwise. */
+const RECENT_COUNT = 18;
 
 /** The phases of a match, in the order of the match (which is not the alphabetical order). */
 const PHASES = ['early', 'mid', 'late'] as const satisfies readonly Phase[];
@@ -132,6 +159,42 @@ const UNKNOWN_COLOSSUS: ResistanceItemView = {
 async function renderIn(language: Language, element: ReactElement): Promise<HTMLElement> {
   const i18n = await createI18n(language);
   return render(<I18nextProvider i18n={i18n}>{element}</I18nextProvider>).container;
+}
+
+/**
+ * Render an element with the i18next instance of one language, as the page of the review route of a
+ * router of its own that also has the route of a match, to see where the links of the tab lead.
+ *
+ * @param language - The language of the interface.
+ * @param element - The element to render.
+ * @returns The router, to read the address of a link.
+ */
+async function renderInRouter(language: Language, element: ReactElement) {
+  const i18n = await createI18n(language);
+  const rootRoute = createRootRoute();
+  const reviewRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/review',
+    component: () => element,
+  });
+  const matchRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/matches/$matchId',
+    validateSearch: matchDetailSearchSchema,
+  });
+  const history = createMemoryHistory({ initialEntries: ['/review'] });
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([reviewRoute, matchRoute]),
+    history,
+  });
+  await router.load();
+  render(
+    <I18nextProvider i18n={i18n}>
+      <RouterProvider router={router} />
+    </I18nextProvider>,
+  );
+  await screen.findAllByRole('region');
+  return router;
 }
 
 /**
@@ -304,10 +367,63 @@ function labelsOfRows(list: HTMLElement, labels: readonly string[]): string[] {
     );
 }
 
+/** Start of the matches of the avoidable deaths (Unix seconds): a day apart, the most recent first. */
+const MATCH_STARTS = [1_760_011_200, 1_759_924_800, 1_759_838_400] as const;
+
+/** An hour after the first match: the same day as it (at noon UTC, whatever the time zone). */
+const SAME_DAY_START = 1_760_011_200 + 3_600;
+
+/**
+ * The value of the avoidable deaths in a match.
+ *
+ * @param index - Where the match stands in the row, most recent first, which gives its id and start.
+ * @param value - Its avoidable deaths.
+ * @param startTime - Its start (Unix seconds); by default, the one of its place in the row.
+ * @returns The match with its value.
+ */
+function avoidableMatch(
+  index: number,
+  value: number,
+  startTime: number = MATCH_STARTS[index] ?? 0,
+): ReviewMatchValue {
+  return {
+    matchId: testMatchId(100_000_001 + index),
+    startTime,
+    value,
+    mark: null,
+  };
+}
+
+/**
+ * The deaths tab with the given matches in its avoidable deaths row.
+ *
+ * @param matches - The matches that have the positions, most recent first.
+ * @returns The deaths, whose row counts those matches.
+ */
+function deathsWithAvoidable(matches: readonly ReviewMatchValue[]): Review['deaths'] {
+  return {
+    ...readyDeaths(),
+    avoidable: rowOf({ kind: 'avoidable_deaths' }, { count: matches.length, matches }),
+  };
+}
+
+/**
+ * How the start of a match is written in a link: its short date and its time.
+ *
+ * @param language - The language of the interface.
+ * @param startTime - The start of the match, in Unix seconds.
+ * @returns The short date and time.
+ */
+function dateOf(language: Language, startTime: number): string {
+  return new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(
+    startTime * 1_000,
+  );
+}
+
 describe('ReviewDeaths', () => {
   it.each(LANGUAGES)('shows the deaths of the three phases in %s', async (language) => {
     const strings = STRINGS[language];
-    await renderIn(language, <ReviewDeaths deaths={readyDeaths()} />);
+    await renderIn(language, <ReviewDeaths recentCount={RECENT_COUNT} deaths={readyDeaths()} />);
 
     // One row for each phase, in the order of the match and as the view gives them (not sorted).
     const section = sectionNamed(strings.deathsTitle);
@@ -318,7 +434,7 @@ describe('ReviewDeaths', () => {
     'says under the heading of the deaths that the tier counts them otherwise, in %s',
     async (language) => {
       const strings = STRINGS[language];
-      await renderIn(language, <ReviewDeaths deaths={readyDeaths()} />);
+      await renderIn(language, <ReviewDeaths recentCount={RECENT_COUNT} deaths={readyDeaths()} />);
 
       // The sentence stands between the heading and the rows, in the muted text of a remark.
       const section = sectionNamed(strings.deathsTitle);
@@ -340,7 +456,7 @@ describe('ReviewDeaths', () => {
     'shows the deaths before the first resistance item in %s',
     async (language) => {
       const strings = STRINGS[language];
-      await renderIn(language, <ReviewDeaths deaths={readyDeaths()} />);
+      await renderIn(language, <ReviewDeaths recentCount={RECENT_COUNT} deaths={readyDeaths()} />);
 
       // The first resistance item and the deaths before it stand in a list of their own, above the
       // items: they are about the twelve items as a whole, not about one of them.
@@ -357,7 +473,10 @@ describe('ReviewDeaths', () => {
     'lists the 12 resistance items with their pictures in %s',
     async (language) => {
       const strings = STRINGS[language];
-      const container = await renderIn(language, <ReviewDeaths deaths={readyDeaths()} />);
+      const container = await renderIn(
+        language,
+        <ReviewDeaths recentCount={RECENT_COUNT} deaths={readyDeaths()} />,
+      );
 
       // Two rows for each of the twelve items, each with the picture of its item before its name.
       const labels = itemLabels(ITEMS, strings);
@@ -396,7 +515,7 @@ describe('ReviewDeaths', () => {
 
   it.each(LANGUAGES)('lists the minute before the rate for each item in %s', async (language) => {
     const strings = STRINGS[language];
-    await renderIn(language, <ReviewDeaths deaths={readyDeaths()} />);
+    await renderIn(language, <ReviewDeaths recentCount={RECENT_COUNT} deaths={readyDeaths()} />);
 
     // Item after item, in the order of the list: the minute row of an item, then its rate row, and
     // only then the next item. The items are not sorted by name, by tier or by minute.
@@ -414,7 +533,10 @@ describe('ReviewDeaths', () => {
     const deaths = deathsOf({ kind: 'ready', value: resistanceOf(reversed) });
     await renderIn(
       language,
-      <ReviewDeaths deaths={{ ...deaths, phases: deaths.phases.toReversed() }} />,
+      <ReviewDeaths
+        recentCount={RECENT_COUNT}
+        deaths={{ ...deaths, phases: deaths.phases.toReversed() }}
+      />,
     );
 
     // Everything in the opposite order of the list: the phases, then the items from the last tier to
@@ -434,7 +556,10 @@ describe('ReviewDeaths', () => {
       const items = [...ITEMS.slice(0, 11), UNKNOWN_COLOSSUS];
       await renderIn(
         language,
-        <ReviewDeaths deaths={deathsOf({ kind: 'ready', value: resistanceOf(items) })} />,
+        <ReviewDeaths
+          recentCount={RECENT_COUNT}
+          deaths={deathsOf({ kind: 'ready', value: resistanceOf(items) })}
+        />,
       );
 
       // The item is still listed, by its class name, in its place at the end of the list.
@@ -464,7 +589,13 @@ describe('ReviewDeaths', () => {
 
   it.each(LANGUAGES)('says when the item names are unavailable in %s', async (language) => {
     const strings = STRINGS[language];
-    await renderIn(language, <ReviewDeaths deaths={deathsOf({ kind: 'catalogue_unavailable' })} />);
+    await renderIn(
+      language,
+      <ReviewDeaths
+        recentCount={RECENT_COUNT}
+        deaths={deathsOf({ kind: 'catalogue_unavailable' })}
+      />,
+    );
 
     // The section keeps its title and says why it has no row, instead of lists with nothing in them.
     const section = sectionNamed(strings.resistanceTitle);
@@ -480,26 +611,27 @@ describe('ReviewDeaths', () => {
     expect(
       labelsOfRows(within(sectionNamed(strings.deathsTitle)).getByRole('list'), strings.phases),
     ).toEqual(strings.phases);
-    expect(screen.getAllByRole('list')).toHaveLength(1);
+    // The lists left are those of the phases and of the avoidable deaths.
+    expect(screen.getAllByRole('list')).toHaveLength(2);
   });
 
   it('does not say the item names are unavailable when they are', async () => {
-    await renderIn('en', <ReviewDeaths deaths={readyDeaths()} />);
+    await renderIn('en', <ReviewDeaths recentCount={RECENT_COUNT} deaths={readyDeaths()} />);
 
     expect(screen.queryByText(STRINGS.en.unavailable)).not.toBeInTheDocument();
   });
 
   it.each(LANGUAGES)('names each section by its heading, deaths first, in %s', async (language) => {
     const strings = STRINGS[language];
-    await renderIn(language, <ReviewDeaths deaths={readyDeaths()} />);
+    await renderIn(language, <ReviewDeaths recentCount={RECENT_COUNT} deaths={readyDeaths()} />);
 
-    // The page title is the h1 of the page; the two sections of the tab come right under it.
+    // The page title is the h1 of the page; the three sections of the tab come right under it.
     expect(
       screen
         .getAllByRole('region')
         .map((section) => within(section).getAllByRole('heading')[0]?.textContent),
-    ).toEqual([strings.deathsTitle, strings.resistanceTitle]);
-    for (const name of [strings.deathsTitle, strings.resistanceTitle]) {
+    ).toEqual([strings.deathsTitle, strings.avoidableTitle, strings.resistanceTitle]);
+    for (const name of [strings.deathsTitle, strings.avoidableTitle, strings.resistanceTitle]) {
       const heading = screen.getByRole('heading', { level: 2, name });
       expect(sectionNamed(name)).toContainElement(heading);
       expect(within(sectionNamed(name)).getAllByRole('heading')).toHaveLength(1);
@@ -508,13 +640,13 @@ describe('ReviewDeaths', () => {
     }
   });
 
-  it('puts one header of the columns above each of the three lists, in the box of the rows', async () => {
-    await renderIn('en', <ReviewDeaths deaths={readyDeaths()} />);
+  it('puts one header of the columns above each of the four lists, in the box of the rows', async () => {
+    await renderIn('en', <ReviewDeaths recentCount={RECENT_COUNT} deaths={readyDeaths()} />);
 
     const headers = screen.getAllByText(STRINGS.en.tierAndGap);
     const lists = screen.getAllByRole('list');
-    expect(headers).toHaveLength(3);
-    expect(lists).toHaveLength(3);
+    expect(headers).toHaveLength(4);
+    expect(lists).toHaveLength(4);
     for (const [index, list] of lists.entries()) {
       const header = headers[index]?.parentElement;
       expect(header).toHaveAttribute('aria-hidden', 'true');
@@ -524,4 +656,130 @@ describe('ReviewDeaths', () => {
       expect(header?.compareDocumentPosition(list)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     }
   });
+
+  it.each(LANGUAGES)('shows the avoidable deaths row with its caption in %s', async (language) => {
+    const strings = STRINGS[language];
+    await renderIn(language, <ReviewDeaths recentCount={RECENT_COUNT} deaths={readyDeaths()} />);
+
+    // The section comes after the phases and before the resistance: title, caption, then the row.
+    const section = sectionNamed(strings.avoidableTitle);
+    const heading = within(section).getByRole('heading', { level: 2 });
+    const caption = within(section).getByText(strings.avoidableCaption);
+    const list = within(section).getByRole('list');
+    expect(caption).toHaveClass('text-fg-muted');
+    expect(heading.compareDocumentPosition(caption)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(caption.compareDocumentPosition(list)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+    // One row, the avoidable deaths of the view, and no line about matches left out or to link.
+    expect(within(list).getAllByRole('listitem')).toHaveLength(1);
+    expect(within(list).getByText(strings.avoidableTitle)).toBeVisible();
+    expect(within(section).queryByText(strings.avoidableMatches)).toBeNull();
+    expect(within(section).queryByText(/without positions|sans positions/u)).toBeNull();
+  });
+
+  it.each(LANGUAGES)(
+    'links each match with avoidable deaths to its timeline in %s',
+    async (language) => {
+      const strings = STRINGS[language];
+      // The middle match had positions but no avoidable death: it has no link.
+      const matches = [avoidableMatch(0, 2), avoidableMatch(1, 0), avoidableMatch(2, 1)];
+      const router = await renderInRouter(
+        language,
+        <ReviewDeaths recentCount={matches.length} deaths={deathsWithAvoidable(matches)} />,
+      );
+
+      // A list named by its title, under the row, with a link for each match that had some: most
+      // recent first, the short date of the match and its number of avoidable deaths.
+      const section = sectionNamed(strings.avoidableTitle);
+      const list = within(section).getByRole('list', { name: strings.avoidableMatches });
+      const links = within(list).getAllByRole('link');
+      const [first, second] = strings.avoidableLinks;
+      expect(links.map((link) => link.textContent)).toEqual([
+        first.replace('{{date}}', dateOf(language, MATCH_STARTS[0])),
+        second.replace('{{date}}', dateOf(language, MATCH_STARTS[2])),
+      ]);
+
+      // Each opens the timeline tab of its match.
+      expect(links.map((link) => link.getAttribute('href'))).toEqual([
+        '/matches/100000001?tab=timeline',
+        '/matches/100000003?tab=timeline',
+      ]);
+
+      // The link leaves the review for a new entry of the history (no `replace`): back returns to it.
+      await userEvent.click(links[0] ?? expect.unreachable('A link'));
+      expect(router.history.location.pathname).toBe('/matches/100000001');
+      expect(router.history.location.search).toBe('?tab=timeline');
+      router.history.back();
+      expect(router.history.location.pathname).toBe('/review');
+    },
+  );
+
+  it.each(LANGUAGES)(
+    'tells apart two matches of one day with the same avoidable deaths in %s',
+    async (language) => {
+      // Same day, same count: only the time of the match tells the two links apart.
+      const matches = [avoidableMatch(0, 2, SAME_DAY_START), avoidableMatch(1, 2, MATCH_STARTS[0])];
+      await renderInRouter(
+        language,
+        <ReviewDeaths recentCount={matches.length} deaths={deathsWithAvoidable(matches)} />,
+      );
+
+      const links = within(sectionNamed(STRINGS[language].avoidableTitle)).getAllByRole('link');
+      const [template] = STRINGS[language].avoidableLinks;
+      const names = links.map((link) => link.textContent);
+      expect(names).toEqual([
+        template.replace('{{date}}', dateOf(language, SAME_DAY_START)),
+        template.replace('{{date}}', dateOf(language, MATCH_STARTS[0])),
+      ]);
+      expect(new Set(names).size).toBe(2);
+      expect(links.map((link) => link.getAttribute('href'))).toEqual([
+        '/matches/100000001?tab=timeline',
+        '/matches/100000002?tab=timeline',
+      ]);
+    },
+  );
+
+  it.each(LANGUAGES.flatMap((language) => [0, 1].map((case_) => [language, case_] as const)))(
+    'says how many matches had no positions in %s (case %i)',
+    async (language, case_) => {
+      const strings = STRINGS[language];
+      // The row counts two matches; the review covers three or five: one or three are left out.
+      const deaths = deathsWithAvoidable([avoidableMatch(0, 1), avoidableMatch(1, 0)]);
+      await renderInRouter(
+        language,
+        <ReviewDeaths recentCount={case_ === 0 ? 3 : 5} deaths={deaths} />,
+      );
+
+      // The line stands under the row of the avoidable deaths, as a remark.
+      const section = sectionNamed(strings.avoidableTitle);
+      const line = within(section).getByText(strings.noPositions[case_] ?? '');
+      expect(line).toHaveClass('text-fg-muted');
+      expect(within(section).getAllByRole('list')[0]?.compareDocumentPosition(line)).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+    },
+  );
+
+  it('says nothing about positions when every match has them', async () => {
+    const deaths = deathsWithAvoidable([avoidableMatch(0, 1), avoidableMatch(1, 0)]);
+    await renderInRouter('en', <ReviewDeaths recentCount={2} deaths={deaths} />);
+
+    expect(screen.queryByText(/without positions/u)).toBeNull();
+  });
+
+  it.each(LANGUAGES)(
+    'hides the list when no match had an avoidable death in %s',
+    async (language) => {
+      const strings = STRINGS[language];
+      // Matches with positions, none with an avoidable death.
+      const deaths = deathsWithAvoidable([avoidableMatch(0, 0), avoidableMatch(1, 0)]);
+      await renderIn(language, <ReviewDeaths recentCount={2} deaths={deaths} />);
+
+      // The row stays, the title and the list of links go.
+      const section = sectionNamed(strings.avoidableTitle);
+      expect(within(section).getAllByRole('list')).toHaveLength(1);
+      expect(within(section).queryByText(strings.avoidableMatches)).toBeNull();
+      expect(within(section).queryByRole('link')).toBeNull();
+    },
+  );
 });

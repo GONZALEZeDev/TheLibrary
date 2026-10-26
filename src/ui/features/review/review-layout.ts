@@ -47,3 +47,11 @@ export const REVIEW_LIST_BOX = 'rounded-xl border border-border bg-surface p-1';
  * the tab panel is named by its tab, and each section of a tab is named by a title of this look.
  */
 export const REVIEW_SECTION_TITLE = 'text-base font-semibold';
+
+/**
+ * The look of a link inside the review (a point that links to its tab, a match that links to its
+ * page): the colour of the surrounding text, with an underline that says it is a link and darkens
+ * under the pointer, and the outline of the focus of the app.
+ */
+export const REVIEW_LINK =
+  'rounded-sm underline decoration-fg-muted underline-offset-4 hover:decoration-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-bright';

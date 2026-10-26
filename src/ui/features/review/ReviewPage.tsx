@@ -319,7 +319,7 @@ function renderTabPanel(tab: ReviewTab, review: Review) {
     case 'stats':
       return <ReviewStats stats={review.stats} />;
     case 'deaths':
-      return <ReviewDeaths deaths={review.deaths} />;
+      return <ReviewDeaths deaths={review.deaths} recentCount={review.recent.count} />;
     case 'damage':
       return <ReviewDamage damage={review.damage} recent={review.recent} before={review.before} />;
     case 'players':

@@ -1,8 +1,9 @@
 /**
  * The date formatters that several screens of the interface share. Times are Unix seconds, as the
- * services give them. A date is written in the language of the interface and in the local time zone
- * of the player; the day a time falls on (its key, "today", "yesterday") is the local calendar day,
- * not a span of 24 hours.
+ * services give them for a match, except {@link formatShortDateTimeMs} and the `nowMs` of
+ * {@link relativeDay}, which take the milliseconds the app stamps itself. A date is written in the
+ * language of the interface and in the local time zone of the player; the day a time falls on (its
+ * key, "today", "yesterday") is the local calendar day, not a span of 24 hours.
  *
  * @packageDocumentation
  */

@@ -7,7 +7,7 @@
  */
 import { fireEvent, render, screen } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { useState } from 'react';
+import { StrictMode, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { Tabs } from './Tabs';
 
@@ -225,6 +225,133 @@ describe('Tabs', () => {
 
     expect(screen.getByRole('tabpanel', { name: 'Players' })).toHaveTextContent('Last');
     expect(tab('Players')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  describe('focus after the selection changed', () => {
+    /**
+     * Parent whose first panel holds a button that selects another tab, as the link of a summary does:
+     * the button is in the panel that goes away, so the focus it had is lost with it.
+     *
+     * @returns The tabs, an input before them and, in the panel of the first tab, the button.
+     */
+    function LinkHarness() {
+      const [selected, setSelected] = useState<TabId>('analysis');
+      return (
+        <>
+          <input aria-label="Elsewhere" />
+          <Tabs label="Match sections" tabs={TABS} selected={selected} onSelect={setSelected}>
+            {selected === 'analysis' ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelected('players');
+                }}
+              >
+                Go to players
+              </button>
+            ) : (
+              <p>{`Content of ${selected}`}</p>
+            )}
+          </Tabs>
+        </>
+      );
+    }
+
+    it('moves the focus to the selected tab when the focused element went away', async () => {
+      const user = userEvent.setup();
+      render(<LinkHarness />);
+
+      // The button takes the focus when it is clicked, then leaves the page with its panel.
+      await user.click(screen.getByRole('button', { name: 'Go to players' }));
+
+      expect(screen.queryByRole('button', { name: 'Go to players' })).not.toBeInTheDocument();
+      expect(tab('Players')).toHaveFocus();
+    });
+
+    it('moves the focus to the selected tab in strict mode too', async () => {
+      const user = userEvent.setup();
+      render(
+        <StrictMode>
+          <LinkHarness />
+        </StrictMode>,
+      );
+
+      await user.click(screen.getByRole('button', { name: 'Go to players' }));
+
+      expect(tab('Players')).toHaveFocus();
+    });
+
+    it('leaves the focus alone when it is elsewhere', () => {
+      const { rerender } = render(
+        <>
+          <input aria-label="Elsewhere" />
+          <Tabs label="Sections" tabs={TABS} selected="analysis" onSelect={vi.fn()}>
+            <p>First</p>
+          </Tabs>
+        </>,
+      );
+      screen.getByRole('textbox', { name: 'Elsewhere' }).focus();
+
+      rerender(
+        <>
+          <input aria-label="Elsewhere" />
+          <Tabs label="Sections" tabs={TABS} selected="players" onSelect={vi.fn()}>
+            <p>Last</p>
+          </Tabs>
+        </>,
+      );
+
+      // The tab changed, but the focus was somewhere that still exists: it stays there.
+      expect(screen.getByRole('textbox', { name: 'Elsewhere' })).toHaveFocus();
+    });
+
+    it('leaves the focus in the new panel when it is already there', () => {
+      const { rerender } = render(
+        <Tabs label="Sections" tabs={TABS} selected="analysis" onSelect={vi.fn()}>
+          <p>First</p>
+        </Tabs>,
+      );
+
+      rerender(
+        <Tabs label="Sections" tabs={TABS} selected="players" onSelect={vi.fn()}>
+          <input
+            aria-label="In the panel"
+            ref={(element) => {
+              // The panel takes the focus as it mounts, before the tabs look at where the focus is.
+              element?.focus();
+            }}
+          />
+        </Tabs>,
+      );
+
+      expect(screen.getByRole('textbox', { name: 'In the panel' })).toHaveFocus();
+    });
+
+    it('does not take the focus when it mounts at a tab', () => {
+      render(
+        <StrictMode>
+          <Harness initial="damage" />
+        </StrictMode>,
+      );
+
+      // A page opened at a tab must not pull the focus away from the page.
+      expect(document.body).toHaveFocus();
+    });
+
+    it('leaves the focus where the arrow keys put it', async () => {
+      const user = userEvent.setup();
+      render(
+        <StrictMode>
+          <Harness />
+        </StrictMode>,
+      );
+      await user.tab();
+
+      await user.keyboard('{ArrowRight}');
+      expect(tab('Damage and build')).toHaveFocus();
+      await user.keyboard('{End}');
+      expect(tab('Players')).toHaveFocus();
+    });
   });
 
   it('gives two instances ids that do not collide', () => {

@@ -8,7 +8,7 @@
  *
  * @packageDocumentation
  */
-import { useId, useRef } from 'react';
+import { useId, useLayoutEffect, useRef } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 
 /** One tab: the id the parent knows it by, and the label the player reads. */
@@ -47,6 +47,10 @@ export interface TabsProps<T extends string> {
  * and wrap around the ends, Home and End jump to the first and the last tab. The focus moves with
  * the selection, and only the selected tab is a tab stop, so Tab leaves the list in one press.
  *
+ * When the selection changes and the focus has gone away with the panel that held it (a link in the
+ * old panel switched the tab, so the focus fell back to the page), the newly selected tab takes the
+ * focus. A focus that still sits anywhere else is left alone, and so is a page that opens at a tab.
+ *
  * @returns The tab list followed by the selected panel.
  */
 export function Tabs<T extends string>({
@@ -64,6 +68,24 @@ export function Tabs<T extends string>({
 
   // The tab elements by tab id: the arrow keys move the focus to one of them.
   const tabElements = useRef(new Map<T, HTMLButtonElement>());
+
+  // The tab that was selected at the last commit: tells a change of selection from a first render.
+  const previousSelected = useRef(selected);
+
+  // After the selection changed, gives the focus to the selected tab if the focus was lost: the
+  // element that had it was in the panel that just unmounted (for example the link that switched the
+  // tab), so the focus fell back to the page. A focus that is anywhere else is left alone: on a tab
+  // (the arrow keys already moved it), in another part of the page or in the new panel. Nothing runs
+  // on mount, so a page opened at a tab never takes the focus; the strict-mode replay of the effect
+  // finds the selection already recorded and does nothing.
+  useLayoutEffect(() => {
+    if (previousSelected.current === selected) return;
+    previousSelected.current = selected;
+    const active = document.activeElement;
+    if (active === null || active === document.body || !active.isConnected) {
+      tabElements.current.get(selected)?.focus();
+    }
+  }, [selected]);
 
   // The one way to ask for a selection, for the click and for the keys alike: the tab that is
   // already selected is not asked for again (see `TabsProps.onSelect`).

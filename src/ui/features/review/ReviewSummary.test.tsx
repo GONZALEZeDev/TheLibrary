@@ -18,6 +18,7 @@ import {
   createRoute,
   createRouter,
   RouterProvider,
+  useNavigate,
 } from '@tanstack/react-router';
 import { render, screen, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
@@ -31,7 +32,8 @@ import type {
   ReviewRow as ReviewRowData,
   ReviewSubject,
 } from '../../../services/review-view';
-import { reviewSearchSchema } from '../../app/router';
+import { REVIEW_TABS, reviewSearchSchema } from '../../app/router';
+import { Tabs } from '../../components/Tabs';
 import { createI18n } from '../../i18n/i18n';
 import { REVIEW_SECTION_TITLE } from './review-layout';
 import { ReviewSummary } from './ReviewSummary';
@@ -385,6 +387,54 @@ describe('ReviewSummary', () => {
     expect(router.state.location.pathname).toBe('/review');
     expect(router.state.location.search).toEqual({ tab: 'deaths' });
     expect(history.length).toBe(entries);
+  });
+
+  it('keeps the focus on the review tabs after a summary link', async () => {
+    const summary = summaryOf(
+      [rowOf({ kind: 'phase_deaths', phase: 'early' }, { side: 'weakness' })],
+      [],
+    );
+    // The summary in the tabs of the review, switched through the address as the page does: the
+    // route reads the tab from its search, and the tabs ask the router for another one.
+    const tabs = REVIEW_TABS.map((id) => ({ id, label: id }));
+    function ReviewTabs() {
+      const { tab } = reviewRoute.useSearch();
+      const navigate = useNavigate();
+      return (
+        <Tabs
+          label="Review"
+          tabs={tabs}
+          selected={tab}
+          onSelect={(next) => {
+            void navigate({ to: '/review', search: { tab: next }, replace: true });
+          }}
+        >
+          {tab === 'summary' ? <ReviewSummary summary={summary} /> : <p>{`Open tab: ${tab}`}</p>}
+        </Tabs>
+      );
+    }
+    const i18n = await createI18n('en');
+    const rootRoute = createRootRoute();
+    const reviewRoute = createRoute({
+      getParentRoute: () => rootRoute,
+      path: '/review',
+      validateSearch: reviewSearchSchema,
+      component: ReviewTabs,
+    });
+    const history = createMemoryHistory({ initialEntries: ['/review'] });
+    const router = createRouter({ routeTree: rootRoute.addChildren([reviewRoute]), history });
+    await router.load();
+    render(
+      <I18nextProvider i18n={i18n}>
+        <RouterProvider router={router} />
+      </I18nextProvider>,
+    );
+
+    await userEvent.setup().click(await screen.findByRole('link', { name: 'Deaths in early' }));
+
+    // The link left the page with the summary: the tab it led to has the focus, not the page.
+    expect(await screen.findByText('Open tab: deaths')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'deaths' })).toHaveFocus();
   });
 
   it('puts the picture of a resistance item before its name in the summary', async () => {

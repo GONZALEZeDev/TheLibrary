@@ -1,6 +1,6 @@
 /**
- * Tests of the three small pieces every screen is made of: the button, the panel and the status
- * line (a loading text or an error).
+ * Tests of the small pieces every screen is made of: the button, the panel, the status line (a
+ * loading text or an error) and the segmented control.
  *
  * @packageDocumentation
  */
@@ -14,6 +14,7 @@ import { createI18n } from '../i18n/i18n';
 import { Button } from './Button';
 import { BUTTON_CLASSES, BUTTON_WITH_ICON_CLASS, type ButtonLook } from './button-styles';
 import { Panel, PANEL_CLASSES } from './Panel';
+import { SegmentedControl } from './SegmentedControl';
 import { StatusLine } from './StatusLine';
 
 describe('Button', () => {
@@ -214,6 +215,20 @@ describe('StatusLine', () => {
     expect(alert).not.toHaveTextContent('GET /v1/info failed');
   });
 
+  it('says a fixed message as an alert with the look of an error, and adds the class of its caller', async () => {
+    const i18n = await createI18n('en');
+    render(
+      <I18nextProvider i18n={i18n}>
+        <StatusLine kind="alert" text="The folder could not be opened." className="mt-3" />
+      </I18nextProvider>,
+    );
+
+    // The text is shown as given (it is already translated), never replaced by an error kind.
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('The folder could not be opened.');
+    expect(alert).toHaveClass('text-sm', 'text-loss', 'mt-3');
+  });
+
   it.each([
     ['en', 'An unexpected error occurred.'],
     ['fr', 'Une erreur inattendue est survenue.'],
@@ -232,4 +247,51 @@ describe('StatusLine', () => {
       expect(screen.getByRole('alert')).not.toHaveTextContent('boom');
     },
   );
+});
+
+describe('SegmentedControl', () => {
+  it('checks the chosen option and calls back with the value of the one picked', async () => {
+    const user = userEvent.setup();
+    const onPick = vi.fn<(value: 'all' | 'win' | 'loss') => void>();
+    render(
+      <SegmentedControl
+        legend="Result"
+        segments={[
+          { value: 'all', label: 'All' },
+          { value: 'win', label: 'Wins' },
+          { value: 'loss', label: 'Losses' },
+        ]}
+        value="win"
+        onPick={onPick}
+      />,
+    );
+
+    // A native radio group, named by its legend.
+    const group = screen.getByRole('group', { name: 'Result' });
+    expect(group).toContainElement(screen.getByRole('radio', { name: 'Wins' }));
+    expect(screen.getByRole('radio', { name: 'Wins' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: 'All' })).not.toBeChecked();
+
+    await user.click(screen.getByRole('radio', { name: 'Losses' }));
+
+    expect(onPick).toHaveBeenCalledWith('loss');
+  });
+
+  it('checks no option when the value is none of them', () => {
+    render(
+      <SegmentedControl
+        legend="Hero"
+        segments={[
+          { value: 67, label: 'Paige' },
+          { value: 'all', label: 'All heroes' },
+        ]}
+        value={12}
+        onPick={vi.fn()}
+      />,
+    );
+
+    for (const radio of screen.getAllByRole('radio')) {
+      expect(radio).not.toBeChecked();
+    }
+  });
 });

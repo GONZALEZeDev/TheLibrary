@@ -1,16 +1,22 @@
 /**
- * Settings screen: one card per setting, the linked Steam account (see {@link AccountSection}) and
- * the language of the interface.
+ * Settings screen: one titled panel per group of settings, in this order: the linked Steam account
+ * (see {@link AccountSection}), the synchronisation, the storage limit of the archives (see
+ * {@link StorageSection}), the language of the interface, the diagnostics (see
+ * {@link DiagnosticsSection}) and the about section (see {@link AboutSection}).
  *
  * @packageDocumentation
  */
-import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
-import { toAppError } from '../../../core/errors/app-error';
 import { FALLBACK_LANGUAGE, isLanguage } from '../../../core/settings/language';
 import { PageHeader } from '../../components/PageHeader';
+import { StatusLine } from '../../components/StatusLine';
+import { SyncBanner } from '../matches/SyncBanner';
+import { AboutSection } from './AboutSection';
 import { AccountSection } from './AccountSection';
+import { DiagnosticsSection } from './DiagnosticsSection';
 import { LanguageSwitcher } from './LanguageSwitcher';
+import { SettingsSection } from './SettingsSection';
+import { StorageSection } from './StorageSection';
 import { useChangeLanguage, useSettings } from './use-settings';
 
 /**
@@ -22,7 +28,6 @@ export function SettingsPage() {
   const { t, i18n } = useTranslation();
   const settings = useSettings();
   const changeLanguage = useChangeLanguage();
-  const languageHeadingId = useId();
 
   // A choice being saved is shown as selected right away (the radios would otherwise jump back
   // until the save completes). Then the saved choice wins; before any choice, the selected
@@ -36,15 +41,18 @@ export function SettingsPage() {
       <PageHeader title={t('settings.title')} />
       <div className="space-y-6">
         <AccountSection />
-        <section
-          aria-labelledby={languageHeadingId}
-          className="rounded-xl border border-border bg-surface p-6"
+        <SettingsSection
+          title={t('settings.sync.title')}
+          description={t('settings.sync.description')}
         >
-          <h2 id={languageHeadingId} className="text-base font-medium">
-            {t('settings.language.title')}
-          </h2>
-          <p className="mt-1 text-sm text-fg-muted">{t('settings.language.description')}</p>
-          <div className="mt-4 flex items-center gap-3">
+          <SyncBanner embedded />
+        </SettingsSection>
+        <StorageSection />
+        <SettingsSection
+          title={t('settings.language.title')}
+          description={t('settings.language.description')}
+        >
+          <div className="flex items-center gap-3">
             <LanguageSwitcher
               value={selectedLanguage}
               onChange={(language) => {
@@ -59,11 +67,11 @@ export function SettingsPage() {
             )}
           </div>
           {changeLanguage.isError && (
-            <p role="alert" className="mt-3 text-sm text-loss">
-              {t(`errors.kind.${toAppError(changeLanguage.error).kind}`)}
-            </p>
+            <StatusLine kind="error" error={changeLanguage.error} className="mt-3" />
           )}
-        </section>
+        </SettingsSection>
+        <DiagnosticsSection />
+        <AboutSection />
       </div>
     </>
   );

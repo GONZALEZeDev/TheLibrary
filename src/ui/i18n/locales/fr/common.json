@@ -17,14 +17,21 @@
       "title": "Lier ton compte Steam",
       "description": "Lier ton compte Steam permet à TheLibrary d'analyser tes parties."
     },
+    "latest": {
+      "title_one": "Ta dernière partie",
+      "title_other": "Tes {{count}} dernières parties",
+      "empty": "Aucune partie de Paige pour l'instant."
+    },
     "stats": {
-      "title": "{{hero}}, {{days}} derniers jours",
-      "scope": "Parties en mode normal, classées ou non.",
-      "matches": "Parties jouées",
-      "wins": "Victoires",
-      "winRate": "Taux de victoire",
-      "kda": "K / D / A moyen",
-      "empty": "Aucune partie sur cette période."
+      "record": "Victoires",
+      "kda": "K / D / A moyen"
+    },
+    "points": {
+      "loading": "Calcul du Bilan…"
+    },
+    "links": {
+      "review": "Voir le Bilan complet",
+      "matches": "Toutes mes parties"
     }
   },
   "result": {
@@ -42,10 +49,25 @@
       "description": "L'historique de tes parties apparaîtra ici dès qu'un compte Steam sera lié."
     },
     "loading": "Chargement des parties…",
-    "count": "Les {{shown}} plus récentes de tes {{total}} parties.",
+    "filters": {
+      "label": "Filtres",
+      "result": {
+        "all": "Toutes",
+        "win": "Victoires",
+        "loss": "Défaites"
+      },
+      "hero": {
+        "paige": "Paige",
+        "all": "Tous les héros"
+      }
+    },
+    "filteredEmpty": "Aucune partie ne correspond à ces filtres.",
+    "day": {
+      "today": "Aujourd'hui",
+      "yesterday": "Hier"
+    },
     "table": {
-      "caption": "Parties les plus récentes",
-      "date": "Date",
+      "time": "Heure",
       "type": "Type",
       "hero": "Héros",
       "result": "Résultat",
@@ -55,12 +77,13 @@
       "win": "Victoire",
       "loss": "Défaite",
       "unknownHero": "Héros n°{{id}}",
+      "notArchived": "non archivée",
       "detailStatus": {
         "ready": "Archivée",
         "waiting": "En attente",
         "unavailable": "Indisponible",
         "invalid": "Invalide",
-        "evicted": "Supprimée (stockage)"
+        "evicted": "Archive supprimée"
       }
     },
     "sync": {
@@ -69,7 +92,7 @@
       "noAccount": "Aucun compte Steam n'est lié.",
       "never": "Pas encore synchronisé.",
       "lastSync": "Dernière synchronisation : {{time}}.",
-      "newMatches": "Nouvelles parties : {{number}}.",
+      "newMatches": "Nouvelles parties : {{number, number}}.",
       "upToDate": "Historique actualisé depuis Steam.",
       "partial": "Historique peut-être incomplet : deadlock-api ne connaît que les parties qu'il a collectées lui-même.",
       "budget": "Limite de requêtes atteinte pour l'instant. Dernier téléchargement de l'historique : {{time}}.",
@@ -77,8 +100,8 @@
       "paused": "deadlock-api a demandé de ralentir : synchronisation en pause jusqu'à {{time}}.",
       "protected": "Les données de ce compte sont privées sur deadlock-api : la synchronisation automatique est arrêtée.",
       "failed": "La dernière synchronisation a échoué : {{reason}}",
-      "details": "Détail des parties Paige : archivées {{archived}}, en attente {{waiting}}, indisponibles {{unavailable}}.",
-      "detailsInvalid": "Invalides : {{count}}.",
+      "details": "Détail des parties Paige : archivées {{archived, number}}, en attente {{waiting, number}}, indisponibles {{unavailable, number}}.",
+      "detailsInvalid": "Invalides : {{count, number}}.",
       "detailsStopped": "Le détail des parties ne peut pas être enregistré pour l'instant : {{reason}}"
     }
   },
@@ -91,9 +114,8 @@
     "unavailable": "deadlock-api n'a pas pu fournir le détail de cette partie après plusieurs tentatives.",
     "invalid": "Le détail de cette partie est illisible.",
     "missing": "L'archive de cette partie est introuvable : elle sera téléchargée à nouveau.",
-    "lost": "L'archive de cette partie a disparu : les parties de plus de 90 jours ne sont plus téléchargées.",
     "evicted": "L'archive de cette partie a été supprimée pour faire de la place : elle est téléchargée à nouveau.",
-    "evictedLost": "L'archive de cette partie a été supprimée pour faire de la place, et les parties de plus de 90 jours ne sont plus téléchargées.",
+    "evictedLost": "L'archive de cette partie n'est plus sur ce PC, et les parties de plus de 90 jours ne sont plus téléchargées.",
     "retry": "Réessayer",
     "tabs": {
       "label": "Sections de la partie",
@@ -437,10 +459,47 @@
       "linkedOn": "Lié le {{date}}.",
       "notLinked": "Aucun compte Steam n'est lié."
     },
+    "sync": {
+      "title": "Synchronisation",
+      "description": "Tes parties sont synchronisées au démarrage, puis toutes les 13 minutes."
+    },
+    "storage": {
+      "title": "Stockage",
+      "description": "Les archives de tes parties restent sur ce PC. Au-delà de la limite, les plus anciennes sont supprimées ; leurs chiffres restent.",
+      "used": "{{used}} utilisés sur {{cap}}",
+      "capLabel": "Limite",
+      "capacity_one": "Environ {{count, number}} partie tient dans cette limite.",
+      "capacity_other": "Environ {{count, number}} parties tiennent dans cette limite.",
+      "protected": "Les archives de tes 90 derniers jours et de tes 40 dernières parties ne sont jamais supprimées.",
+      "confirm": {
+        "title": "Baisser la limite ?",
+        "body_one": "Environ {{count, number}} archive de plus de 90 jours sera supprimée ({{size}}). Ses chiffres restent, mais sa chronologie, ses dégâts et ses joueurs ne reviendront pas.",
+        "body_other": "Environ {{count, number}} archives de plus de 90 jours seront supprimées ({{size}}). Leurs chiffres restent, mais leur chronologie, leurs dégâts et leurs joueurs ne reviendront pas.",
+        "accept": "Supprimer et baisser la limite",
+        "cancel": "Annuler"
+      },
+      "saving": "Enregistrement…"
+    },
     "language": {
       "title": "Langue",
       "description": "Choisis la langue de l'interface.",
       "saving": "Enregistrement…"
+    },
+    "diagnostics": {
+      "title": "Diagnostic",
+      "description": "Le journal aide à comprendre un problème. Il ne contient jamais ton identifiant de compte.",
+      "debug": "Journal détaillé",
+      "debugHint": "Ajoute les lignes de débogage au journal. À n'activer que pour chercher un problème.",
+      "openFolder": "Ouvrir le dossier du journal",
+      "openFailed": "Le dossier du journal n'a pas pu être ouvert."
+    },
+    "about": {
+      "title": "À propos",
+      "version": "Version {{version}}",
+      "licence": "Logiciel libre sous licence MIT.",
+      "credit": "Les données des parties viennent de deadlock-api.com.",
+      "valve": "TheLibrary n'est ni affilié à Valve ni approuvé par Valve.",
+      "privacy": "Tes données restent sur ce PC. L'application ne contacte que deadlock-api (données et images des parties) et Steam, pour lier ton compte."
     }
   },
   "account": {

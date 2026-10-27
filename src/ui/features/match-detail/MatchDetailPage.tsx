@@ -34,11 +34,13 @@
  * goes, and the damage tab, which has nothing to show until the analysis is stored, is read again
  * when it is.
  *
- * Above the title of every state of the page is a link back to the match list.
+ * Above the title of every state of the page is a link back to the match list: a step back in the
+ * browser history when the match was opened from the list (the filters and the scroll of the list
+ * come back with it), a visit of the list otherwise.
  *
  * @packageDocumentation
  */
-import { getRouteApi, Link } from '@tanstack/react-router';
+import { getRouteApi, Link, useLocation, useRouter } from '@tanstack/react-router';
 import type { TFunction } from 'i18next';
 import { ArrowLeft, RotateCw, UserRound } from 'lucide-react';
 import { useEffect, useRef, type ReactNode } from 'react';
@@ -46,6 +48,7 @@ import { useTranslation } from 'react-i18next';
 import type { MatchId } from '../../../core/domain/match';
 import type { ArchiveFacts } from '../../../core/match-detail/archive-facts';
 import type { MatchDetailView } from '../../../services/match-detail.service';
+import { wasOpenedFromHistory } from '../../app/history-return';
 import type { MatchTab } from '../../app/router';
 import { Button } from '../../components/Button';
 import { EmptyState } from '../../components/EmptyState';
@@ -147,16 +150,35 @@ function renderRetryButton(t: TFunction, retry: RetryAction) {
 /**
  * The link back to the match list, above the title of the page.
  *
- * It goes to the list as the sidebar does: the router keeps no search parameters of the list to go
- * back to, and the list does not use its filters yet (see `matchesSearchSchema`).
+ * A match opened from the history list goes one step back in the browser history: the entry of the
+ * list is the one before, so the list returns with the filters of its address and the scroll the
+ * router saved when the player left it. Any other match (opened from the dashboard or the review, or
+ * from a typed address) has no list to return to, and the link goes to the list as the sidebar does,
+ * with the default filters.
+ *
+ * It is a real link either way, to `/matches`: the keyboard, a screen reader and a click that opens
+ * a new window (a middle click, or a modifier key) work as they do on any link, and only a plain
+ * click on a match opened from the history takes the step back instead of a new visit.
  *
  * @param t - Translation function.
+ * @param goBack - Takes the step back in the browser history, when the match was opened from the
+ *   history list; `undefined` otherwise.
  * @returns The link.
  */
-function renderBackLink(t: TFunction) {
+function renderBackLink(t: TFunction, goBack: (() => void) | undefined) {
   return (
     <Link
       to="/matches"
+      onClick={(event) => {
+        // The same click the router's own handler takes for a navigation: keep the two checks alike.
+        const plainClick =
+          event.button === 0 && !(event.metaKey || event.altKey || event.ctrlKey || event.shiftKey);
+        if (goBack !== undefined && plainClick) {
+          // The router's own handler, which would navigate to the list again, then does nothing.
+          event.preventDefault();
+          goBack();
+        }
+      }}
       className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-accent-bright underline-offset-4 hover:underline"
     >
       <ArrowLeft aria-hidden="true" className="size-4" />
@@ -315,14 +337,11 @@ function renderView(
       return renderExplanation([t('matchDetail.invalid')], renderRetryButton(t, retry));
     case 'missing':
       return renderExplanation([t('matchDetail.missing')]);
-    case 'lost':
-      // Nothing to retry: the queue only downloads the matches of the last 90 days.
-      return renderExplanation([t('matchDetail.lost')]);
     case 'evicted':
       // No button: the page starts the download itself (see `MatchDetailPage`).
       return renderExplanation([t('matchDetail.evicted')]);
     case 'evicted_lost':
-      // Nothing to retry either: the match is past the 90 days the queue downloads.
+      // Nothing to retry: the match is past the 90 days the queue downloads.
       return renderExplanation([t('matchDetail.evictedLost')]);
   }
 }
@@ -338,6 +357,12 @@ export function MatchDetailPage() {
   // The search parameters are validated by the route: `tab` is always one of the tabs.
   const { tab } = matchDetailRoute.useSearch();
   const navigate = matchDetailRoute.useNavigate();
+  // The way back: a step back in the browser history when the history list opened this match (its
+  // list is the entry before this one), see `renderBackLink`.
+  const router = useRouter();
+  const openedFromHistory = useLocation({
+    select: (location) => wasOpenedFromHistory(location.state),
+  });
   const detail = useMatchDetail(matchId);
   const retry = useRetryDetail(matchId);
   const viewKind = detail.data?.kind;
@@ -393,12 +418,18 @@ export function MatchDetailPage() {
         selected: tab,
         onSelect: (next) => {
           // `replace`: the tabs of a match are one entry of the history (see the header of this
-          // file). The tabs never ask for the tab already open, so no navigation is for nothing.
+          // file), which keeps the mark of an entry opened from the history list (`state: true`):
+          // the way back is a step back from any tab. The tabs never ask for the tab already open,
+          // so no navigation is for nothing.
           void navigate({
             to: '/matches/$matchId',
             params: { matchId },
             search: { tab: next },
             replace: true,
+            state: true,
+            // The page stays where it is: the router would send `<main>` to the top, as it does
+            // for a page opened for the first time.
+            resetScroll: false,
           });
         },
       },
@@ -410,7 +441,14 @@ export function MatchDetailPage() {
 
   return (
     <>
-      {renderBackLink(t)}
+      {renderBackLink(
+        t,
+        openedFromHistory
+          ? () => {
+              router.history.back();
+            }
+          : undefined,
+      )}
       {/* The facts of the match are the content of the title block: close under the title they
           describe, with the space of the block below them. */}
       <PageHeader title={t('matchDetail.title', { matchId })}>

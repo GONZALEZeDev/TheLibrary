@@ -19,7 +19,9 @@ import { FIXTURE_ACCOUNT_ID } from '../../../adapters/dev/fixtures/match-history
 import { PAIGE_HERO_ID } from '../../../core/domain/hero';
 import { AppError } from '../../../core/errors/app-error';
 import type { AppServices } from '../../../services/app-services';
+import type { MatchId } from '../../../core/domain/match';
 import { MatchesRepository } from '../../../services/matches.repository';
+import type { HistoryFilter, HistoryView } from '../../../services/matches.service';
 import type { SyncService } from '../../../services/sync.service';
 import {
   createTestQueryClient,
@@ -37,8 +39,8 @@ import {
   MATCHES_QUERY_KEY,
   SYNC_QUERY_KEY,
   useHeroNames,
-  usePeriodSummary,
-  useRecentMatches,
+  useHistory,
+  useLatestMatches,
 } from '../matches/use-matches';
 import { REVIEW_COMMUNITY_QUERY_KEY, REVIEW_QUERY_KEY } from '../review/use-review';
 import { SETTINGS_QUERY_KEY } from '../settings/use-settings';
@@ -71,6 +73,22 @@ const PREVIOUS_ACCOUNT_ID = testAccountId(2000001);
 
 /** The match of the previous account: its id is far from the ones of the synthetic history. */
 const PREVIOUS_MATCH_ID = testMatchId(100000001);
+
+/** The filter of the history the tests read: every hero, every result, so every stored match. */
+const EVERY_MATCH: HistoryFilter = { hero: 'all', result: 'all' };
+
+/** The cache key of the history under {@link EVERY_MATCH}, as `useHistory` builds it. */
+const HISTORY_KEY = [...MATCHES_QUERY_KEY, 'history', 'all', 'all'];
+
+/**
+ * The ids of the matches of a history.
+ *
+ * @param view - The history, maybe not read yet.
+ * @returns The ids of its matches, in order; none while it is not read or without an account.
+ */
+function historyMatchIds(view: HistoryView | undefined): MatchId[] {
+  return view?.kind === 'ready' ? view.matches.map((match) => match.matchId) : [];
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -147,8 +165,8 @@ function whenIdle(sync: SyncService): Promise<void> {
 }
 
 /**
- * Store one match, played an hour before the clock of the services: it is in the list of the recent
- * matches, and in every period of the dashboard.
+ * Store one match, played an hour before the clock of the services: it is in the history, and in the
+ * latest matches of the dashboard.
  *
  * @param test - The services of the test.
  * @param accountId - The account that played it; the account of the fixtures by default.
@@ -229,11 +247,11 @@ describe('useLinkAccount', () => {
   it('reads the data of the new account once it is linked', async () => {
     const { services } = setUp({ accountId: null });
     const { result } = renderWithServices(services, () => ({
-      recent: useRecentMatches(),
+      history: useHistory(EVERY_MATCH),
       link: useLinkAccount(),
     }));
     await waitFor(() => {
-      expect(result.current.recent.data).toMatchObject({ accountLinked: false });
+      expect(result.current.history.data).toMatchObject({ kind: 'no_account' });
     });
 
     act(() => {
@@ -245,7 +263,7 @@ describe('useLinkAccount', () => {
     await waitFor(
       () => {
         expect(result.current.link.isSuccess).toBe(true);
-        expect(result.current.recent.data).toMatchObject({ accountLinked: true });
+        expect(result.current.history.data).toMatchObject({ kind: 'ready' });
       },
       { timeout: SIGN_IN_TIMEOUT_MS },
     );
@@ -258,14 +276,12 @@ describe('useLinkAccount', () => {
     await seedMatch(test, PREVIOUS_ACCOUNT_ID, PREVIOUS_MATCH_ID);
     const { result, queryClient } = renderWithServices(test.services, () => ({
       account: useLinkedAccount(),
-      recent: useRecentMatches(),
+      history: useHistory(EVERY_MATCH),
       link: useLinkAccount(),
     }));
     await waitFor(() => {
       expect(result.current.account.data).toMatchObject({ accountId: PREVIOUS_ACCOUNT_ID });
-      expect(result.current.recent.data?.matches.map((match) => match.matchId)).toEqual([
-        PREVIOUS_MATCH_ID,
-      ]);
+      expect(historyMatchIds(result.current.history.data)).toEqual([PREVIOUS_MATCH_ID]);
     });
     // The detail page of that match, read before: cached, and observed by no screen.
     const detailKey = [...DETAILS_QUERY_KEY, 'match', PREVIOUS_MATCH_ID];
@@ -280,15 +296,13 @@ describe('useLinkAccount', () => {
       () => {
         expect(result.current.link.isSuccess).toBe(true);
         expect(result.current.account.data).toMatchObject({ accountId: FIXTURE_ACCOUNT_ID });
-        expect(result.current.recent.data).toMatchObject({ accountLinked: true });
+        expect(result.current.history.data).toMatchObject({ kind: 'ready' });
       },
       { timeout: SIGN_IN_TIMEOUT_MS },
     );
     expect(result.current.link.data).toMatchObject({ kind: 'linked', replaced: true });
     // No row of the previous account is left in the cache, observed or not...
-    expect(result.current.recent.data?.matches.map((match) => match.matchId)).not.toContain(
-      PREVIOUS_MATCH_ID,
-    );
+    expect(historyMatchIds(result.current.history.data)).not.toContain(PREVIOUS_MATCH_ID);
     expect(queryClient.getQueryData(detailKey)).toBeUndefined();
     // ... as none is left in the database: the service erased the account once the link had changed.
     await expect(new MatchesRepository(test.database).count(PREVIOUS_ACCOUNT_ID)).resolves.toBe(0);
@@ -327,16 +341,15 @@ describe('useLinkAccount', () => {
     await seedMatch(test);
     const { result, queryClient } = renderWithServices(test.services, () => ({
       account: useLinkedAccount(),
-      recent: useRecentMatches(),
+      history: useHistory(EVERY_MATCH),
       link: useLinkAccount(),
     }));
     await waitFor(() => {
-      expect(result.current.recent.data).toMatchObject({ accountLinked: true, total: 1 });
+      expect(result.current.history.data).toMatchObject({ kind: 'ready', total: 1 });
       // The seeded link has a name and no avatar.
       expect(result.current.account.data).toMatchObject({ avatarBase64: null });
     });
-    const recentKey = [...MATCHES_QUERY_KEY, 'recent'];
-    const recentBefore = queryClient.getQueryData(recentKey);
+    const historyBefore = queryClient.getQueryData(HISTORY_KEY);
 
     act(() => {
       result.current.link.mutate();
@@ -351,15 +364,14 @@ describe('useLinkAccount', () => {
       { timeout: SIGN_IN_TIMEOUT_MS },
     );
     // Same account, same data: nothing was reset (a reset would replace the cached object).
-    expect(queryClient.getQueryData(recentKey)).toBe(recentBefore);
+    expect(queryClient.getQueryData(HISTORY_KEY)).toBe(historyBefore);
     await whenIdle(test.services.sync);
   });
 
   it('leaves the cached data as it is when the sign-in ends without a link', async () => {
     const { result, queryClient, signInGateway } = renderWaitingLink();
-    const recentKey = [...MATCHES_QUERY_KEY, 'recent'];
-    const cached = { accountLinked: false, total: 0, matches: [] };
-    queryClient.setQueryData(recentKey, cached);
+    const cached: HistoryView = { kind: 'no_account' };
+    queryClient.setQueryData(HISTORY_KEY, cached);
 
     act(() => {
       result.current.link.mutate();
@@ -375,7 +387,7 @@ describe('useLinkAccount', () => {
     });
 
     // Nothing changed, so nothing is read again: a reset would have replaced the cached object.
-    expect(queryClient.getQueryData(recentKey)).toBe(cached);
+    expect(queryClient.getQueryData(HISTORY_KEY)).toBe(cached);
   });
 });
 
@@ -408,14 +420,14 @@ describe('useUnlinkAccount', () => {
     await seedMatch(test);
     const { result } = renderWithServices(test.services, () => ({
       account: useLinkedAccount(),
-      recent: useRecentMatches(),
-      period: usePeriodSummary('7d', PAIGE_HERO_ID),
+      history: useHistory(EVERY_MATCH),
+      latest: useLatestMatches(PAIGE_HERO_ID, 10),
       unlink: useUnlinkAccount(),
     }));
     await waitFor(() => {
       expect(result.current.account.data).toMatchObject({ accountId: FIXTURE_ACCOUNT_ID });
-      expect(result.current.recent.data).toMatchObject({ accountLinked: true, total: 1 });
-      expect(result.current.period.data).toMatchObject({ kind: 'stats' });
+      expect(result.current.history.data).toMatchObject({ kind: 'ready', total: 1 });
+      expect(result.current.latest.data).toMatchObject({ kind: 'ready', stats: { matches: 1 } });
     });
 
     act(() => {
@@ -426,8 +438,8 @@ describe('useUnlinkAccount', () => {
     await waitFor(() => {
       expect(result.current.unlink.isSuccess).toBe(true);
       expect(result.current.account.data).toBeNull();
-      expect(result.current.recent.data).toEqual({ accountLinked: false, total: 0, matches: [] });
-      expect(result.current.period.data).toEqual({ kind: 'no_account' });
+      expect(result.current.history.data).toEqual({ kind: 'no_account' });
+      expect(result.current.latest.data).toEqual({ kind: 'no_account' });
     });
     expect(result.current.unlink.data).toEqual({ complete: true });
   });
@@ -441,8 +453,8 @@ describe('useUnlinkAccount', () => {
     // the review are under keys of their own, which the account change has to list.
     const accountKeys = [
       ACCOUNT_QUERY_KEY,
-      [...MATCHES_QUERY_KEY, 'recent'],
-      [...MATCHES_QUERY_KEY, 'period', '7d', PAIGE_HERO_ID],
+      HISTORY_KEY,
+      [...MATCHES_QUERY_KEY, 'latest', PAIGE_HERO_ID, 10],
       [...SYNC_QUERY_KEY, 'status'],
       DETAILS_SUMMARY_QUERY_KEY,
       [...DETAILS_QUERY_KEY, 'match', 100000001],
@@ -476,7 +488,7 @@ describe('useUnlinkAccount', () => {
       new AppError('storage', 'The link cannot be cleared'),
     );
     const { result, queryClient } = renderWithServices(services, useUnlinkAccount);
-    queryClient.setQueryData([...MATCHES_QUERY_KEY, 'recent'], 'old data');
+    queryClient.setQueryData(HISTORY_KEY, 'old data');
 
     act(() => {
       result.current.mutate();
@@ -485,24 +497,24 @@ describe('useUnlinkAccount', () => {
       expect(result.current.isError).toBe(true);
     });
 
-    expect(queryClient.getQueryData([...MATCHES_QUERY_KEY, 'recent'])).toBeUndefined();
+    expect(queryClient.getQueryData(HISTORY_KEY)).toBeUndefined();
   });
 });
 
-describe('usePeriodSummary', () => {
-  it('sums up a period of the linked account, under a key of its own', async () => {
+describe('useLatestMatches', () => {
+  it('lists the latest matches of the linked account, under a key of its own', async () => {
     const test = setUp();
     await seedMatch(test);
     const { result, queryClient } = renderWithServices(test.services, () =>
-      usePeriodSummary('30d', PAIGE_HERO_ID),
+      useLatestMatches(PAIGE_HERO_ID, 10),
     );
 
     await waitFor(() => {
-      expect(result.current.data).toMatchObject({ kind: 'stats', stats: { matches: 1 } });
+      expect(result.current.data).toMatchObject({ kind: 'ready', stats: { matches: 1 } });
     });
-    // Another period or hero is another entry, and the key is under the matches': a synchronisation
+    // Another hero or limit is another entry, and the key is under the matches': a synchronisation
     // that invalidates the matches refreshes the dashboard too.
-    expect(queryClient.getQueryData([...MATCHES_QUERY_KEY, 'period', '30d', PAIGE_HERO_ID])).toBe(
+    expect(queryClient.getQueryData([...MATCHES_QUERY_KEY, 'latest', PAIGE_HERO_ID, 10])).toBe(
       result.current.data,
     );
   });

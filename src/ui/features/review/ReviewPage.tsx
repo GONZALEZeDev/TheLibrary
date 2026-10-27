@@ -30,7 +30,7 @@
  *   section says why).
  *
  * **The comparison** is downloaded by the page when it opens, if the review lacks it or holds it old
- * (`useReviewCommunityRefresh`), and the review is read again once the data is in the cache. The
+ * (`useReviewWithCommunity`), and the review is read again once the data is in the cache. The
  * download waits for the first read of the review to end: asked for earlier, the read that follows
  * the download would join the read still going, which may have looked at the cache too soon.
  *
@@ -65,13 +65,12 @@ import { StatusLine } from '../../components/StatusLine';
 import { Tabs } from '../../components/Tabs';
 import { MS_PER_SECOND, formatMediumDate } from '../../format/date';
 import { LinkAccountButton } from '../account/LinkAccountButton';
-import { useRefreshOnSync } from '../matches/use-matches';
 import { ReviewDamage } from './ReviewDamage';
 import { ReviewDeaths } from './ReviewDeaths';
 import { ReviewPlayers } from './ReviewPlayers';
 import { ReviewStats } from './ReviewStats';
 import { ReviewSummary } from './ReviewSummary';
-import { useReview, useReviewCommunityRefresh } from './use-review';
+import { useReviewWithCommunity } from './use-review';
 
 /**
  * Typed access to the search parameters of the `/review` route (see `ui/app/router.ts`).
@@ -100,36 +99,7 @@ const TAB_LABEL_KEYS = {
 const TAB_IDS = Object.keys(TAB_LABEL_KEYS) as readonly ReviewTab[];
 
 /** What the page knows of the download of the comparison. */
-type CommunityRefresh = ReturnType<typeof useReviewCommunityRefresh>;
-
-/**
- * Tell whether the review lacks the comparison with the tier above, or holds it old: the page then
- * asks for it.
- *
- * The item statistics are part of it: a download cut short after the cohorts (the budget of the
- * minute is spent in that order) leaves complete cohorts and no item statistics, and the cohorts
- * alone would not call for another download for a day. A download that cannot give them (no
- * resistance item to ask for) leaves the review saying there are no items, so the page does not ask
- * for what cannot come. Even a review that stays due after a download cannot loop: the download
- * is asked for once when it becomes needed, and not again while it stays needed (the review read
- * again after it does not change that), only the next time the page opens.
- *
- * @param community - Where the comparison stands.
- * @returns `true` when none of the matches is compared, when some are not (those with data too thin
- *   to compare with included: their data is old in its turn one day, and a download renews it), when
- *   any of the data compared with is a day old or more, or when the item statistics are missing or a
- *   day old.
- */
-function lacksCommunityData(community: ReviewCommunity): boolean {
-  return (
-    community.itemStats.kind === 'missing' ||
-    community.itemStats.kind === 'stale' ||
-    community.kind === 'missing' ||
-    community.stale ||
-    community.missingMatches > 0 ||
-    community.unusableMatches > 0
-  );
-}
+type CommunityRefresh = ReturnType<typeof useReviewWithCommunity>['refresh'];
 
 /**
  * The line about the matches the review covers.
@@ -337,16 +307,10 @@ export function ReviewPage() {
   // The search parameters are validated by the route: `tab` is always one of the tabs.
   const { tab } = reviewRoute.useSearch();
   const navigate = reviewRoute.useNavigate();
-  const review = useReview();
-  // A synchronisation stores and analyses matches, which the review sums up: the page reads the
-  // review again whenever one runs or advances.
-  useRefreshOnSync();
+  // The review, read again at every synchronisation, and the download of its comparison.
+  const { review, refresh } = useReviewWithCommunity();
   const view = review.data;
   const ready = view?.kind === 'ready' ? view.review : null;
-  // The comparison is asked for once the review has been read, and only for a review that lacks it.
-  // Asked for from the first render, the read that follows the download would join the first read of
-  // the review and not start another (see `useReviewCommunityRefresh`).
-  const refresh = useReviewCommunityRefresh(ready !== null && lacksCommunityData(ready.community));
 
   let body: ReactNode = null;
   if (ready !== null) {

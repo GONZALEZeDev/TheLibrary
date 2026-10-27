@@ -69,14 +69,19 @@ const METADATA_URL = /\/v1\/matches\/\d+\/metadata/;
  *
  * @param testServices - The services of the test.
  * @param language - Language of the interface.
+ * @param embedded - Whether the banner is drawn without its own panel.
  * @returns The test services, and the query client of the banner.
  */
-async function renderBannerOn(testServices: TestServices, language: Language = 'en') {
+async function renderBannerOn(
+  testServices: TestServices,
+  language: Language = 'en',
+  embedded = false,
+) {
   const queryClient = createTestQueryClient();
   const i18n = await createI18n(language);
   render(
     <AppProviders services={testServices.services} queryClient={queryClient} i18n={i18n}>
-      <SyncBanner />
+      <SyncBanner embedded={embedded} />
     </AppProviders>,
   );
   return { ...testServices, queryClient };
@@ -241,6 +246,26 @@ describe('SyncBanner', () => {
     expect(screen.getByRole('button', { name: 'Sync now' })).toBeDisabled();
   });
 
+  it('draws no panel of its own when embedded, and keeps its content and its button', async () => {
+    await renderBannerOn(createTestServices({ now: () => NOW }), 'en', true);
+
+    expect(await screen.findByText('Not synchronised yet.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sync now' })).toBeEnabled();
+    // The live region that announces the status is still there, holding the status.
+    const liveRegion = screen.getByText('Not synchronised yet.').closest('[aria-live]');
+    expect(liveRegion).toHaveAttribute('aria-live', 'polite');
+    // The frame and the margin belong to the section that holds the banner.
+    expect(document.querySelector('section')).toBeNull();
+    expect(document.querySelector('.mb-6')).toBeNull();
+  });
+
+  it('draws its own panel by default', async () => {
+    await renderBanner();
+
+    expect(await screen.findByText('Not synchronised yet.')).toBeInTheDocument();
+    expect(document.querySelector('section')).not.toBeNull();
+  });
+
   it('says that the history was never synchronised', async () => {
     await renderBanner();
 
@@ -284,11 +309,48 @@ describe('SyncBanner', () => {
 
     const sync = services.sync.syncNow('schedule');
 
-    expect(await screen.findByRole('button', { name: 'Syncing…' })).toBeDisabled();
+    // The button stays enabled while a synchronisation runs: it only ignores the press.
+    expect(await screen.findByRole('button', { name: 'Syncing…' })).toBeEnabled();
     gate.release?.();
     await sync;
     expect(await screen.findByText(`New matches: ${String(MATCH_COUNT)}.`)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sync now' })).toBeEnabled();
+  });
+
+  it('keeps the focus on the button and starts no second synchronisation when it is pressed while one runs', async () => {
+    const user = userEvent.setup();
+    // The answer of deadlock-api waits until the test releases it.
+    const gate: { release?: () => void } = {};
+    const answered = new Promise<void>((resolve) => {
+      gate.release = resolve;
+    });
+    const fixtures = createFixtureApi({ now: NOW, matchCount: MATCH_COUNT });
+    const { services } = await renderBanner({
+      handler: async (request) => {
+        await answered;
+        return fixtures(request);
+      },
+    });
+    await screen.findByText('Not synchronised yet.');
+    const syncNow = vi.spyOn(services.sync, 'syncNow');
+
+    // The first synchronisation is the one the user starts with the button.
+    await clickSyncNow(user);
+    const button = await screen.findByRole('button', { name: 'Syncing…' });
+    expect(syncNow).toHaveBeenCalledTimes(1);
+    expect(button).toBeEnabled();
+    expect(button).toHaveFocus();
+
+    // A press while it runs does nothing, and the focus does not fall to the page.
+    await user.click(button);
+    await user.keyboard('{Enter}');
+
+    expect(syncNow).toHaveBeenCalledTimes(1);
+    expect(button).toHaveFocus();
+    gate.release?.();
+    expect(await screen.findByText(`New matches: ${String(MATCH_COUNT)}.`)).toBeInTheDocument();
+    // The run ends (the detail queue included): the same button is back, and still has the focus.
+    expect(await screen.findByRole('button', { name: 'Sync now' })).toHaveFocus();
   });
 
   it('tells when the synchronisation failed, with the reason', async () => {
@@ -717,6 +779,73 @@ describe('SyncBanner', () => {
         'Détail des parties Paige : archivées 5, en attente 2, indisponibles 1. Invalides : 3.',
       ),
     ).toBeInTheDocument();
+  });
+
+  describe('with thousands of matches', () => {
+    /** A first synchronisation can bring more than 999 matches. */
+    const NEW_MATCHES = 1_234;
+
+    /** The status of a synchronisation that brought {@link NEW_MATCHES} matches. */
+    const SYNCED_STATUS = {
+      accountLinked: true,
+      lastSync: {
+        finishedAt: NOW,
+        outcome: 'synced',
+        errorKind: null,
+        newMatches: NEW_MATCHES,
+        historyFetchedAt: NOW,
+        historyFromSteam: true,
+      },
+      pausedUntil: null,
+      protectedAccount: false,
+    } as const;
+
+    /** Details counts that all have a thousands separator. */
+    const BIG_SUMMARY = {
+      archived: 12_345,
+      waiting: 2_000,
+      unavailable: 1_000,
+      invalid: 4_321,
+      evicted: 0,
+      lastStop: null,
+    } as const;
+
+    it('groups the digits of the counts in English', async () => {
+      vi.spyOn(SyncService.prototype, 'getStatus').mockResolvedValue(SYNCED_STATUS);
+      vi.spyOn(MatchDetailService.prototype, 'getSummary').mockResolvedValue(BIG_SUMMARY);
+
+      await renderBanner();
+
+      expect(await screen.findByText('New matches: 1,234.')).toBeInTheDocument();
+      expect(
+        await screen.findByText(
+          'Paige match details: 12,345 archived, 2,000 waiting, 1,000 unavailable. 4,321 invalid.',
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it('groups the digits of the counts in French', async () => {
+      vi.spyOn(SyncService.prototype, 'getStatus').mockResolvedValue(SYNCED_STATUS);
+      vi.spyOn(MatchDetailService.prototype, 'getSummary').mockResolvedValue(BIG_SUMMARY);
+      // The separator comes from `Intl.NumberFormat('fr')` (a narrow no-break space in current
+      // engines), so the test does not hard-code it.
+      const format = new Intl.NumberFormat('fr');
+      expect(format.format(NEW_MATCHES)).not.toBe(String(NEW_MATCHES));
+      // The matcher folds every white space of the page into a plain space, so fold the expected one
+      // too.
+      const french = (count: number): string => format.format(count).replace(/\s/g, ' ');
+
+      await renderBanner({}, 'fr');
+
+      expect(
+        await screen.findByText(`Nouvelles parties : ${french(NEW_MATCHES)}.`),
+      ).toBeInTheDocument();
+      expect(
+        await screen.findByText(
+          `Détail des parties Paige : archivées ${french(12_345)}, en attente ${french(2_000)}, indisponibles ${french(1_000)}. Invalides : ${french(4_321)}.`,
+        ),
+      ).toBeInTheDocument();
+    });
   });
 });
 

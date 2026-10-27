@@ -26,9 +26,10 @@
  *
  * @packageDocumentation
  */
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { createMemoryHistory, RouterProvider } from '@tanstack/react-router';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import {
   createFixtureApi,
   jsonResponse,
@@ -83,7 +84,9 @@ import {
   synchronised,
 } from '../../../test/match-detail-page';
 import { matchSummary, testMatchId } from '../../../test/test-data';
-import type { MatchTab } from '../../app/router';
+import { AppProviders } from '../../app/AppProviders';
+import { createAppRouter, type MatchTab } from '../../app/router';
+import { createI18n } from '../../i18n/i18n';
 import { DETAILS_QUERY_KEY } from '../matches/use-matches';
 
 /** The URL of a match detail request. */
@@ -121,13 +124,13 @@ const EVICTED_STRINGS: Readonly<Record<Language, { evicted: string; evictedLost:
   en: {
     evicted: "This match's archive was removed to free space: it is being downloaded again.",
     evictedLost:
-      "This match's archive was removed to free space, and matches older than 90 days are not downloaded again.",
+      "This match's archive is no longer on this PC, and matches older than 90 days are not downloaded again.",
   },
   fr: {
     evicted:
       "L'archive de cette partie a été supprimée pour faire de la place : elle est téléchargée à nouveau.",
     evictedLost:
-      "L'archive de cette partie a été supprimée pour faire de la place, et les parties de plus de 90 jours ne sont plus téléchargées.",
+      "L'archive de cette partie n'est plus sur ce PC, et les parties de plus de 90 jours ne sont plus téléchargées.",
   },
 };
 
@@ -782,7 +785,7 @@ describe('MatchDetailPage', () => {
     ]);
   });
 
-  it('says when the archive is lost, and refreshes the counts and the matches, once', async () => {
+  it('says when the archive is gone past the 90 days, and refreshes the counts and the matches, once', async () => {
     // The clock of the services moves on by hand: the match is archived now and shown 91 days later.
     let clock = NOW;
     const testServices = await synchronised({ now: () => clock });
@@ -796,11 +799,11 @@ describe('MatchDetailPage', () => {
     await renderMatchDetail(ARCHIVED_ID, testServices, { queryClient });
 
     // Not "it will be downloaded again": it will not, the match is past the window.
-    expect(await screen.findByText(STRINGS.en.lost)).toBeInTheDocument();
+    expect(await screen.findByText(EVICTED_STRINGS.en.evictedLost)).toBeInTheDocument();
     expect(screen.queryByText(STRINGS.en.missing)).not.toBeInTheDocument();
     expect(screen.queryByText(ARCHIVE_LINE_START.en)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
-    // The service put the match back to pending, so the banner and the list changed.
+    // The service marked the archived match evicted, so the banner and the list changed.
     expect(invalidate.mock.calls.map(([filters]) => filters)).toEqual([
       { queryKey: ['details', 'summary'] },
       { queryKey: ['matches'] },
@@ -821,7 +824,7 @@ describe('MatchDetailPage', () => {
       'Local data could not be read or saved.',
     );
     expect(screen.queryByText(STRINGS.en.missing)).not.toBeInTheDocument();
-    expect(screen.queryByText(STRINGS.en.lost)).not.toBeInTheDocument();
+    expect(screen.queryByText(EVICTED_STRINGS.en.evictedLost)).not.toBeInTheDocument();
     expect(screen.queryByText(ARCHIVE_LINE_START.en)).not.toBeInTheDocument();
     // The failure is logged once by the query client, with the step and without the account id.
     const failures = testServices.logger.entries.filter((entry) => entry.scope === 'query');
@@ -1309,13 +1312,6 @@ const EXPLAINED_VIEWS: readonly ExplainedView[] = [
     offersRetry: false,
   },
   {
-    // Nothing can be retried: the queue never downloads a match past the 90 days.
-    name: 'a match whose archive is lost',
-    view: { kind: 'lost' },
-    says: (strings) => [strings.lost],
-    offersRetry: false,
-  },
-  {
     // The download is automatic, so there is no button to press.
     name: 'a match whose archive was evicted',
     view: { kind: 'evicted' },
@@ -1323,6 +1319,7 @@ const EXPLAINED_VIEWS: readonly ExplainedView[] = [
     offersRetry: false,
   },
   {
+    // Nothing can be retried: the queue never downloads a match past the 90 days.
     name: 'a match whose evicted archive is gone',
     view: { kind: 'evicted_lost' },
     says: (_strings, language) => [EVICTED_STRINGS[language].evictedLost],
@@ -1335,7 +1332,6 @@ const NO_DETAIL_KINDS: readonly MatchDetailView['kind'][] = [
   'unavailable',
   'invalid',
   'missing',
-  'lost',
   'evicted',
   'evicted_lost',
 ];
@@ -1398,5 +1394,265 @@ describe.each(['en', 'fr'] as const)('MatchDetailPage in %s', (language) => {
     }
     // The tabs are for an archived match: the sentence stands alone under the header.
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The way back from a match to the history list: the history when the match was opened from it (the
+ * filters of the list come back with it), the list as the sidebar opens it otherwise. The tests walk
+ * the real application on a memory history, from the list or from another page, as the player does.
+ * The scroll of the list is the router's and the browser's: jsdom has no layout, so the runtime check
+ * of the application covers it.
+ */
+describe('MatchDetailPage way back', () => {
+  const strings = ANALYSING_STRINGS.en;
+
+  /**
+   * Watches `Element.scrollTo`, which the router calls to send `<main>` to the top of a page it
+   * opens for the first time. The test setup gives jsdom a `scrollTo` that moves the element as a
+   * browser does; the spy lets it through.
+   */
+  let scrollMainToTop: MockInstance<Element['scrollTo']>;
+
+  beforeEach(() => {
+    scrollMainToTop = vi.spyOn(Element.prototype, 'scrollTo');
+  });
+
+  afterEach(() => {
+    scrollMainToTop.mockRestore();
+  });
+
+  /** The result filter that keeps the archived match: it is not the default one, every result. */
+  const RESULT = headerFactsOfRow(ARCHIVED_ROW).won ? 'win' : 'loss';
+
+  /** The filters the history list is opened with: neither of them is the default. */
+  const FILTERED_LIST = `/matches?hero=all&result=${RESULT}`;
+
+  /** What the address of the list holds once the filters of {@link FILTERED_LIST} are read. */
+  const FILTERS = { hero: 'all', result: RESULT };
+
+  /** What the address of the list holds when nothing names a filter. */
+  const DEFAULT_FILTERS = { hero: PAIGE_HERO_ID, result: 'all' };
+
+  /**
+   * Render the whole application on a memory history that holds the given addresses.
+   *
+   * @param entries - The addresses of the history, the last one being the open page.
+   * @param testServices - The services of the test.
+   * @returns The router of the page.
+   */
+  async function renderAppAt(entries: readonly string[], testServices: TestServices) {
+    const i18n = await createI18n('en');
+    const history = createMemoryHistory({ initialEntries: [...entries] });
+    const router = createAppRouter(history);
+    render(
+      <AppProviders
+        services={testServices.services}
+        queryClient={createTestQueryClient(testServices.logger)}
+        i18n={i18n}
+      >
+        <RouterProvider router={router} />
+      </AppProviders>,
+    );
+    return router;
+  }
+
+  /**
+   * Find the time link of the archived match in the history list.
+   *
+   * @returns The link, once the list is there.
+   */
+  async function findMatchLink(): Promise<HTMLElement> {
+    const links = await screen.findAllByRole('link', { name: /\d{1,2}:\d{2}/ });
+    return (
+      links.find((link) => link.getAttribute('href') === `/matches/${String(ARCHIVED_ID)}`) ??
+      expect.unreachable('the list links to the archived match')
+    );
+  }
+
+  /**
+   * Tell the position of the open page in the browser history.
+   *
+   * @param router - The router of the page.
+   * @returns Its index: 0 for the first entry of the history.
+   */
+  function entryIndex(router: Awaited<ReturnType<typeof renderAppAt>>): number {
+    return router.history.location.state.__TSR_index;
+  }
+
+  it('goes back to the history with its filters', async () => {
+    const user = userEvent.setup();
+    const testServices = await synchronised();
+    const router = await renderAppAt([FILTERED_LIST], testServices);
+
+    await user.click(await findMatchLink());
+    await waitFor(() => {
+      expect(router.state.location.pathname).toMatch(/^\/matches\/\d+$/);
+    });
+    await user.click(await screen.findByRole('link', { name: strings.back }));
+
+    // The entry of the list is the one the page is on again, not a new entry for the same list.
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/matches');
+    });
+    expect(router.state.location.search).toEqual(FILTERS);
+    expect(entryIndex(router)).toBe(0);
+    expect(
+      await screen.findByRole('heading', { level: 1, name: strings.listTitle }),
+    ).toBeInTheDocument();
+  });
+
+  it('goes back to the history when the match was opened from a click on its row', async () => {
+    const user = userEvent.setup();
+    const testServices = await synchronised();
+    const router = await renderAppAt([FILTERED_LIST], testServices);
+
+    // A click on a cell of the row, not on its link.
+    const link = await findMatchLink();
+    const row = link.closest('tr') ?? expect.unreachable('the link is in a row');
+    const cell = row.querySelectorAll('td')[1] ?? expect.unreachable('the row has cells');
+    await user.click(cell);
+    await waitFor(() => {
+      expect(router.state.location.pathname).toMatch(/^\/matches\/\d+$/);
+    });
+    await user.click(await screen.findByRole('link', { name: strings.back }));
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/matches');
+    });
+    expect(router.state.location.search).toEqual(FILTERS);
+    expect(entryIndex(router)).toBe(0);
+  });
+
+  it('goes back to the history from any tab of the match', async () => {
+    const user = userEvent.setup();
+    const testServices = await synchronised();
+    const router = await renderAppAt([FILTERED_LIST], testServices);
+
+    await user.click(await findMatchLink());
+    await user.click(await screen.findByRole('tab', { name: TAB_NAMES.damage }));
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({ tab: 'damage' });
+    });
+    await user.click(screen.getByRole('link', { name: strings.back }));
+
+    // The tab replaced the entry of the match: one step back is the list, not the analysis tab.
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/matches');
+    });
+    expect(router.state.location.search).toEqual(FILTERS);
+    expect(entryIndex(router)).toBe(0);
+  });
+
+  it('goes to the history when the match was opened from elsewhere', async () => {
+    const user = userEvent.setup();
+    const testServices = await synchronised();
+    const router = await renderAppAt(['/dashboard'], testServices);
+    await screen.findByRole('heading', { level: 1 });
+
+    // Opened from the dashboard, where the previous entry is not the list.
+    await act(async () => {
+      await router.navigate({ to: '/matches/$matchId', params: { matchId: ARCHIVED_ID } });
+    });
+    await user.click(await screen.findByRole('link', { name: strings.back }));
+
+    // A new entry for the list with the default filters, not a step back to the dashboard.
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/matches');
+    });
+    expect(router.state.location.search).toEqual(DEFAULT_FILTERS);
+    expect(entryIndex(router)).toBe(2);
+  });
+
+  it('goes to the history when the match is a deep link', async () => {
+    const user = userEvent.setup();
+    const testServices = await synchronised();
+    const { router, history } = await renderMatchDetail(ARCHIVED_ID, testServices);
+
+    await user.click(await screen.findByRole('link', { name: strings.back }));
+
+    // There is no entry before the match to go back to: the list is a new entry.
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/matches');
+    });
+    expect(router.state.location.search).toEqual(DEFAULT_FILTERS);
+    expect(history.location.state.__TSR_index).toBe(1);
+  });
+
+  it('gives the scroll of the page area back on the way back, and starts a new page at the top', async () => {
+    const user = userEvent.setup();
+    const testServices = await synchronised();
+    const router = await renderAppAt([FILTERED_LIST], testServices);
+    const link = await findMatchLink();
+    const main = link.closest('main') ?? expect.unreachable('the list is in the main area');
+
+    // The player scrolls the list, then opens the match.
+    main.scrollTop = 1234;
+    fireEvent.scroll(main);
+    await user.click(link);
+    await waitFor(() => {
+      expect(router.state.location.pathname).toMatch(/^\/matches\/\d+$/);
+    });
+    // A page not visited before starts at the top, not where the list was left.
+    await waitFor(() => {
+      expect(main.scrollTop).toBe(0);
+    });
+
+    await user.click(await screen.findByRole('link', { name: strings.back }));
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/matches');
+    });
+
+    // The list returns where it was left.
+    await waitFor(() => {
+      expect(main.scrollTop).toBe(1234);
+    });
+  });
+
+  it('keeps the scroll of the page when a tab of the match opens', async () => {
+    const user = userEvent.setup();
+    const testServices = await synchronised();
+    const router = await renderAppAt([`/matches/${String(ARCHIVED_ID)}`], testServices);
+    const tab = await screen.findByRole('tab', { name: TAB_NAMES.damage });
+    const main = tab.closest('main') ?? expect.unreachable('the match is in the main area');
+    main.scrollTop = 321;
+    fireEvent.scroll(main);
+    // The router sent `<main>` to the top when the page opened: only what follows is the tab's.
+    scrollMainToTop.mockClear();
+
+    await user.click(tab);
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({ tab: 'damage' });
+    });
+    await settle();
+
+    // A tab is not a new page: the player keeps their place.
+    expect(main.scrollTop).toBe(321);
+    expect(scrollMainToTop).not.toHaveBeenCalled();
+  });
+
+  it('leaves a click with a modifier key to the browser', async () => {
+    const user = userEvent.setup();
+    const testServices = await synchronised();
+    const router = await renderAppAt([FILTERED_LIST], testServices);
+    await user.click(await findMatchLink());
+    const back = await screen.findByRole('link', { name: strings.back });
+    const matchAddress = router.state.location.pathname;
+
+    // Open in a new window: neither a step back nor a navigation of this one. The browser opens the
+    // new window after the page has seen the click; jsdom cannot, so the test cancels that once the
+    // click has gone past the page.
+    document.addEventListener(
+      'click',
+      (event) => {
+        event.preventDefault();
+      },
+      { once: true },
+    );
+    fireEvent.click(back, { ctrlKey: true });
+    await settle();
+
+    expect(router.state.location.pathname).toBe(matchAddress);
+    expect(entryIndex(router)).toBe(1);
   });
 });

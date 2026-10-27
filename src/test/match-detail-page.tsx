@@ -135,7 +135,6 @@ export interface PageStrings {
   readonly unavailable: string;
   readonly invalid: string;
   readonly missing: string;
-  readonly lost: string;
   readonly retry: string;
   readonly win: string;
   readonly loss: string;
@@ -167,7 +166,6 @@ export const STRINGS: Record<Language, PageStrings> = {
     unavailable: 'deadlock-api could not give the detail of this match after several attempts.',
     invalid: 'The detail of this match could not be read.',
     missing: 'The archive of this match is missing: it will be downloaded again.',
-    lost: 'The archive of this match is gone: matches older than 90 days are not downloaded again.',
     retry: 'Retry',
     win: 'Win',
     loss: 'Loss',
@@ -210,7 +208,6 @@ export const STRINGS: Record<Language, PageStrings> = {
       "deadlock-api n'a pas pu fournir le détail de cette partie après plusieurs tentatives.",
     invalid: 'Le détail de cette partie est illisible.',
     missing: "L'archive de cette partie est introuvable : elle sera téléchargée à nouveau.",
-    lost: "L'archive de cette partie a disparu : les parties de plus de 90 jours ne sont plus téléchargées.",
     retry: 'Réessayer',
     win: 'Victoire',
     loss: 'Défaite',

@@ -2,8 +2,12 @@
  * Tests of the dashboard screen, rendered inside the whole application (router, shell, providers) on
  * the development adapters: a synthetic deadlock-api and an in-memory database. The banner has its
  * own tests (`SyncBanner.test.tsx`) and so has the link button (`LinkSteamDialog.test.tsx`): these
- * check that the dashboard puts them where the player needs them, and that the numbers follow the
- * account, the period and the hero.
+ * check that the dashboard puts them where the player needs them, and that it follows the account.
+ *
+ * The matches of the dashboard are synchronised from a history written by hand, so that the results,
+ * the figures and the dates are known. The details of the matches are not downloaded (the history
+ * answers 404 for them), which leaves the review without an analysed match; the tests about its
+ * points serve a review written by hand instead, as the points are all the dashboard reads of it.
  *
  * The texts each language must say are written out in full below, not read from the catalogues: they
  * are what the player reads, and a test that took them from the catalogue would pass whatever the
@@ -11,7 +15,6 @@
  *
  * @packageDocumentation
  */
-import type { QueryClient } from '@tanstack/react-query';
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
@@ -26,22 +29,21 @@ import {
   type RawMatchHistoryRow,
 } from '../../../adapters/dev/fixtures/match-history.fixture';
 import { matchHistoryRequest } from '../../../core/deadlock-api/endpoints';
-import { PAIGE_HERO_ID, type HeroId } from '../../../core/domain/hero';
-import type { Period } from '../../../core/domain/period';
+import { PAIGE_HERO_ID } from '../../../core/domain/hero';
 import { AppError } from '../../../core/errors/app-error';
 import type { Language } from '../../../core/settings/language';
 import { AccountService } from '../../../services/account.service';
-import { MatchesService, type PeriodSummary } from '../../../services/matches.service';
+import type { Review, ReviewRow, ReviewSubject, ReviewView } from '../../../services/review-view';
 import {
   createTestQueryClient,
   createTestServices,
+  type TestServices,
   type TestServicesOptions,
 } from '../../../test/create-test-services';
 import { clickSyncNow, waitUntilIdle } from '../../../test/user-actions';
 import { AppProviders } from '../../app/AppProviders';
 import { createAppRouter } from '../../app/router';
 import { createI18n } from '../../i18n/i18n';
-import { MATCHES_QUERY_KEY } from '../matches/use-matches';
 
 /** Time of the tests: the matches below are dated from it. */
 const NOW = Date.UTC(2026, 9, 14, 12, 0, 0);
@@ -59,6 +61,66 @@ const STREET_BRAWL_GAME_MODE = 4;
 /** The unranked and the ranked match modes of the normal game. */
 const UNRANKED_MATCH_MODE = 1;
 const RANKED_MATCH_MODE = 4;
+
+/** The languages of the interface, for the tests that run in each. */
+const LANGUAGES = ['en', 'fr'] as const satisfies readonly Language[];
+
+/** The texts of the dashboard that depend on the language. */
+const STRINGS = {
+  en: {
+    emptyLatest: 'No Paige match yet.',
+    oneMatch: 'Your last match',
+    threeMatches: 'Your last 3 matches',
+    tenMatches: 'Your last 10 matches',
+    win: 'Win',
+    loss: 'Loss',
+    record: 'Wins',
+    kda: 'Average K / D / A',
+    average: '7.0 / 3.0 / 18.0',
+    loading: 'Computing the review…',
+    weaknesses: 'To work on',
+    strengths: 'Your strengths',
+    noWeakness: 'No recurring weakness',
+    noStrength: 'No recurring strength',
+    weakness: 'weakness',
+    strength: 'strength',
+    reviewEmpty: 'No analysed match yet: the review fills after the next synchronisation.',
+    seeReview: 'See the full review',
+    seeMatches: 'All my matches',
+    reviewTitle: 'Review',
+    matchesTitle: 'Matches',
+    labels: { kda: 'KDA', accuracy: 'Accuracy', lastHits: 'Last hits', denies: 'Denies' },
+    earlyDeaths: 'Deaths in early',
+    netWorthPlace: 'Place in Souls',
+  },
+  fr: {
+    emptyLatest: "Aucune partie de Paige pour l'instant.",
+    oneMatch: 'Ta dernière partie',
+    threeMatches: 'Tes 3 dernières parties',
+    tenMatches: 'Tes 10 dernières parties',
+    win: 'Victoire',
+    loss: 'Défaite',
+    record: 'Victoires',
+    kda: 'K / D / A moyen',
+    average: '7,0 / 3,0 / 18,0',
+    loading: 'Calcul du Bilan…',
+    weaknesses: 'À travailler',
+    strengths: 'Tes points forts',
+    noWeakness: 'Aucun point faible récurrent',
+    noStrength: 'Aucun point fort récurrent',
+    weakness: 'point faible',
+    strength: 'point fort',
+    reviewEmpty:
+      "Aucune partie analysée pour l'instant : le bilan se remplit après la prochaine synchronisation.",
+    seeReview: 'Voir le Bilan complet',
+    seeMatches: 'Toutes mes parties',
+    reviewTitle: 'Bilan',
+    matchesTitle: 'Parties',
+    labels: { kda: 'KDA', accuracy: 'Précision', lastHits: 'Last hits', denies: 'Denies' },
+    earlyDeaths: 'Morts en early',
+    netWorthPlace: 'Place en Âmes',
+  },
+} as const;
 
 /** What a test says about a match it adds to the synthetic history. */
 interface MatchSpec {
@@ -121,7 +183,7 @@ function toRow(spec: MatchSpec): RawMatchHistoryRow {
     ...TEMPLATE_ROW,
     match_id: spec.matchId,
     hero_id: spec.heroId ?? PAIGE_HERO_ID,
-    // An hour earlier than the exact age: no match sits on the edge of a period.
+    // An hour earlier than the exact age: no match sits on the edge of a day.
     start_time: Math.floor(NOW / 1000) - spec.daysAgo * DAY_S - 3_600,
     game_mode: spec.gameMode ?? NORMAL_GAME_MODE,
     match_mode: spec.matchMode ?? UNRANKED_MATCH_MODE,
@@ -133,10 +195,11 @@ function toRow(spec: MatchSpec): RawMatchHistoryRow {
 }
 
 /**
- * The normal-mode Paige matches of the last 7 days: 2 wins out of 3, and 21 kills, 9 deaths and 54
- * assists in all. One of them is ranked: the numbers count both modes.
+ * Three normal-mode Paige matches, newest first: 2 wins out of 3, and 21 kills, 9 deaths and 54
+ * assists in all, which average 7.0 / 3.0 / 18.0. The second one is ranked: the figures count both
+ * modes.
  */
-const RECENT_PAIGE_MATCHES: readonly MatchSpec[] = [
+const THREE_PAIGE_MATCHES: readonly MatchSpec[] = [
   { matchId: 100_000_001, daysAgo: 1, won: true, kills: 9, deaths: 3, assists: 15 },
   {
     matchId: 100_000_002,
@@ -150,11 +213,11 @@ const RECENT_PAIGE_MATCHES: readonly MatchSpec[] = [
   { matchId: 100_000_003, daysAgo: 3, won: false, kills: 6, deaths: 2, assists: 18 },
 ];
 
-/** What the numbers must leave out, though it is recent: a Street Brawl match and another hero. */
-const IGNORED_RECENT_MATCHES: readonly MatchSpec[] = [
+/** What the dashboard must leave out, though it is recent: a Street Brawl match and another hero. */
+const IGNORED_MATCHES: readonly MatchSpec[] = [
   {
     matchId: 100_000_004,
-    daysAgo: 1,
+    daysAgo: 0,
     won: true,
     kills: 40,
     deaths: 0,
@@ -163,7 +226,7 @@ const IGNORED_RECENT_MATCHES: readonly MatchSpec[] = [
   },
   {
     matchId: 100_000_005,
-    daysAgo: 1,
+    daysAgo: 0,
     won: true,
     kills: 20,
     deaths: 0,
@@ -173,14 +236,20 @@ const IGNORED_RECENT_MATCHES: readonly MatchSpec[] = [
 ];
 
 /**
- * Normal-mode Paige matches older than a week: a win 10 days ago, a loss 20 days ago and a win 60
- * days ago (3 kills, 3 deaths and 3 assists each). A longer period holds more of them.
+ * Twelve lost Paige matches, newest first, one a day: two more than the dashboard shows.
+ *
+ * @returns The matches.
  */
-const OLDER_PAIGE_MATCHES: readonly MatchSpec[] = [
-  { matchId: 100_000_006, daysAgo: 10, won: true, kills: 3, deaths: 3, assists: 3 },
-  { matchId: 100_000_007, daysAgo: 20, won: false, kills: 3, deaths: 3, assists: 3 },
-  { matchId: 100_000_008, daysAgo: 60, won: true, kills: 3, deaths: 3, assists: 3 },
-];
+function twelveMatches(): readonly MatchSpec[] {
+  return Array.from({ length: 12 }, (_, index) => ({
+    matchId: 100_000_100 + index,
+    daysAgo: index + 1,
+    won: false,
+    kills: 1,
+    deaths: 1,
+    assists: 1,
+  }));
+}
 
 /**
  * The synthetic deadlock-api, except that the history of the account is the one given. Every match
@@ -206,88 +275,156 @@ function historyOf(matches: readonly MatchSpec[]): FixtureHandler {
 }
 
 /**
- * Render the application on a URL.
+ * Render the application on a URL, on services already built.
  *
- * @param url - The initial URL, e.g. `/dashboard?period=7d`.
+ * @param test - The services of the test.
+ * @param url - The initial URL, e.g. `/dashboard`.
+ * @param language - Language of the interface.
+ * @returns The test services, the query client of the page, the router, and a simulated user.
+ */
+async function renderPage(test: TestServices, url = '/dashboard', language: Language = 'en') {
+  const queryClient = createTestQueryClient(test.logger);
+  const i18n = await createI18n(language);
+  const router = createAppRouter(createMemoryHistory({ initialEntries: [url] }));
+  render(
+    <AppProviders services={test.services} queryClient={queryClient} i18n={i18n}>
+      <RouterProvider router={router} />
+    </AppProviders>,
+  );
+  return { ...test, queryClient, router, user: userEvent.setup() };
+}
+
+/**
+ * Render the application on a URL, on services built for it.
+ *
+ * @param url - The initial URL, e.g. `/dashboard`.
  * @param options - Options of the test services; the clock is fixed at {@link NOW}.
  * @param language - Language of the interface.
- * @returns The test services, the query client of the page, and a simulated user.
+ * @returns What {@link renderPage} returns.
  */
 async function renderDashboard(
   url: string,
   options: TestServicesOptions = {},
   language: Language = 'en',
 ) {
-  const testServices = createTestServices({ now: () => NOW, ...options });
-  const queryClient = createTestQueryClient(testServices.logger);
-  const i18n = await createI18n(language);
-  const router = createAppRouter(createMemoryHistory({ initialEntries: [url] }));
-  render(
-    <AppProviders services={testServices.services} queryClient={queryClient} i18n={i18n}>
-      <RouterProvider router={router} />
-    </AppProviders>,
-  );
-  return { ...testServices, queryClient, user: userEvent.setup() };
+  return renderPage(createTestServices({ now: () => NOW, ...options }), url, language);
 }
 
-/** A tile of the numbers: its label and its value, as the player reads them. */
+/**
+ * Build the services of an account whose history is the given matches, and synchronise it, so that
+ * the matches are stored when the page opens.
+ *
+ * @param matches - The matches of the account, most recent first.
+ * @returns The test services.
+ */
+async function setUp(matches: readonly MatchSpec[]): Promise<TestServices> {
+  const test = createTestServices({ now: () => NOW, handler: historyOf(matches) });
+  await test.services.sync.syncNow('startup');
+  return test;
+}
+
+/**
+ * Render the dashboard of an account whose history is the given matches.
+ *
+ * @param matches - The matches of the account, most recent first.
+ * @param language - Language of the interface.
+ * @returns What {@link renderPage} returns.
+ */
+async function renderSynchronised(matches: readonly MatchSpec[], language: Language = 'en') {
+  return renderPage(await setUp(matches), '/dashboard', language);
+}
+
+/** A tile of the figures: its label and its value, as the player reads them. */
 type Tile = readonly [label: string, value: string];
 
 /**
- * Read the tiles of the numbers, in reading order.
+ * Read the tiles of the figures, in reading order.
  *
- * The space CLDR puts before a percent sign (French writes "67 %") is a no-break space, and which
- * one (U+00A0 or U+202F) depends on the version of ICU that Node ships: both are read as a plain
- * space, so that the tests give the same verdict on every supported Node.
- *
- * @returns A label and a value for each tile; throws when there is none.
+ * @returns A label and a value for each tile.
  */
 function readTiles(): Tile[] {
-  return screen.getAllByRole('term').map((term): Tile => {
+  return screen.queryAllByRole('term').map((term): Tile => {
     const value = term.nextElementSibling?.textContent ?? expect.unreachable('A term has a value');
-    return [term.textContent, value.replace(/[\u00a0\u202f]/g, ' ')];
+    return [term.textContent, value];
   });
 }
 
 /**
- * The tiles the player reads, in English.
+ * The links of the row of results, in the order of the row.
  *
- * @param values - The four values, in the order of the tiles.
- * @returns The tiles.
+ * @param title - The title of the section of the results.
+ * @returns The links.
  */
-function englishTiles(values: readonly [string, string, string, string]): Tile[] {
-  const labels = ['Matches played', 'Wins', 'Win rate', 'Average K / D / A'] as const;
-  return labels.map((label, index): Tile => [label, values[index] ?? expect.unreachable()]);
+function resultLinks(title: string): HTMLElement[] {
+  const section = screen.getByRole('region', { name: title });
+  return within(within(section).getByRole('list')).getAllByRole('link');
 }
 
 /**
- * Wait until the numbers of a period have been read again since the matches last changed.
+ * A row of the review for a point, with no match behind it.
  *
- * The end of a synchronisation invalidates the matches queries, the numbers of the period among
- * them, and the page reads them again: until then the page still shows what it showed before the
- * synchronisation. A test that expects the page to show nothing new (a period without a match) has
- * to wait for that read first, or it would pass whatever the numbers come to be.
- *
- * Call it once the synchronisation is over ({@link waitUntilIdle}): its last notification is what
- * invalidates the query, and it is sent before the synchronisation stops running.
- *
- * @param queryClient - The query client of the page.
- * @param period - The period of the numbers.
- * @param heroId - The hero of the numbers.
+ * @param subject - The point.
+ * @param side - The side of the summary the point is on.
+ * @returns The row.
  */
-async function waitUntilPeriodIsRead(
-  queryClient: QueryClient,
-  period: Period,
-  heroId: HeroId,
-): Promise<void> {
-  await waitFor(() => {
-    const state = queryClient.getQueryState([...MATCHES_QUERY_KEY, 'period', period, heroId]);
-    // Read at least once, up to date (an invalidated query is not until its new answer is in), and
-    // no read going on.
-    expect(state?.status).toBe('success');
-    expect(state?.isInvalidated).toBe(false);
-    expect(state?.fetchStatus).toBe('idle');
-  });
+function rowOf(subject: ReviewSubject, side: 'weakness' | 'strength'): ReviewRow {
+  return {
+    subject,
+    unit: 'deaths',
+    better: 'lower',
+    value: 1.6,
+    count: 18,
+    comparedValue: 1.6,
+    reference: 1.3,
+    difference: { kind: 'absolute', amount: 0.3 },
+    gapWithinNoise: false,
+    weak: 7,
+    strong: 2,
+    marked: 18,
+    side,
+    progress: { before: 1.8, direction: 'better' },
+    matches: [],
+  };
+}
+
+/** A weakness about a metric of the match page, which the review lists on its stats tab. */
+const metricRow = (
+  key: 'kda' | 'accuracy' | 'last_hits' | 'denies',
+  side: 'weakness' | 'strength',
+) => rowOf({ kind: 'metric', key }, side);
+
+/** A weakness about the deaths of a phase, which the review lists on its deaths tab. */
+const deathsRow = rowOf({ kind: 'phase_deaths', phase: 'early' }, 'weakness');
+
+/** A strength about a place among the players, which the review lists on its players tab. */
+const placeRow = rowOf({ kind: 'place', stat: 'netWorth' }, 'strength');
+
+/**
+ * Serve a review written by hand: the dashboard reads the summary of it, and the community data is
+ * complete, so that no download is asked for.
+ *
+ * @param test - The services of the test.
+ * @param summary - The summary of the review.
+ */
+function serveSummary(test: TestServices, summary: Review['summary']): void {
+  const view: ReviewView = {
+    kind: 'ready',
+    review: {
+      summary,
+      community: {
+        kind: 'available',
+        rank: { kind: 'tier', tier: 5 },
+        comparedWith: 'tier_above',
+        itemStats: { kind: 'fresh', fetchedAt: NOW },
+        fallbackMatches: 0,
+        missingMatches: 0,
+        unusableMatches: 0,
+        stale: false,
+        fetchedAt: NOW,
+      },
+    } as Review,
+  };
+  vi.spyOn(test.services.review, 'getReview').mockResolvedValue(view);
 }
 
 /** Lets a test hold the answer of a read until it decides to release it. */
@@ -322,16 +459,17 @@ describe('DashboardPage', () => {
       dialog: 'Lier ton compte Steam',
     },
   ] as const)(
-    'invites a new user to link their Steam account, in $language',
+    'invites to link an account, in $language',
     async ({ language, heading, title, description, button, dialog }) => {
       const { http, user } = await renderDashboard('/dashboard', { accountId: null }, language);
 
       expect(await screen.findByRole('heading', { level: 2, name: title })).toBeInTheDocument();
       expect(screen.getByRole('heading', { level: 1, name: heading })).toBeInTheDocument();
       expect(screen.getByText(description)).toBeInTheDocument();
-      // Nothing to synchronise and nothing to count: only the way to link an account.
+      // Nothing to synchronise, no results and no review: only the way to link an account.
       expect(screen.queryByRole('term')).not.toBeInTheDocument();
       expect(screen.queryByRole('status')).not.toBeInTheDocument();
+      expect(screen.queryByRole('list')).not.toBeInTheDocument();
       expect(http.requests).toEqual([]);
 
       // The button is the real one: it opens the dialog of the sign-in. The sidebar has a button of
@@ -372,153 +510,252 @@ describe('DashboardPage', () => {
     expect(screen.queryByRole('term')).not.toBeInTheDocument();
   });
 
-  it('shows the synchronisation and the numbers of the period once linked', async () => {
-    const { services, user } = await renderDashboard('/dashboard', {
-      handler: historyOf([...RECENT_PAIGE_MATCHES, ...IGNORED_RECENT_MATCHES]),
-    });
+  it('shows the synchronisation banner once an account is linked', async () => {
+    await renderDashboard('/dashboard');
 
-    // Before the first synchronisation the banner says so, and the period has nothing in it.
     expect(await screen.findByText('Not synchronised yet.')).toBeInTheDocument();
-    expect(await screen.findByText('No match in this period.')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Link my Steam account' })).not.toBeInTheDocument();
-
-    await clickSyncNow(user);
-
-    // Three Paige matches of the normal game: the Street Brawl match and the other hero's are left out.
-    await waitFor(() => {
-      expect(readTiles()).toEqual(englishTiles(['3', '2', '67%', '7.0 / 3.0 / 18.0']));
-    });
-    expect(await screen.findByText(/^Last synchronisation: /)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sync now' })).toBeInTheDocument();
+    // The invitation is for a user without an account.
+    expect(screen.queryByRole('button', { name: 'Link my Steam account' })).not.toBeInTheDocument();
+  });
+
+  it('ignores the period and the hero of an old address', async () => {
+    await renderDashboard('/dashboard?period=7d&hero=1');
+
+    expect(await screen.findByText('Not synchronised yet.')).toBeInTheDocument();
+    expect(screen.queryByRole('term')).not.toBeInTheDocument();
+  });
+
+  it.each(LANGUAGES)('says there is no Paige match yet, in %s', async (language) => {
+    const strings = STRINGS[language];
+    // A match of another hero and one of Street Brawl are not Paige matches of the normal game.
+    await renderSynchronised(IGNORED_MATCHES, language);
+
+    expect(await screen.findByText(strings.emptyLatest)).toBeInTheDocument();
+    // No row of results and no figures of nothing.
+    expect(screen.queryByRole('list')).not.toBeInTheDocument();
+    expect(screen.queryByRole('term')).not.toBeInTheDocument();
+  });
+
+  it.each(LANGUAGES)(
+    'shows the results of the last matches newest first, each opening its match, in %s',
+    async (language) => {
+      const strings = STRINGS[language];
+      const { user, router } = await renderSynchronised(
+        [...IGNORED_MATCHES, ...THREE_PAIGE_MATCHES],
+        language,
+      );
+
+      await screen.findByRole('region', { name: strings.threeMatches });
+      const links = resultLinks(strings.threeMatches);
+      // Newest first: a win, a win, then the loss. The words are the ones a screen reader says, as
+      // the letter of the badge is for the eyes.
+      expect(links).toHaveLength(3);
+      expect(links.map((link) => link.getAttribute('href'))).toEqual([
+        '/matches/100000001',
+        '/matches/100000002',
+        '/matches/100000003',
+      ]);
+      // Each link says which match it opens: the result, then the day and time of the match.
+      const startOf = (spec: MatchSpec) =>
+        new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(
+          toRow(spec).start_time * 1000,
+        );
+      const expected = [
+        [strings.win, THREE_PAIGE_MATCHES[0]],
+        [strings.win, THREE_PAIGE_MATCHES[1]],
+        [strings.loss, THREE_PAIGE_MATCHES[2]],
+      ] as const;
+      expected.forEach(([word, spec], index) => {
+        expect(links[index]).toHaveAccessibleName(
+          expect.stringContaining(`${word}, ${startOf(spec ?? expect.unreachable())}`),
+        );
+      });
+
+      // The link really opens the match.
+      await user.click(links[2] ?? expect.unreachable());
+      expect(router.state.location.pathname).toBe('/matches/100000003');
+    },
+  );
+
+  it('shows the matches a synchronisation stores, without reopening the page', async () => {
+    // The history of the account grows between the two synchronisations.
+    let history: readonly MatchSpec[] = THREE_PAIGE_MATCHES.slice(0, 1);
+    const handler = (request: Parameters<FixtureHandler>[0]) => historyOf(history)(request);
+    const test = createTestServices({ now: () => NOW, handler });
+    await test.services.sync.syncNow('startup');
+    const { user } = await renderPage(test);
+
+    expect(await screen.findByRole('region', { name: STRINGS.en.oneMatch })).toBeInTheDocument();
+    expect(readTiles()).toEqual([
+      [STRINGS.en.record, '1 / 1'],
+      [STRINGS.en.kda, '9.0 / 3.0 / 15.0'],
+    ]);
+
+    history = THREE_PAIGE_MATCHES;
+    await clickSyncNow(user);
+    await waitUntilIdle(test.services.sync);
+
+    // The results and the figures follow the synchronisation: the same page now sums up three.
     expect(
-      screen.getByRole('heading', { level: 2, name: 'Paige, last 30 days' }),
+      await screen.findByRole('region', { name: STRINGS.en.threeMatches }),
     ).toBeInTheDocument();
-    expect(screen.getByText('Normal-mode matches, unranked and ranked.')).toBeInTheDocument();
-    expect(screen.queryByText('No match in this period.')).not.toBeInTheDocument();
-    await waitUntilIdle(services.sync);
+    expect(screen.queryByRole('region', { name: STRINGS.en.oneMatch })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(readTiles()).toEqual([
+        [STRINGS.en.record, '2 / 3'],
+        [STRINGS.en.kda, STRINGS.en.average],
+      ]);
+    });
   });
 
   it.each([
-    { period: '7d', days: 7, values: ['3', '2', '67%', '7.0 / 3.0 / 18.0'] },
-    { period: '30d', days: 30, values: ['5', '3', '60%', '5.4 / 3.0 / 12.0'] },
-    { period: '90d', days: 90, values: ['6', '4', '67%', '5.0 / 3.0 / 10.5'] },
-  ] as const)('follows the period of the address: $period', async ({ period, days, values }) => {
-    const { services, user } = await renderDashboard(`/dashboard?period=${period}`, {
-      handler: historyOf([...RECENT_PAIGE_MATCHES, ...OLDER_PAIGE_MATCHES]),
-    });
+    { language: 'en', title: 'Your last match' },
+    { language: 'fr', title: 'Ta dernière partie' },
+  ] as const)('titles one match by its count, in $language', async ({ language, title }) => {
+    await renderSynchronised(THREE_PAIGE_MATCHES.slice(0, 1), language);
 
-    await clickSyncNow(user);
-
-    await waitFor(() => {
-      expect(readTiles()).toEqual(englishTiles(values));
-    });
-    expect(
-      screen.getByRole('heading', { level: 2, name: `Paige, last ${String(days)} days` }),
-    ).toBeInTheDocument();
-    await waitUntilIdle(services.sync);
+    expect(await screen.findByRole('region', { name: title })).toBeInTheDocument();
+    expect(resultLinks(title)).toHaveLength(1);
   });
 
-  it('follows the hero of the address', async () => {
-    const { services, user } = await renderDashboard(
-      `/dashboard?hero=${String(INFERNUS_HERO_ID)}`,
-      {
-        handler: historyOf([...RECENT_PAIGE_MATCHES, ...IGNORED_RECENT_MATCHES]),
-      },
-    );
-
-    await clickSyncNow(user);
-
-    // The one normal-mode match of Infernus, and the name of the hero comes from the catalogue.
-    await waitFor(() => {
-      expect(readTiles()).toEqual(englishTiles(['1', '1', '100%', '20.0 / 0.0 / 20.0']));
-    });
-    expect(
-      await screen.findByRole('heading', { level: 2, name: 'Infernus, last 30 days' }),
-    ).toBeInTheDocument();
-    await waitUntilIdle(services.sync);
-  });
-
-  it('names a hero the catalogue does not know by its id', async () => {
-    await renderDashboard('/dashboard?hero=999');
+  it.each(LANGUAGES)('titles fewer than 10 matches by their count, in %s', async (language) => {
+    await renderSynchronised(THREE_PAIGE_MATCHES, language);
 
     expect(
-      await screen.findByRole('heading', { level: 2, name: 'Hero #999, last 30 days' }),
-    ).toBeInTheDocument();
-    expect(await screen.findByText('No match in this period.')).toBeInTheDocument();
-  });
-
-  it('says when the period has no match', async () => {
-    const { services, queryClient, user } = await renderDashboard('/dashboard?period=7d', {
-      handler: historyOf(OLDER_PAIGE_MATCHES),
-    });
-    // Before the synchronisation there is no match at all: the numbers are already read.
-    expect(await screen.findByText('No match in this period.')).toBeInTheDocument();
-
-    await clickSyncNow(user);
-
-    expect(await screen.findByText(/^Last synchronisation: /)).toBeInTheDocument();
-    await waitUntilIdle(services.sync);
-    // The matches are stored, but none is in the last 7 days: a sentence, not a row of zeros. The
-    // page must have read the numbers again since the matches arrived: until it has, it shows what
-    // it showed before the synchronisation, and the assertions below would hold whatever it counts.
-    await expect(services.matches.listRecent(10)).resolves.toMatchObject({ total: 3 });
-    await waitUntilPeriodIsRead(queryClient, '7d', PAIGE_HERO_ID);
-    expect(screen.getByText('No match in this period.')).toBeInTheDocument();
-    expect(screen.queryByRole('term')).not.toBeInTheDocument();
-    expect(
-      screen.getByRole('heading', { level: 2, name: 'Paige, last 7 days' }),
+      await screen.findByRole('region', { name: STRINGS[language].threeMatches }),
     ).toBeInTheDocument();
   });
 
-  it('says the numbers are loading', async () => {
-    const { answered, release } = gate<PeriodSummary>();
-    vi.spyOn(MatchesService.prototype, 'getPeriodSummary').mockReturnValue(answered);
-    await renderDashboard('/dashboard');
+  it('shows the 10 latest matches and no more', async () => {
+    await renderSynchronised(twelveMatches());
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Loading…');
-    // The banner does not wait for the numbers.
-    expect(await screen.findByText('Not synchronised yet.')).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: STRINGS.en.tenMatches })).toBeInTheDocument();
+    const links = resultLinks(STRINGS.en.tenMatches);
+    expect(links).toHaveLength(10);
+    expect(links[0]).toHaveAttribute('href', '/matches/100000100');
+    expect(links[9]).toHaveAttribute('href', '/matches/100000109');
+  });
+
+  it.each(LANGUAGES)(
+    'shows the wins and the average K/D/A of the last matches, in %s',
+    async (language) => {
+      const strings = STRINGS[language];
+      await renderSynchronised([...IGNORED_MATCHES, ...THREE_PAIGE_MATCHES], language);
+
+      await screen.findByRole('region', { name: strings.threeMatches });
+      // Two wins out of three, and the averages with one decimal in the writing of the language.
+      expect(readTiles()).toEqual([
+        [strings.record, '2 / 3'],
+        [strings.kda, strings.average],
+      ]);
+    },
+  );
+
+  it.each(LANGUAGES)('shows the figures before the review is computed, in %s', async (language) => {
+    const strings = STRINGS[language];
+    const test = await setUp(THREE_PAIGE_MATCHES);
+    const { answered, release } = gate<ReviewView>();
+    vi.spyOn(test.services.review, 'getReview').mockReturnValue(answered);
+    await renderPage(test, '/dashboard', language);
+
+    // The review is not there yet, and the page says so; the results and the figures do not wait
+    // for it.
+    expect(await screen.findByRole('region', { name: strings.threeMatches })).toBeInTheDocument();
+    expect(readTiles()).toHaveLength(2);
+    expect(screen.getByText(strings.loading)).toBeInTheDocument();
 
     release({ kind: 'empty' });
-    expect(await screen.findByText('No match in this period.')).toBeInTheDocument();
-    expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
+    expect(await screen.findByText(strings.reviewEmpty)).toBeInTheDocument();
+    expect(screen.queryByText(strings.loading)).not.toBeInTheDocument();
   });
 
-  it('says why the numbers cannot be shown when they cannot be read', async () => {
-    vi.spyOn(MatchesService.prototype, 'getPeriodSummary').mockRejectedValue(
-      new AppError('storage', 'The matches cannot be summed up'),
-    );
-    await renderDashboard('/dashboard');
+  it.each(LANGUAGES)(
+    'shows three weaknesses and three strengths of the review, each opening its tab, in %s',
+    async (language) => {
+      const strings = STRINGS[language];
+      const test = await setUp(THREE_PAIGE_MATCHES);
+      // Four of each: the dashboard keeps the first three, in the order the review gives them.
+      serveSummary(test, {
+        weaknesses: [
+          metricRow('last_hits', 'weakness'),
+          deathsRow,
+          metricRow('kda', 'weakness'),
+          metricRow('accuracy', 'weakness'),
+        ],
+        strengths: [
+          placeRow,
+          metricRow('denies', 'strength'),
+          metricRow('accuracy', 'strength'),
+          metricRow('kda', 'strength'),
+        ],
+      });
+      await renderPage(test, '/dashboard', language);
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Local data could not be read or saved.',
-    );
-    // The rest of the screen is still there, and no number is made up.
-    expect(await screen.findByText('Not synchronised yet.')).toBeInTheDocument();
-    expect(screen.queryByRole('term')).not.toBeInTheDocument();
-  });
-
-  it('speaks French, with the numbers written the French way', async () => {
-    const { services, user } = await renderDashboard(
-      '/dashboard',
-      { handler: historyOf([...RECENT_PAIGE_MATCHES, ...IGNORED_RECENT_MATCHES]) },
-      'fr',
-    );
-
-    await clickSyncNow(user, 'Synchroniser');
-
-    await waitFor(() => {
-      expect(readTiles()).toEqual([
-        ['Parties jouées', '3'],
-        ['Victoires', '2'],
-        ['Taux de victoire', '67 %'],
-        ['K / D / A moyen', '7,0 / 3,0 / 18,0'],
+      const weaknesses = await screen.findByRole('region', { name: strings.weaknesses });
+      const strengths = screen.getByRole('region', { name: strings.strengths });
+      // What a row says (its arrow, its name, the hidden word of its side) and where it leads.
+      const linksOf = (section: HTMLElement) =>
+        within(section)
+          .getAllByRole('listitem')
+          .map((item) => [item.textContent, within(item).getByRole('link').getAttribute('href')]);
+      expect(linksOf(weaknesses)).toEqual([
+        [`▼${strings.labels.lastHits} ${strings.weakness}`, '/review?tab=stats'],
+        [`▼${strings.earlyDeaths} ${strings.weakness}`, '/review?tab=deaths'],
+        [`▼${strings.labels.kda} ${strings.weakness}`, '/review?tab=stats'],
       ]);
-    });
+      expect(linksOf(strengths)).toEqual([
+        [`▲${strings.netWorthPlace} ${strings.strength}`, '/review?tab=players'],
+        [`▲${strings.labels.denies} ${strings.strength}`, '/review?tab=stats'],
+        [`▲${strings.labels.accuracy} ${strings.strength}`, '/review?tab=stats'],
+      ]);
+    },
+  );
+
+  it.each(LANGUAGES)('shows only the points the review has, in %s', async (language) => {
+    const strings = STRINGS[language];
+    const test = await setUp(THREE_PAIGE_MATCHES);
+    serveSummary(test, { weaknesses: [metricRow('kda', 'weakness')], strengths: [] });
+    await renderPage(test, '/dashboard', language);
+
+    const weaknesses = await screen.findByRole('region', { name: strings.weaknesses });
+    expect(within(weaknesses).getAllByRole('link')).toHaveLength(1);
+    // A side with no point says so, as the review does, and has no empty list.
+    const strengths = screen.getByRole('region', { name: strings.strengths });
+    expect(within(strengths).getByText(strings.noStrength)).toBeInTheDocument();
+    expect(within(strengths).queryByRole('list')).not.toBeInTheDocument();
+    expect(screen.queryByText(strings.noWeakness)).not.toBeInTheDocument();
+  });
+
+  it.each(LANGUAGES)('says the review is empty, in %s', async (language) => {
+    const strings = STRINGS[language];
+    await renderSynchronised(THREE_PAIGE_MATCHES, language);
+
+    // The details are not downloaded, so no match is analysed: the review has nothing to sum up.
+    expect(await screen.findByText(strings.reviewEmpty)).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: strings.weaknesses })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: strings.strengths })).not.toBeInTheDocument();
+  });
+
+  it.each(LANGUAGES)('links to the full review and to all matches, in %s', async (language) => {
+    const strings = STRINGS[language];
+    const { user } = await renderSynchronised(THREE_PAIGE_MATCHES, language);
+
+    const main = within(await screen.findByRole('main'));
+    await user.click(await main.findByRole('link', { name: strings.seeReview }));
     expect(
-      screen.getByRole('heading', { level: 2, name: 'Paige, 30 derniers jours' }),
+      await screen.findByRole('heading', { level: 1, name: strings.reviewTitle }),
     ).toBeInTheDocument();
-    expect(screen.getByText('Parties en mode normal, classées ou non.')).toBeInTheDocument();
-    await waitUntilIdle(services.sync);
+
+    // Back to the dashboard, then to the history.
+    await user.click(
+      within(screen.getByRole('navigation')).getByRole('link', {
+        name: language === 'en' ? 'Dashboard' : 'Tableau de bord',
+      }),
+    );
+    await user.click(await main.findByRole('link', { name: strings.seeMatches }));
+    expect(
+      await screen.findByRole('heading', { level: 1, name: strings.matchesTitle }),
+    ).toBeInTheDocument();
   });
 });

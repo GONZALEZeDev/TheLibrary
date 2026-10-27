@@ -5,14 +5,16 @@
  *
  * Both go through `ReviewService`. Reading the review never downloads the community data: the page
  * asks for it with {@link useReviewCommunityRefresh} when it opens, and the review is read again once
- * the data is in the cache. Query keys never contain an account id: the service resolves the account
+ * the data is in the cache. {@link useReviewWithCommunity} puts the two together for the screens
+ * that show the review. Query keys never contain an account id: the service resolves the account
  * itself, and keys are logged when a query fails.
  *
  * @packageDocumentation
  */
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import type { ReviewCommunity } from '../../../services/review-view';
 import { useServices } from '../../app/ServicesContext';
-import { DETAILS_QUERY_KEY } from '../matches/use-matches';
+import { DETAILS_QUERY_KEY, useRefreshOnSync } from '../matches/use-matches';
 
 /**
  * The key of the review. It sits under {@link DETAILS_QUERY_KEY}: whatever refreshes the match
@@ -106,4 +108,57 @@ export function useReviewCommunityRefresh(enabled: boolean) {
     enabled,
     retry: false,
   });
+}
+
+/**
+ * Tell whether the review lacks the comparison with the tier above, or holds it old: the screen then
+ * asks for it.
+ *
+ * The item statistics are part of it: a download cut short after the cohorts (the budget of the
+ * minute is spent in that order) leaves complete cohorts and no item statistics, and the cohorts
+ * alone would not call for another download for a day. A download that cannot give them (no
+ * resistance item to ask for) leaves the review saying there are no items, so the screen does not ask
+ * for what cannot come. Even a review that stays due after a download cannot loop: the download
+ * is asked for once when it becomes needed, and not again while it stays needed (the review read
+ * again after it does not change that), only the next time the screen opens.
+ *
+ * @param community - Where the comparison stands.
+ * @returns `true` when none of the matches is compared, when some are not (those with data too thin
+ *   to compare with included: their data is old in its turn one day, and a download renews it), when
+ *   any of the data compared with is a day old or more, or when the item statistics are missing or a
+ *   day old.
+ */
+function lacksCommunityData(community: ReviewCommunity): boolean {
+  return (
+    community.itemStats.kind === 'missing' ||
+    community.itemStats.kind === 'stale' ||
+    community.kind === 'missing' ||
+    community.stale ||
+    community.missingMatches > 0 ||
+    community.unusableMatches > 0
+  );
+}
+
+/**
+ * The review of the linked account, kept up to date the way a screen that shows it needs: read again
+ * whenever a synchronisation runs or advances (it stores and analyses the matches the review sums
+ * up), and with the comparison with the tier above downloaded when the review lacks it.
+ *
+ * The download is asked for once the review has been read, and only for a review that lacks the
+ * comparison. Asked for from the first render, the read that follows the download would join the
+ * first read of the review and not start another (see {@link useReviewCommunityRefresh}).
+ *
+ * @returns The TanStack Query result of the review (see {@link useReview}), and the one of the
+ *   download of the comparison, which stays idle while the review is not read or needs nothing.
+ */
+export function useReviewWithCommunity() {
+  const review = useReview();
+  // A synchronisation stores and analyses matches, which the review sums up: the review is read
+  // again whenever one runs or advances.
+  useRefreshOnSync();
+  const view = review.data;
+  const refresh = useReviewCommunityRefresh(
+    view?.kind === 'ready' && lacksCommunityData(view.review.community),
+  );
+  return { review, refresh };
 }

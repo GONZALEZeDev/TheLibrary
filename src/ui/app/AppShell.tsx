@@ -8,6 +8,7 @@ import { Link, Outlet } from '@tanstack/react-router';
 import { BookOpen, ClipboardList, History, LayoutDashboard, Settings } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { SidebarAccount } from '../features/account/SidebarAccount';
+import { MAIN_SCROLL_ATTRIBUTES } from './history-return';
 
 /**
  * Look of the sidebar links, spread on each `<Link>`. Colours are set only in the active and
@@ -64,7 +65,9 @@ export function AppShell() {
         {/* The account closes the sidebar, under the navigation whose last link is the settings. */}
         <SidebarAccount />
       </aside>
-      <main className="flex-1 overflow-y-auto px-10 py-8">
+      {/* `<main>` is the element that scrolls every page: the attribute lets the router save and
+          restore its scroll (see `createAppRouter`). */}
+      <main {...MAIN_SCROLL_ATTRIBUTES} className="flex-1 overflow-y-auto px-10 py-8">
         <Outlet />
       </main>
     </div>

@@ -1,7 +1,7 @@
 /**
  * TanStack Query hooks of the match history screen, the dashboard and the header of the match page:
- * the stored matches, one match of the history, the numbers of a period, the hero names and assets
- * and the state of the synchronisation.
+ * the whole history under a filter, one match of the history, the latest matches of a hero, the hero
+ * names and assets and the state of the synchronisation.
  *
  * Every query goes through a service and reads local data, except the hero names and assets,
  * downloaded only when their weekly cache is stale: they work offline. Query keys never contain an
@@ -9,15 +9,12 @@
  *
  * @packageDocumentation
  */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useSyncExternalStore } from 'react';
 import type { Hero, HeroId } from '../../../core/domain/hero';
 import type { MatchId } from '../../../core/domain/match';
-import type { Period } from '../../../core/domain/period';
+import type { HistoryFilter } from '../../../services/matches.service';
 import { useServices } from '../../app/ServicesContext';
-
-/** Number of matches shown in the list. */
-export const RECENT_MATCHES_LIMIT = 100;
 
 /** Prefix of every query about stored matches. */
 export const MATCHES_QUERY_KEY = ['matches'] as const;
@@ -54,6 +51,16 @@ export const HEROES_QUERY_KEY = ['heroes'] as const;
 const HERO_CATALOGUE_STALE_TIME_MS = 60 * 60_000;
 
 /**
+ * How long the read of a history stays in the cache once no screen shows it: an hour. The list is
+ * left for a match, and the player can read it for a long time (its timeline, its players); when
+ * they go back, the list must be drawn at once from the cache, at its full height, for the router to
+ * give the scroll position back (it sets it right when the page is drawn, and would find a list
+ * still loading, too short to scroll). The default of five minutes is shorter than a visit. The
+ * cache holds one entry for each filter picked, and an account change resets them all.
+ */
+const HISTORY_GC_TIME_MS = 60 * 60_000;
+
+/**
  * Shortest time between two refreshes caused by the progress of the detail queue. The queue
  * reports each match it records, and it can record several in a second: refreshing the list of
  * matches and the counts at every one would read the database far more often than a person can
@@ -62,15 +69,28 @@ const HERO_CATALOGUE_STALE_TIME_MS = 60 * 60_000;
 const DETAIL_REFRESH_INTERVAL_MS = 1000;
 
 /**
- * The most recent matches of the linked account.
+ * The whole history of the linked account under a filter, newest first, for the match list.
  *
- * @returns The TanStack Query result holding the matches and their total count.
+ * The key holds the filter and sits under {@link MATCHES_QUERY_KEY}, so each filter keeps its own
+ * cache entry, and whatever refreshes the matches (a synchronisation, the detail queue, an account
+ * change) refreshes every one of them.
+ *
+ * A filter that has not been read yet shows the list of the previous filter until its own read ends
+ * (`placeholderData: keepPreviousData`, flagged by `isPlaceholderData`): the screen never falls back
+ * to its loading state between two filters, so the filters stay on screen and the radio just picked
+ * keeps the focus. An account change resets these queries, which leaves no previous list to show.
+ *
+ * @param filter - The hero and the result to keep.
+ * @returns The TanStack Query result holding `no_account`, or the matches that fit the filter and
+ *   the unfiltered number of matches of the account.
  */
-export function useRecentMatches() {
+export function useHistory(filter: HistoryFilter) {
   const { matches } = useServices();
   return useQuery({
-    queryKey: [...MATCHES_QUERY_KEY, 'recent'],
-    queryFn: () => matches.listRecent(RECENT_MATCHES_LIMIT),
+    queryKey: [...MATCHES_QUERY_KEY, 'history', filter.hero, filter.result],
+    queryFn: () => matches.listHistory(filter),
+    placeholderData: keepPreviousData,
+    gcTime: HISTORY_GC_TIME_MS,
   });
 }
 
@@ -94,20 +114,20 @@ export function useMatchSummary(matchId: MatchId) {
 }
 
 /**
- * The numbers of a hero over a period, for the dashboard tiles.
+ * The latest normal-mode matches of a hero, with their figures, for the dashboard.
  *
  * The key sits under {@link MATCHES_QUERY_KEY}, so whatever refreshes the matches (a
- * synchronisation, the detail queue, an account change) refreshes the tiles too.
+ * synchronisation, the detail queue, an account change) refreshes the dashboard too.
  *
- * @param period - The period to sum up.
  * @param heroId - The hero.
- * @returns The TanStack Query result holding the summary: `no_account`, `empty` or the `stats`.
+ * @param limit - Maximum number of matches.
+ * @returns The TanStack Query result holding `no_account`, or the matches and their figures.
  */
-export function usePeriodSummary(period: Period, heroId: HeroId) {
+export function useLatestMatches(heroId: HeroId, limit: number) {
   const { matches } = useServices();
   return useQuery({
-    queryKey: [...MATCHES_QUERY_KEY, 'period', period, heroId],
-    queryFn: () => matches.getPeriodSummary(period, heroId),
+    queryKey: [...MATCHES_QUERY_KEY, 'latest', heroId, limit],
+    queryFn: () => matches.listLatest(heroId, limit),
   });
 }
 

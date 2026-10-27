@@ -17,14 +17,21 @@
       "title": "Link your Steam account",
       "description": "Link your Steam account so TheLibrary can analyse your matches."
     },
+    "latest": {
+      "title_one": "Your last match",
+      "title_other": "Your last {{count}} matches",
+      "empty": "No Paige match yet."
+    },
     "stats": {
-      "title": "{{hero}}, last {{days}} days",
-      "scope": "Normal-mode matches, unranked and ranked.",
-      "matches": "Matches played",
-      "wins": "Wins",
-      "winRate": "Win rate",
-      "kda": "Average K / D / A",
-      "empty": "No match in this period."
+      "record": "Wins",
+      "kda": "Average K / D / A"
+    },
+    "points": {
+      "loading": "Computing the review…"
+    },
+    "links": {
+      "review": "See the full review",
+      "matches": "All my matches"
     }
   },
   "result": {
@@ -42,10 +49,25 @@
       "description": "Your match history will appear here once a Steam account is linked."
     },
     "loading": "Loading the matches…",
-    "count": "The {{shown}} most recent of your {{total}} matches.",
+    "filters": {
+      "label": "Filters",
+      "result": {
+        "all": "All",
+        "win": "Wins",
+        "loss": "Losses"
+      },
+      "hero": {
+        "paige": "Paige",
+        "all": "All heroes"
+      }
+    },
+    "filteredEmpty": "No match fits these filters.",
+    "day": {
+      "today": "Today",
+      "yesterday": "Yesterday"
+    },
     "table": {
-      "caption": "Most recent matches",
-      "date": "Date",
+      "time": "Time",
       "type": "Type",
       "hero": "Hero",
       "result": "Result",
@@ -55,12 +77,13 @@
       "win": "Win",
       "loss": "Loss",
       "unknownHero": "Hero #{{id}}",
+      "notArchived": "not archived",
       "detailStatus": {
         "ready": "Archived",
         "waiting": "Waiting",
         "unavailable": "Unavailable",
         "invalid": "Invalid",
-        "evicted": "Removed (storage)"
+        "evicted": "Archive removed"
       }
     },
     "sync": {
@@ -69,7 +92,7 @@
       "noAccount": "No Steam account is linked.",
       "never": "Not synchronised yet.",
       "lastSync": "Last synchronisation: {{time}}.",
-      "newMatches": "New matches: {{number}}.",
+      "newMatches": "New matches: {{number, number}}.",
       "upToDate": "History refreshed from Steam.",
       "partial": "History possibly incomplete: deadlock-api only knows the matches it collected itself.",
       "budget": "Request limit reached for now. History last downloaded: {{time}}.",
@@ -77,8 +100,8 @@
       "paused": "deadlock-api asked to slow down: synchronisation paused until {{time}}.",
       "protected": "This account's data is private on deadlock-api: automatic synchronisation is stopped.",
       "failed": "The last synchronisation failed: {{reason}}",
-      "details": "Paige match details: {{archived}} archived, {{waiting}} waiting, {{unavailable}} unavailable.",
-      "detailsInvalid": "{{count}} invalid.",
+      "details": "Paige match details: {{archived, number}} archived, {{waiting, number}} waiting, {{unavailable, number}} unavailable.",
+      "detailsInvalid": "{{count, number}} invalid.",
       "detailsStopped": "Match details cannot be saved right now: {{reason}}"
     }
   },
@@ -91,9 +114,8 @@
     "unavailable": "deadlock-api could not give the detail of this match after several attempts.",
     "invalid": "The detail of this match could not be read.",
     "missing": "The archive of this match is missing: it will be downloaded again.",
-    "lost": "The archive of this match is gone: matches older than 90 days are not downloaded again.",
     "evicted": "This match's archive was removed to free space: it is being downloaded again.",
-    "evictedLost": "This match's archive was removed to free space, and matches older than 90 days are not downloaded again.",
+    "evictedLost": "This match's archive is no longer on this PC, and matches older than 90 days are not downloaded again.",
     "retry": "Retry",
     "tabs": {
       "label": "Match sections",
@@ -437,10 +459,47 @@
       "linkedOn": "Linked on {{date}}.",
       "notLinked": "No Steam account is linked."
     },
+    "sync": {
+      "title": "Synchronisation",
+      "description": "Your matches sync at start-up, then every 13 minutes."
+    },
+    "storage": {
+      "title": "Storage",
+      "description": "Your match archives stay on this PC. Past the limit, the oldest are removed; their figures stay.",
+      "used": "{{used}} used of {{cap}}",
+      "capLabel": "Limit",
+      "capacity_one": "About {{count, number}} match fits in this limit.",
+      "capacity_other": "About {{count, number}} matches fit in this limit.",
+      "protected": "The archives of your last 90 days and of your last 40 matches are never removed.",
+      "confirm": {
+        "title": "Lower the limit?",
+        "body_one": "About {{count, number}} archive older than 90 days will be removed ({{size}}). Its figures stay, but its timeline, damage and players will not come back.",
+        "body_other": "About {{count, number}} archives older than 90 days will be removed ({{size}}). Their figures stay, but their timeline, damage and players will not come back.",
+        "accept": "Remove and lower the limit",
+        "cancel": "Cancel"
+      },
+      "saving": "Saving…"
+    },
     "language": {
       "title": "Language",
       "description": "Choose the language of the interface.",
       "saving": "Saving…"
+    },
+    "diagnostics": {
+      "title": "Diagnostics",
+      "description": "The log helps understand a problem. It never holds your account id.",
+      "debug": "Detailed log",
+      "debugHint": "Adds the debug lines to the log. Turn it on only to look into a problem.",
+      "openFolder": "Open the log folder",
+      "openFailed": "The log folder could not be opened."
+    },
+    "about": {
+      "title": "About",
+      "version": "Version {{version}}",
+      "licence": "Free software under the MIT licence.",
+      "credit": "Match data comes from deadlock-api.com.",
+      "valve": "TheLibrary is not affiliated with or endorsed by Valve.",
+      "privacy": "Your data stays on this PC. The app only contacts deadlock-api (match data and images) and Steam, to link your account."
     }
   },
   "account": {

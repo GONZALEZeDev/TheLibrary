@@ -24,7 +24,7 @@ const isDebugBuild = process.env.TAURI_ENV_DEBUG === 'true';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  // Replaced in the code at build time (declared in src/main.tsx).
+  // Replaced in the code at build time (declared in src/ui/app/app-info.ts).
   define: { __APP_VERSION__: JSON.stringify(version) },
   // Keep Rust/Tauri errors visible in the terminal.
   clearScreen: false,

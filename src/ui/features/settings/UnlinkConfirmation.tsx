@@ -9,7 +9,8 @@
 import { LoaderCircle } from 'lucide-react';
 import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
-import { BUTTON_CLASSES, DIALOG_ACTIONS_CLASS } from '../../components/button-styles';
+import { Button } from '../../components/Button';
+import { DIALOG_ACTIONS_CLASS } from '../../components/button-styles';
 import { focusOnMount } from '../../components/focus-on-mount';
 
 /** Props of {@link UnlinkConfirmation}. */
@@ -56,24 +57,17 @@ export function UnlinkConfirmation({ running, onCancel, onConfirm }: UnlinkConfi
         </p>
       )}
       <div className={DIALOG_ACTIONS_CLASS}>
-        <button
-          type="button"
-          aria-describedby={warningId}
-          disabled={running}
-          onClick={onCancel}
-          className={BUTTON_CLASSES.subtle}
-        >
+        <Button look="subtle" aria-describedby={warningId} disabled={running} onClick={onCancel}>
           {t('account.link.cancel')}
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          look="destructive"
           aria-describedby={warningId}
           disabled={running}
           onClick={onConfirm}
-          className={BUTTON_CLASSES.destructive}
         >
           {t('account.unlink.confirm')}
-        </button>
+        </Button>
       </div>
     </>
   );

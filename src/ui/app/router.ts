@@ -19,24 +19,26 @@ import {
 import { z } from 'zod';
 import { PAIGE_HERO_ID } from '../../core/domain/hero';
 import { parseMatchId } from '../../core/domain/match';
-import { DEFAULT_PERIOD, PERIODS } from '../../core/domain/period';
 import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { MatchDetailPage } from '../features/match-detail/MatchDetailPage';
 import { MatchesPage } from '../features/matches/MatchesPage';
 import { ReviewPage } from '../features/review/ReviewPage';
 import { SettingsPage } from '../features/settings/SettingsPage';
 import { AppShell } from './AppShell';
+import { MAIN_SCROLL_SELECTOR } from './history-return';
 import { NotFoundPage } from './NotFoundPage';
 import { RouteErrorFallback } from './RouteErrorFallback';
 
-/** Hero filter shared by the dashboard and the match history: Paige unless the URL says otherwise. */
-const heroSearchParam = z.int().positive().default(PAIGE_HERO_ID).catch(PAIGE_HERO_ID);
-
-/** Search parameters of `/dashboard`, e.g. `/dashboard?period=7d&hero=67`. */
-export const dashboardSearchSchema = z.object({
-  period: z.enum(PERIODS).default(DEFAULT_PERIOD).catch(DEFAULT_PERIOD),
-  hero: heroSearchParam,
-});
+/**
+ * Hero filter of the match history: every hero (`all`) or one hero by its id, Paige unless the URL
+ * says otherwise. Anything else (a missing value, text, zero, a negative or fractional number)
+ * reads as Paige. The id is not checked against the hero catalogue, which a router cannot read: an
+ * id no match carries just gives an empty list.
+ */
+const heroSearchParam = z
+  .union([z.literal('all'), z.int().positive()])
+  .default(PAIGE_HERO_ID)
+  .catch(PAIGE_HERO_ID);
 
 /** Search parameters of `/matches`, e.g. `/matches?hero=67&result=win`. */
 export const matchesSearchSchema = z.object({
@@ -87,7 +89,6 @@ const indexRoute = createRoute({
 const dashboardRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/dashboard',
-  validateSearch: dashboardSearchSchema,
   component: DashboardPage,
 });
 
@@ -154,6 +155,14 @@ export function createAppRouter(history?: RouterHistory) {
     // A failing or unknown page renders inside the shell, so the navigation stays usable.
     defaultErrorComponent: RouteErrorFallback,
     defaultNotFoundComponent: NotFoundPage,
+    // The pages scroll inside the `<main>` of the shell, not the window. The router saves the scroll
+    // of the elements that scrolled (here `<main>`, found through its `data-scroll-restoration-id`,
+    // see `AppShell`) when it leaves a page, and gives it back when the page is returned to: going
+    // back from a match lands on the history list where the player left it. A page opened for the
+    // first time starts at the top: `<main>` is the same element for every page, so it would
+    // otherwise keep the scroll of the page before.
+    scrollRestoration: true,
+    scrollToTopSelectors: [MAIN_SCROLL_SELECTOR],
   });
 }
 

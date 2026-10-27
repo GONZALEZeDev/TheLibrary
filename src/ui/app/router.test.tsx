@@ -15,7 +15,7 @@ import { createAppRouter } from './router';
 /**
  * Render the whole application at `url`, in English, on the development adapters.
  *
- * @param url - Initial URL, e.g. `/dashboard?period=7d`.
+ * @param url - Initial URL, e.g. `/matches?hero=67`.
  * @returns The router, to inspect its state.
  */
 async function renderAppAt(url: string) {
@@ -41,10 +41,38 @@ describe('application routes', () => {
   });
 
   it('replaces invalid search parameters with their defaults', async () => {
-    const router = await renderAppAt('/dashboard?period=1y&hero=-3');
+    const router = await renderAppAt('/matches?hero=-3&result=draw');
+
+    await screen.findByRole('heading', { level: 1, name: 'Matches' });
+    expect(router.state.location.search).toEqual({ hero: 67, result: 'all' });
+  });
+
+  // The router cannot check the hero catalogue: a positive integer is kept whatever hero it names.
+  it.each([
+    ['/matches?hero=all', 'all'],
+    ['/matches?hero=12', 12],
+    ['/matches', 67],
+    ['/matches?hero=abc', 67],
+    ['/matches?hero=-3', 67],
+    ['/matches?hero=1.5', 67],
+  ] as const)(
+    'reads hero=all as all, and a missing or malformed hero as Paige: %s',
+    async (url, hero) => {
+      const router = await renderAppAt(url);
+
+      await screen.findByRole('heading', { level: 1, name: 'Matches' });
+      expect(router.state.location.search).toEqual({ hero, result: 'all' });
+    },
+  );
+
+  it('loads the dashboard whatever search the address carries', async () => {
+    const router = await renderAppAt('/dashboard?period=7d&hero=12');
 
     await screen.findByRole('heading', { level: 1, name: 'Dashboard' });
-    expect(router.state.location.search).toEqual({ period: '30d', hero: 67 });
+    // No search schema validates the dashboard's address: an old link with a period still loads,
+    // and the address is neither rewritten nor redirected.
+    expect(router.state.location.pathname).toBe('/dashboard');
+    expect(router.state.location.search).toEqual({ period: '7d', hero: 12 });
   });
 
   it('navigates with the sidebar and marks the current page', async () => {

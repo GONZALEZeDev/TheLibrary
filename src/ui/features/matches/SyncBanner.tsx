@@ -6,7 +6,9 @@
  * the status and the matches, and the progress of the detail queue refreshes the counts of the
  * details and the matches as it goes.
  *
- * It is drawn with the shared panel and button of the app, like every other block of a screen.
+ * It is drawn with the shared panel and button of the app, like every other block of a screen. A
+ * screen that frames it in a panel of its own (the settings) asks for it `embedded`: the content and
+ * the button without the panel and its margin.
  *
  * @packageDocumentation
  */
@@ -125,12 +127,24 @@ function describeDetailsStop(
     : null;
 }
 
+/** Props of {@link SyncBanner}. */
+export interface SyncBannerProps {
+  /**
+   * Whether the banner sits in a panel of the screen that shows it: it then draws neither its own
+   * panel nor the margin under it. `false` by default.
+   */
+  readonly embedded?: boolean;
+}
+
+/** The layout of the status and the button: the status on the left, the button on the right. */
+const BANNER_LAYOUT_CLASSES = 'flex items-start justify-between gap-6';
+
 /**
  * Synchronisation banner.
  *
  * @returns The banner.
  */
-export function SyncBanner() {
+export function SyncBanner({ embedded = false }: SyncBannerProps) {
   const { t, i18n } = useTranslation();
   const status = useSyncStatus();
   const detailSummary = useDetailSummary();
@@ -151,8 +165,8 @@ export function SyncBanner() {
   const detailsLine = describeDetails(detailSummary.data, t);
   const detailsStopLine = describeDetailsStop(detailSummary.data, t);
 
-  return (
-    <Panel padding="normal" className="mb-6 flex items-start justify-between gap-6">
+  const content = (
+    <>
       <div className="space-y-1 text-sm">
         {/* Read again by screen readers whenever the status changes. */}
         <div aria-live="polite" className="space-y-1">
@@ -171,13 +185,27 @@ export function SyncBanner() {
         icon={RefreshCw}
         spinning={running}
         onClick={() => {
-          syncNow.mutate();
+          // One synchronisation at a time: a press made while one runs is ignored. The button is not
+          // disabled for it, since a disabled control that has the focus drops it to the page.
+          if (!running) {
+            syncNow.mutate();
+          }
         }}
-        disabled={running || status.data?.accountLinked !== true}
+        // Disabled only without a linked account (or until the status is read): the button cannot
+        // work at all then, and it has no focus to lose in practice.
+        disabled={status.data?.accountLinked !== true}
         className="shrink-0"
       >
         {running ? t('matches.sync.running') : t('matches.sync.now')}
       </Button>
+    </>
+  );
+
+  return embedded ? (
+    <div className={BANNER_LAYOUT_CLASSES}>{content}</div>
+  ) : (
+    <Panel padding="normal" className={`mb-6 ${BANNER_LAYOUT_CLASSES}`}>
+      {content}
     </Panel>
   );
 }

@@ -35,14 +35,12 @@ import type { LogLevel } from './ports/logger.port';
 import type { AppServices } from './services/app-services';
 import { createAppServices, type AppAdapters } from './services/create-app-services';
 import { AppProviders } from './ui/app/AppProviders';
+import { APP_VERSION } from './ui/app/app-info';
 import { createQueryClient } from './ui/app/query-client';
 import { createAppRouter } from './ui/app/router';
 import { createUnhandledErrorReporter } from './ui/app/unhandled-errors';
 import { createI18n, RESOURCES } from './ui/i18n/i18n';
 import './ui/theme/theme.css';
-
-/** Version of the app (package.json), written into the bundle by Vite: see `define` in vite.config.ts. */
-declare const __APP_VERSION__: string;
 
 /** TanStack devtools, in development builds only (see the header of this file). */
 const DevTools = import.meta.env.DEV
@@ -256,7 +254,7 @@ async function start(rootElement: HTMLElement): Promise<void> {
   const desktop = isTauri();
   // Built before `bootstrap()`, so that a failed startup can still be logged.
   const services = createAppServices(await createAdapters(desktop), {
-    appVersion: __APP_VERSION__,
+    appVersion: APP_VERSION,
   });
   // Registered right away, so that nothing happening after this point goes unlogged.
   logUnhandledErrors(services);

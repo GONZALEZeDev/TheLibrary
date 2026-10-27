@@ -42,9 +42,6 @@ const START = Date.UTC(2026, 9, 14, 12, 0, 0);
  */
 const HISTORY_SIZE = 14;
 
-/** How many matches the recent list asks for: more than the synthetic history holds. */
-const LIST_LIMIT = 100;
-
 /** How far above the ids of the history an id that no match of the account has is. */
 const UNKNOWN_ID_OFFSET = 1_000_000;
 
@@ -163,7 +160,9 @@ describe('useMatchSummary', () => {
     });
 
     // The very row the history lists for the match.
-    const { matches } = await services.matches.listRecent(LIST_LIMIT);
+    const history = await services.matches.listHistory({ hero: 'all', result: 'all' });
+    expect(history.kind).toBe('ready');
+    const matches = history.kind === 'ready' ? history.matches : [];
     expect(result.current.data).toEqual(matches.find((match) => match.matchId === matchId));
     expect(result.current.data).toMatchObject({ matchId, detailStatus: 'ready' });
     // The key sits under the matches: what refreshes the history refreshes the match too.

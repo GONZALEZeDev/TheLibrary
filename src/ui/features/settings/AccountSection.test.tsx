@@ -28,6 +28,7 @@ import type { Language } from '../../../core/settings/language';
 import { accountIdToSteamId64 } from '../../../core/steam/steam-id';
 import { AccountService, type LinkResult } from '../../../services/account.service';
 import { LinkedAccountRepository } from '../../../services/linked-account.repository';
+import type { HistoryFilter } from '../../../services/matches.service';
 import {
   createTestQueryClient,
   createTestServices,
@@ -55,6 +56,9 @@ const LINKED_AT = Date.UTC(2026, 9, 12, 12, 0, 0);
  * in the archive for an unlink to delete.
  */
 const MATCH_COUNT = 12;
+
+/** The history with no filter: every match of the linked account, of every hero and result. */
+const WHOLE_HISTORY: HistoryFilter = { hero: 'all', result: 'all' };
 
 /** The account a player switches to: the fixture API has no profile for it. */
 const OTHER_ACCOUNT_ID = testAccountId(2000001);
@@ -171,8 +175,8 @@ async function synchronise(test: TestServices): Promise<void> {
   await test.services.sync.syncNow('manual');
   await waitUntilIdle(test.services.sync, SIGN_IN_WAIT_MS);
   // The tests below are about deleting something: make sure there is something to delete.
-  await expect(test.services.matches.listRecent(10)).resolves.toMatchObject({
-    accountLinked: true,
+  await expect(test.services.matches.listHistory(WHOLE_HISTORY)).resolves.toMatchObject({
+    kind: 'ready',
     total: MATCH_COUNT,
   });
   expect(test.archiveStore.files.size).toBeGreaterThan(0);
@@ -437,10 +441,8 @@ describe('AccountSection', () => {
       expect(within(section).getByRole('button', { name: EN.linkButton })).toBeVisible();
       // And the data really is gone: the link, the matches and the files of the archive.
       await expect(test.services.account.getLinkedAccount()).resolves.toBeNull();
-      await expect(test.services.matches.listRecent(10)).resolves.toEqual({
-        accountLinked: false,
-        total: 0,
-        matches: [],
+      await expect(test.services.matches.listHistory(WHOLE_HISTORY)).resolves.toEqual({
+        kind: 'no_account',
       });
       expect([...test.archiveStore.files.keys()]).toEqual([]);
     });
@@ -514,10 +516,8 @@ describe('AccountSection', () => {
       expect(within(section).queryByRole('button', { name: EN.unlinkButton })).toBeNull();
       // And the data really is gone: the link, the matches and the files of the archive.
       await expect(test.services.account.getLinkedAccount()).resolves.toBeNull();
-      await expect(test.services.matches.listRecent(10)).resolves.toEqual({
-        accountLinked: false,
-        total: 0,
-        matches: [],
+      await expect(test.services.matches.listHistory(WHOLE_HISTORY)).resolves.toEqual({
+        kind: 'no_account',
       });
       expect([...test.archiveStore.files.keys()]).toEqual([]);
     });
@@ -560,8 +560,8 @@ describe('AccountSection', () => {
       await expect(test.services.account.getLinkedAccount()).resolves.toMatchObject({
         accountId: FIXTURE_ACCOUNT_ID,
       });
-      await expect(test.services.matches.listRecent(10)).resolves.toMatchObject({
-        accountLinked: true,
+      await expect(test.services.matches.listHistory(WHOLE_HISTORY)).resolves.toMatchObject({
+        kind: 'ready',
         total: MATCH_COUNT,
       });
       expect([...test.archiveStore.files.keys()]).toEqual(filesBefore);
@@ -605,7 +605,7 @@ describe('AccountSection', () => {
       await synchronise(test);
       const { user } = await renderApp(test, '/matches');
       // The matches are on screen, and so in the cache of the page.
-      expect(await screen.findByRole('table', { name: 'Most recent matches' })).toBeVisible();
+      expect(await screen.findByRole('table', { name: 'Matches' })).toBeVisible();
 
       await user.click(screen.getByRole('link', { name: 'Settings' }));
       await user.click(
@@ -615,10 +615,10 @@ describe('AccountSection', () => {
       // The matches are read again when the page comes back, and that read is held: an old row
       // would be there to see for as long as it takes, if the cache had kept it for later.
       const { opened, open } = gate();
-      const listRecent = test.services.matches.listRecent.bind(test.services.matches);
-      vi.spyOn(test.services.matches, 'listRecent').mockImplementation(async (limit) => {
+      const listHistory = test.services.matches.listHistory.bind(test.services.matches);
+      vi.spyOn(test.services.matches, 'listHistory').mockImplementation(async (filter) => {
         await opened;
-        return listRecent(limit);
+        return listHistory(filter);
       });
       await user.click(screen.getByRole('link', { name: 'Matches' }));
 
@@ -889,8 +889,8 @@ describe('AccountSection', () => {
       expect(
         [...test.archiveStore.files.keys()].filter((path) => path.startsWith(oldFolder)),
       ).toEqual([]);
-      await expect(test.services.matches.listRecent(10)).resolves.toMatchObject({
-        accountLinked: true,
+      await expect(test.services.matches.listHistory(WHOLE_HISTORY)).resolves.toMatchObject({
+        kind: 'ready',
         total: 0,
       });
     });

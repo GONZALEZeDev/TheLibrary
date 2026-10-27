@@ -12,7 +12,8 @@ import { Fragment, useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toAppError } from '../../../core/errors/app-error';
 import type { LinkResult } from '../../../services/account.service';
-import { BUTTON_CLASSES, DIALOG_ACTIONS_CLASS } from '../../components/button-styles';
+import { Button } from '../../components/Button';
+import { DIALOG_ACTIONS_CLASS } from '../../components/button-styles';
 import { focusOnMount } from '../../components/focus-on-mount';
 import { accountDisplayName } from './display-name';
 import type { LinkSteamDialogProps } from './LinkSteamDialog';
@@ -118,18 +119,17 @@ export function LinkSteps({ mode, currentName, onClose }: LinkStepsProps) {
         </p>
         <div className={DIALOG_ACTIONS_CLASS}>
           {/* Gives up the sign-in but keeps the dialog: it goes on to say that it was cancelled. */}
-          <button
-            type="button"
+          <Button
+            look="subtle"
             ref={focusOnMount}
             disabled={givingUp}
             onClick={() => {
               setGivingUp(true);
               cancelLink();
             }}
-            className={BUTTON_CLASSES.subtle}
           >
             {t('account.link.cancel')}
-          </button>
+          </Button>
         </div>
       </Fragment>
     );
@@ -146,17 +146,11 @@ export function LinkSteps({ mode, currentName, onClose }: LinkStepsProps) {
             : t('account.link.explanation')}
         </p>
         <div className={DIALOG_ACTIONS_CLASS}>
-          <button
-            type="button"
-            ref={focusOnMount}
-            aria-describedby={textId}
-            onClick={onClose}
-            className={BUTTON_CLASSES.subtle}
-          >
+          <Button look="subtle" ref={focusOnMount} aria-describedby={textId} onClick={onClose}>
             {t('account.link.cancel')}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            look="primary"
             aria-describedby={textId}
             onClick={
               confirming
@@ -165,10 +159,9 @@ export function LinkSteps({ mode, currentName, onClose }: LinkStepsProps) {
                   }
                 : startSignIn
             }
-            className={BUTTON_CLASSES.primary}
           >
             {t('account.link.continue')}
-          </button>
+          </Button>
         </div>
       </Fragment>
     );
@@ -183,25 +176,19 @@ export function LinkSteps({ mode, currentName, onClose }: LinkStepsProps) {
         </p>
       )}
       <div className={DIALOG_ACTIONS_CLASS}>
-        <button
-          type="button"
-          ref={focusOnMount}
-          onClick={onClose}
-          className={outcome.failed ? BUTTON_CLASSES.subtle : BUTTON_CLASSES.primary}
-        >
+        <Button look={outcome.failed ? 'subtle' : 'primary'} ref={focusOnMount} onClick={onClose}>
           {t('account.link.close')}
-        </button>
+        </Button>
         {outcome.failed && (
-          <button
-            type="button"
+          <Button
+            look="primary"
             onClick={() => {
               // Back to the explanation: the answer to the warning of a switch is kept.
               link.reset();
             }}
-            className={BUTTON_CLASSES.primary}
           >
             {t('account.link.retry')}
-          </button>
+          </Button>
         )}
       </div>
     </Fragment>

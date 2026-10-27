@@ -6,7 +6,8 @@
  */
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { BUTTON_CLASSES, type ButtonLook } from '../../components/button-styles';
+import { Button } from '../../components/Button';
+import type { ButtonLook } from '../../components/button-styles';
 import { LinkSteamDialog, type LinkSteamDialogProps } from './LinkSteamDialog';
 
 /** Props of {@link LinkAccountButton}. */
@@ -50,17 +51,16 @@ export function LinkAccountButton({
 
   return (
     <>
-      <button
-        type="button"
+      <Button
+        look={variant}
         aria-haspopup="dialog"
         disabled={disabled}
         onClick={() => {
           setOpen(true);
         }}
-        className={BUTTON_CLASSES[variant]}
       >
         {label ?? t('account.link.button')}
-      </button>
+      </Button>
       <LinkSteamDialog
         open={open}
         mode={mode}

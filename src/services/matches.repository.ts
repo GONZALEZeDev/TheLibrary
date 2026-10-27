@@ -9,10 +9,11 @@
  * The same rows also carry the state of the detail queue (`detail_status`), which this repository
  * only reads: the history never writes it, so a match that is already archived stays archived.
  *
- * Besides the history itself, the repository answers three questions about whole accounts and
- * periods: the totals the dashboard tiles are computed from, which accounts have matches, and the
- * deletion of every match of one account (an unlink). The database does the summing and the
- * deleting; the rules that turn totals into averages stay in `core`.
+ * Besides the history itself, the repository answers four questions about whole accounts and
+ * heroes: the latest normal-mode matches of a hero (the dashboard), the whole history under a
+ * filter (the match list), which accounts have matches, and the deletion of every match of one
+ * account (an unlink). The database does the selecting and the deleting; the rules that turn
+ * matches into figures stay in `core`.
  *
  * @packageDocumentation
  */
@@ -20,7 +21,6 @@ import { z } from 'zod';
 import { parseAccountId, type AccountId } from '../core/domain/account';
 import type { HeroId } from '../core/domain/hero';
 import { matchIdSchema, type MatchId, type MatchSummary } from '../core/domain/match';
-import type { PeriodTotals } from '../core/domain/period-stats';
 import { AppError } from '../core/errors/app-error';
 import {
   ARCHIVED_GAME_MODE,
@@ -100,19 +100,6 @@ const matchRowSchema = z.object({
 });
 
 /**
- * Schema of the row `periodTotals` reads. The sums are checked like the columns they add up (a
- * sum of the safe integers of {@link matchRowSchema} is an integer too), and a count cannot be
- * negative.
- */
-const periodTotalsRowSchema = z.object({
-  matches: z.int().nonnegative(),
-  wins: z.int().nonnegative(),
-  kills: z.int(),
-  deaths: z.int(),
-  assists: z.int(),
-});
-
-/**
  * Schema of a row `listAccountIds` reads. It only tells a number from anything else: whether the
  * number is a Steam account id is `parseAccountId`'s to say, row by row, so that one damaged row
  * is skipped instead of failing the whole list.
@@ -186,32 +173,9 @@ export class MatchesRepository {
   }
 
   /**
-   * The most recent matches of a player, most recent first.
-   *
-   * @param accountId - The player.
-   * @param limit - Maximum number of matches.
-   * @returns The matches, each with where its detail stands.
-   * @throws AppError of kind `storage` when the database fails or holds an invalid row (a match id
-   *   or a detail status the app does not know included).
-   */
-  async listRecent(accountId: AccountId, limit: number): Promise<StoredMatch[]> {
-    const rows = await this.#run(
-      () =>
-        this.#database.select(
-          `SELECT ${LIST_COLUMNS.join(', ')}
-           FROM matches WHERE account_id = $1
-           ORDER BY start_time DESC, match_id DESC LIMIT $2`,
-          [accountId, limit],
-        ),
-      'Could not read the matches',
-    );
-    return rows.map((row) => parseStoredMatch(row, accountId));
-  }
-
-  /**
    * One match of a player, by its id.
    *
-   * It reads the same columns as {@link MatchesRepository.listRecent} and validates the row the
+   * It reads the same columns as {@link MatchesRepository.listHistory} and validates the row the
    * same way, so a match is the same whether the list or this call gives it.
    *
    * @param accountId - The player.
@@ -279,50 +243,88 @@ export class MatchesRepository {
   }
 
   /**
-   * The sums over the matches a hero played in a period, for the numbers of the dashboard.
+   * The latest normal-mode matches a hero played, most recent first.
    *
    * Only the normal-mode matches count: the normal game ({@link ARCHIVED_GAME_MODE}) in unranked or
    * ranked mode ({@link ARCHIVED_MATCH_MODES}). Street Brawl and private lobbies say nothing about
-   * how a hero plays the real game, the same rule the detail archive follows.
+   * how a hero plays the real game, the same rule the detail archive follows. Two matches that
+   * started the same second keep a fixed order (the higher match id first), so the list never
+   * shuffles between two reads.
    *
    * @param accountId - The player.
    * @param heroId - The hero.
-   * @param sinceStartTime - Start of the period, in Unix seconds like a match's `start_time`; a
-   *   match that started at that very second counts.
-   * @returns The totals; all zeros when the player has no such match in the period.
-   * @throws AppError of kind `storage` when the database fails or returns an unexpected row.
+   * @param limit - Maximum number of matches.
+   * @returns The matches, each with where its detail stands; empty when the player has none.
+   * @throws AppError of kind `storage` when the database fails or holds an invalid row (a match id
+   *   or a detail status the app does not know included).
    */
-  async periodTotals(
-    accountId: AccountId,
-    heroId: HeroId,
-    sinceStartTime: number,
-  ): Promise<PeriodTotals> {
-    const fixedParams: SqlValue[] = [accountId, heroId, sinceStartTime, ARCHIVED_GAME_MODE];
-    // One placeholder for each archived match mode, numbered after the four values above.
+  async listLatest(accountId: AccountId, heroId: HeroId, limit: number): Promise<StoredMatch[]> {
+    const fixedParams: SqlValue[] = [accountId, heroId, ARCHIVED_GAME_MODE];
+    // One placeholder for each archived match mode, numbered after the three values above.
     const modePlaceholders = ARCHIVED_MATCH_MODES.map(
       (_, index) => `$${String(fixedParams.length + index + 1)}`,
     );
+    // The limit is bound last, after the modes, because the placeholders are numbered as read.
+    const limitPlaceholder = `$${String(fixedParams.length + ARCHIVED_MATCH_MODES.length + 1)}`;
     const rows = await this.#run(
       () =>
-        // `COALESCE`: the sum of no row is NULL in SQL, and a period without a match is zeros.
         this.#database.select(
-          `SELECT COUNT(*) AS matches,
-                  COALESCE(SUM(won), 0) AS wins,
-                  COALESCE(SUM(kills), 0) AS kills,
-                  COALESCE(SUM(deaths), 0) AS deaths,
-                  COALESCE(SUM(assists), 0) AS assists
+          `SELECT ${LIST_COLUMNS.join(', ')}
            FROM matches
-           WHERE account_id = $1 AND hero_id = $2 AND start_time >= $3
-             AND game_mode = $4 AND match_mode IN (${modePlaceholders.join(', ')})`,
-          [...fixedParams, ...ARCHIVED_MATCH_MODES],
+           WHERE account_id = $1 AND hero_id = $2
+             AND game_mode = $3 AND match_mode IN (${modePlaceholders.join(', ')})
+           ORDER BY start_time DESC, match_id DESC LIMIT ${limitPlaceholder}`,
+          [...fixedParams, ...ARCHIVED_MATCH_MODES, limit],
         ),
-      'Could not sum the matches of the period',
+      'Could not read the latest matches',
     );
-    const parsed = periodTotalsRowSchema.safeParse(rows[0]);
-    if (!parsed.success) {
-      throw new AppError('storage', 'Unexpected result while summing the matches of the period');
+    return rows.map((row) => parseStoredMatch(row, accountId));
+  }
+
+  /**
+   * The whole history of a player under a filter, most recent first.
+   *
+   * Unlike {@link MatchesRepository.listLatest}, every match counts, whatever its mode: Street
+   * Brawl and private lobbies are part of what the player played. There is no limit: the screen
+   * windows the rows it draws. Two matches that started the same second keep a fixed order (the
+   * higher match id first), so the list never shuffles between two reads.
+   *
+   * @param accountId - The player.
+   * @param filter - What to keep.
+   * @param filter.heroId - The hero whose matches are kept; `null` for every hero.
+   * @param filter.won - `true` for the wins only, `false` for the losses only; `null` for both.
+   * @returns The matches, each with where its detail stands; empty when none fits.
+   * @throws AppError of kind `storage` when the database fails or holds an invalid row (a match id
+   *   or a detail status the app does not know included).
+   */
+  async listHistory(
+    accountId: AccountId,
+    filter: { readonly heroId: HeroId | null; readonly won: boolean | null },
+  ): Promise<StoredMatch[]> {
+    const params: SqlValue[] = [accountId];
+    // One condition for each filter in use; its value is bound right after the ones before it, so
+    // the placeholders are numbered in order of appearance.
+    const conditions = ['account_id = $1'];
+    if (filter.heroId !== null) {
+      params.push(filter.heroId);
+      conditions.push(`hero_id = $${String(params.length)}`);
     }
-    return parsed.data;
+    if (filter.won !== null) {
+      // SQLite has no boolean type: the column holds 1 or 0.
+      params.push(filter.won ? 1 : 0);
+      conditions.push(`won = $${String(params.length)}`);
+    }
+    const rows = await this.#run(
+      () =>
+        this.#database.select(
+          `SELECT ${LIST_COLUMNS.join(', ')}
+           FROM matches WHERE ${conditions.join(' AND ')}
+           ORDER BY start_time DESC, match_id DESC`,
+          params,
+        ),
+      'Could not read the match history',
+    );
+    return rows.map((row) => parseStoredMatch(row, accountId));
   }
 
   /**

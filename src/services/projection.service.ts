@@ -42,9 +42,12 @@
  * - the analysis cannot read the match, since the archive does not hold what it expects of a match
  *   (`failed`): the match is stored as failed, with no values. That is a verdict on the match, which
  *   is not tried again before the version changes: downloading it again would give the same detail;
- * - the archive is absent or damaged (`reset`): the match goes back to `pending`, so that the next
- *   run of the detail queue downloads it again, and it has no projection until then. That cannot
- *   loop, since the queue only archives a detail it could read back;
+ * - the archive is absent or damaged (`reset`): in the window of the last 90 days, the match goes
+ *   back to `pending`, so that the next run of the detail queue downloads it again, and it has no
+ *   projection until then. That cannot loop, since the queue only archives a detail it could read
+ *   back. Past the window, where the queue never downloads a match, it is marked `evicted` instead,
+ *   and keeps the metrics it has. A match that is not `ready` any more by then (evicted by the
+ *   storage since the run listed it) is left as it is, and not counted;
  * - the failure says nothing about the match, so nothing is recorded and the match is left as it was
  *   (`skipped`): the file cannot be read, the compressor or the database fails, or the code has a
  *   bug on this archive. It is told in the log, once, and the run goes on with the next match, so
@@ -96,7 +99,10 @@ export interface ProjectionServiceDependencies {
   readonly reader: ArchiveReaderService;
   /** Where the projections are kept, and which matches still need one. */
   readonly metrics: MetricsRepository;
-  /** Where the detail state of the matches is kept: a match with no usable archive goes back to `pending`. */
+  /**
+   * Where the detail state of the matches is kept: a match with no usable archive goes back to
+   * `pending`, or to `evicted` past the window of the last 90 days.
+   */
   readonly details: MatchDetailRepository;
   /** Structured logger. */
   readonly logger: Logger;
@@ -116,7 +122,10 @@ export interface ProjectionReport {
   readonly projected: number;
   /** Matches the analysis cannot read, stored as failed. */
   readonly failed: number;
-  /** Matches whose archive is absent or damaged, put back to `pending`. */
+  /**
+   * Matches whose archive is absent or damaged, put back to `pending` (in the window of the last 90
+   * days) or marked `evicted` (past it). A match that was not `ready` any more is not counted.
+   */
   readonly reset: number;
   /** Matches left as they were because a failure that is not about them hit them. */
   readonly skipped: number;
@@ -377,8 +386,9 @@ export class ProjectionService {
 
   /**
    * Project the matches of a list, one after the other, with the rules both entry points share: a
-   * match that cannot be read goes back to `pending`, one the analysis cannot read is stored as
-   * failed, a failure that is not about a match leaves it as it was, and the run stops after
+   * match whose archive is absent or damaged goes back to `pending` in the window of the last 90
+   * days and to `evicted` past it, one the analysis cannot read is stored as failed, a failure that
+   * is not about a match leaves it as it was, and the run stops after
    * {@link MAX_CONSECUTIVE_FAILURES} such failures in a row. It gives the event loop a turn between
    * two matches.
    *
@@ -411,7 +421,8 @@ export class ProjectionService {
           await this.#yieldToEventLoop();
         }
         await this.#projectOne(accountId, tags, matchId, run);
-        // Projected, failed or reset: the match got through, so the failures were not general.
+        // Projected, failed, reset or left as it was found: the match got through, so the failures
+        // were not general.
         failuresInARow = 0;
       } catch (error) {
         // Nothing was recorded for this match: it stays as it was, and the next run that lists it
@@ -476,8 +487,13 @@ export class ProjectionService {
     // compressor, rejects here: the archive may be fine, so the match is left as it is (skipped).
     const read = await this.#reader.readArchive(accountId, matchId);
     if (read.kind === 'unreadable') {
-      await this.#details.resetToPending(accountId, matchId);
-      run.reset += 1;
+      // Back to `pending` in the window, so that the queue downloads it again; `evicted` past it.
+      // A match that is not `ready` any more (evicted by the storage since it was listed) is left
+      // as it is, and is not counted: nothing was reset.
+      const outcome = await this.#details.markArchiveMissing(accountId, matchId, this.#now());
+      if (outcome !== 'unchanged') {
+        run.reset += 1;
+      }
       return;
     }
 

@@ -46,6 +46,7 @@ import type { MatchId } from '../core/domain/match';
 import { AppError } from '../core/errors/app-error';
 import type { ArchiveEnvelope } from '../core/match-detail/archive-envelope';
 import { accountFolderName, archivePath } from '../core/match-detail/archive-layout';
+import { DETAIL_WINDOW_MS } from '../core/match-detail/detail-status';
 import * as scoreboardReader from '../core/match-detail/scoreboard';
 import * as trackedDeathsReader from '../core/match-detail/tracked-deaths';
 import * as trackedItemsReader from '../core/match-detail/tracked-items';
@@ -63,6 +64,12 @@ const START = Date.UTC(2026, 9, 14, 12, 0, 0);
 
 /** The time the projection starts at (Unix ms), on the clock the tests control. */
 const PROJECTION_START = Date.UTC(2026, 9, 14, 13, 0, 0);
+
+/**
+ * A time at which every match of the synthetic history is past the window of the last 90 days
+ * (Unix ms): the history ends before the synchronisation, which is before the projection starts.
+ */
+const LATER = PROJECTION_START + DETAIL_WINDOW_MS;
 
 /** How far the clock moves at each yield to the event loop, in milliseconds. */
 const YIELD_STEP_MS = 250;
@@ -740,8 +747,8 @@ describe('ProjectionService.catchUp', () => {
 
     const report = await service.catchUp(ACCOUNT, RUN);
 
-    // The other matches are projected; the evicted one is not listed, not read (its file is gone, and
-    // reading it would reset it to pending) and not reset.
+    // The other matches are projected; the evicted one is not listed, not read (its file is gone)
+    // and not reset.
     expect(report).toEqual({ ...NOTHING, projected: archived.length - 1 });
     await expect(details.getDetail(ACCOUNT, evicted)).resolves.toMatchObject({
       status: 'evicted',
@@ -1617,6 +1624,61 @@ describe('ProjectionService.catchUp', () => {
     ]);
     // It is not ready any more: the next catch-up has nothing to do for it, so it cannot loop.
     await expect(service.catchUp(ACCOUNT, 'run-0002')).resolves.toEqual(NOTHING);
+    expectNoAccountId(logger);
+  });
+
+  it('evicts a match with a missing archive once it is past the 90 days, keeping its size', async () => {
+    const context = await setUp();
+    const { reader, metrics, details, logger, archived } = context;
+    // Every match of the history started before the synchronisation: at this time, all of them are
+    // past the window, where the queue never downloads a match again.
+    const service = new ProjectionService({ reader, metrics, details, logger, now: () => LATER });
+    const lost = archived[1] ?? expect.unreachable('the history holds several archived matches');
+    const stored = await details.getDetail(ACCOUNT, lost);
+    await deleteArchive(context, lost);
+
+    const report = await service.catchUp(ACCOUNT, RUN);
+
+    // The match changed, so it is counted; it is evicted, with the record of the file it had.
+    expect(report).toEqual({ ...NOTHING, projected: archived.length - 1, reset: 1 });
+    await expect(details.getDetail(ACCOUNT, lost)).resolves.toMatchObject({
+      status: 'evicted',
+      archivedBytes: stored?.archivedBytes,
+      archiveFormat: stored?.archiveFormat,
+    });
+    // It is not ready any more: the next catch-up has nothing to do for it.
+    await expect(service.catchUp(ACCOUNT, 'run-0002')).resolves.toEqual(NOTHING);
+    expectNoAccountId(logger);
+  });
+
+  it('leaves a match evicted while its archive was being read evicted, and counts no reset', async () => {
+    const context = await setUp();
+    const { reader, metrics, details, logger, archived } = context;
+    const service = new ProjectionService({ reader, metrics, details, logger, now: () => LATER });
+    const evicted = archived[1] ?? expect.unreachable('the history holds several archived matches');
+    const archivedBytes = (await details.getDetail(ACCOUNT, evicted))?.archivedBytes;
+    // The storage evicts the match after the projection listed it and before it reads the file, as
+    // a change of the size cap running next to a synchronisation can: the row first, then the file.
+    const read = reader.readArchive.bind(reader);
+    vi.spyOn(reader, 'readArchive').mockImplementation(async (accountId, matchId) => {
+      if (matchId === evicted) {
+        await details.markEvicted(ACCOUNT, evicted);
+        await deleteArchive(context, evicted);
+      }
+      return read(accountId, matchId);
+    });
+
+    const report = await service.catchUp(ACCOUNT, RUN);
+
+    // The file is missing, but the row is not ready any more: it is left evicted, and not counted.
+    expect(report).toEqual({ ...NOTHING, projected: archived.length - 1 });
+    await expect(details.getDetail(ACCOUNT, evicted)).resolves.toMatchObject({
+      status: 'evicted',
+      archivedBytes,
+    });
+    expect(linesOf(logger, 'Projection done')).toMatchObject([
+      { level: 'info', context: { projected: archived.length - 1, failed: 0, reset: 0 } },
+    ]);
     expectNoAccountId(logger);
   });
 

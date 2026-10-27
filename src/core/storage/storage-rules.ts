@@ -3,8 +3,10 @@
  * that are never removed, and how many matches a limit holds.
  *
  * The archive folder keeps one compressed file per Paige match. Past the limit, the storage service
- * removes the oldest files (the match keeps its stored metrics), but never the files of the most
- * recent matches, which the review reads.
+ * removes the oldest files (the match keeps its stored metrics), but never the files of the matches
+ * of the last 90 days (the download window, where the queue would fetch them again) nor the files of
+ * the most recent matches, which the review reads. A limit that those files overrun alone is
+ * exceeded.
  *
  * @packageDocumentation
  */
@@ -42,6 +44,16 @@ const BYTES_PER_MB = 1_000_000;
  */
 export function capBytes(capMb: number): number {
   return capMb * BYTES_PER_MB;
+}
+
+/**
+ * The size of a number of bytes in megabytes, counted like the limits (see {@link capBytes}).
+ *
+ * @param bytes - The size, in bytes.
+ * @returns The same size, in megabytes (not rounded).
+ */
+export function bytesToMegabytes(bytes: number): number {
+  return bytes / BYTES_PER_MB;
 }
 
 /**

@@ -27,7 +27,9 @@ import type { HttpRequest } from '../ports/http-client.port';
 import { createTestServices, type TestServicesOptions } from '../test/create-test-services';
 import { createTestDatabase, testMatchId } from '../test/test-data';
 import { LinkedAccountRepository } from './linked-account.repository';
+import { MatchDetailRepository } from './match-detail.repository';
 import { MatchDetailService } from './match-detail.service';
+import { MatchesRepository } from './matches.repository';
 import { MetricsRepository } from './metrics.repository';
 import { PlayerRankService, RANK_MAX_AGE_MS } from './player-rank.service';
 import { ProjectionService, type ProjectionReport } from './projection.service';
@@ -395,16 +397,18 @@ type SetUpOptions = Omit<TestServicesOptions, 'settingsStore'>;
 function setUp(options: SetUpOptions = {}) {
   const clock = { now: START };
   const answer = { handler: options.handler ?? createFixtureApi({ now: START }) };
-  const { services, http, logger, archiveStore, skippedMs } = createTestServices({
+  const { services, database, http, logger, archiveStore, skippedMs } = createTestServices({
     ...options,
     handler: (request) => answer.handler(request),
     now: options.now ?? (() => clock.now),
   });
   /**
-   * Number of matches stored for the linked account. Read through the matches service, whose total
-   * counts them whatever the limit, so no repository is built by hand; no clock is read.
+   * Number of matches stored for the linked account (the account of the fixtures unless the test
+   * gives another). Counted straight from the table, through the repository of the services'
+   * database, so that no clock is read.
    */
-  const countMatches = async () => (await services.matches.listRecent(0)).total;
+  const countMatches = () =>
+    new MatchesRepository(database).count(options.accountId ?? FIXTURE_ACCOUNT_ID);
   /** The requests for the match history, among all the requests received so far. */
   const historyRequests = () => http.requests.filter(isHistoryRequest);
   /** The requests for the detail of a match, among all the requests received so far. */
@@ -842,7 +846,11 @@ describe('SyncService and the detail queue', () => {
     sync.subscribe(() => {
       states.push(sync.isRunning());
       // What the interface does: read the matches again.
-      totals.push(services.matches.listRecent(0).then((recent) => recent.total));
+      totals.push(
+        services.matches
+          .listHistory({ hero: 'all', result: 'all' })
+          .then((history) => (history.kind === 'ready' ? history.total : 0)),
+      );
     });
 
     const run = sync.syncNow('manual');
@@ -1632,6 +1640,32 @@ describe('SyncService and the archive size limit', () => {
 
     expect(order).toEqual(['details', 'cap', 'catch-up']);
     expect(enforceCap).toHaveBeenCalledWith(FIXTURE_ACCOUNT_ID);
+  });
+
+  it('never evicts a match downloaded in the run', async () => {
+    fakeRankRefresh();
+    // The archives are over any limit, and the newest ones protect none: only the rules that keep
+    // the matches of the last 90 days, and those whose metrics are not stored yet, can keep the
+    // downloads of the run.
+    const sumArchivedBytes = vi
+      .spyOn(MatchDetailRepository.prototype, 'sumArchivedBytes')
+      .mockResolvedValue(Number.MAX_SAFE_INTEGER);
+    const original = Reflect.get(MatchDetailRepository.prototype, 'listEvictionCandidates');
+    vi.spyOn(MatchDetailRepository.prototype, 'listEvictionCandidates').mockImplementation(
+      function (this: MatchDetailRepository, accountId, _protectedCount, now) {
+        return original.call(this, accountId, 0, now);
+      },
+    );
+    const { sync, services, logger } = setUp({ handler: smallHistoryApi() });
+
+    await sync.syncNow('manual');
+
+    // The enforcement ran over the limit, and evicted nothing: every download is archived still.
+    expect(sumArchivedBytes).toHaveBeenCalled();
+    const summary = await services.details.getSummary();
+    expect(summary?.archived).toBeGreaterThan(0);
+    expect(summary?.evicted).toBe(0);
+    expect(logger.entries.filter((entry) => entry.message === 'Archives evicted')).toEqual([]);
   });
 
   it('logs a failed enforcement and still projects, without failing the run', async () => {

@@ -18,7 +18,7 @@ import {
   testMatchId,
 } from '../test/test-data';
 import { MatchesRepository } from './matches.repository';
-import { MatchesService } from './matches.service';
+import { MatchesService, type HistoryFilter, type MatchListItem } from './matches.service';
 
 /** Time of the tests (Unix ms): the clock the service reads to judge the 90-day window. */
 const NOW = Date.UTC(2026, 9, 14, 12, 0, 0);
@@ -65,44 +65,29 @@ async function setDetailStatus(
 }
 
 /**
+ * Every match of the linked account, as the history lists them.
+ *
+ * @param service - The service to list from.
+ * @returns The matches, most recent first; the test fails when no account is linked.
+ */
+async function listAll(service: MatchesService): Promise<readonly MatchListItem[]> {
+  const history = await service.listHistory({ hero: 'all', result: 'all' });
+  expect(history.kind).toBe('ready');
+  return history.kind === 'ready' ? history.matches : [];
+}
+
+/**
  * The detail status of each listed match, by match id.
  *
  * @param service - The service to list from.
  * @returns A record from match id to the detail status the list gives it.
  */
 async function detailStatusesOf(service: MatchesService): Promise<Record<number, unknown>> {
-  const recent = await service.listRecent(100);
-  return Object.fromEntries(recent.matches.map((match) => [match.matchId, match.detailStatus]));
+  const listed = await listAll(service);
+  return Object.fromEntries(listed.map((match) => [match.matchId, match.detailStatus]));
 }
 
 describe('MatchesService', () => {
-  it('lists the most recent matches of the linked account and counts them all', async () => {
-    const repository = new MatchesRepository(createTestDatabase());
-    await repository.upsertMany([
-      matchSummary({ matchId: 1, startTime: 100 }),
-      matchSummary({ matchId: 2, startTime: 200 }),
-      matchSummary({ matchId: 3, startTime: 300 }),
-      matchSummary({ matchId: 4, accountId: testAccountId(42) }),
-    ]);
-
-    const recent = await new MatchesService(accountSource(TEST_ACCOUNT_ID), repository).listRecent(
-      2,
-    );
-
-    expect(recent.accountLinked).toBe(true);
-    expect(recent.total).toBe(3);
-    expect(recent.matches.map((match) => match.matchId)).toEqual([3, 2]);
-  });
-
-  it('lists nothing when no account is linked', async () => {
-    const repository = new MatchesRepository(createTestDatabase());
-    await repository.upsertMany([matchSummary()]);
-
-    await expect(
-      new MatchesService(accountSource(null), repository).listRecent(10),
-    ).resolves.toEqual({ accountLinked: false, total: 0, matches: [] });
-  });
-
   it('gives the detail status of eligible matches', async () => {
     const database = createTestDatabase();
     const repository = new MatchesRepository(database);
@@ -259,7 +244,7 @@ describe('MatchesService', () => {
     await setDetailStatus(database, 10, 'ready');
     const service = new MatchesService(accountSource(TEST_ACCOUNT_ID), repository, () => NOW);
 
-    const listed = (await service.listRecent(100)).matches;
+    const listed = await listAll(service);
 
     // Every case of the list, so the one rule is shared: a match is the same item read either way.
     expect(listed).toHaveLength(10);
@@ -287,7 +272,7 @@ describe('MatchesService', () => {
   });
 });
 
-describe('MatchesService.getPeriodSummary', () => {
+describe('MatchesService.listLatest', () => {
   const ACCOUNT_ID = testAccountId(1000001);
   const OTHER_ACCOUNT_ID = testAccountId(2000001);
 
@@ -312,23 +297,63 @@ describe('MatchesService.getPeriodSummary', () => {
     });
   }
 
-  it('summarises the period of the linked account', async () => {
+  it('lists the latest Paige matches of the normal modes, newest first', async () => {
+    const database = createTestDatabase();
+    const repository = new MatchesRepository(database);
+    await repository.upsertMany([
+      paigeMatch(100000001, 3),
+      paigeMatch(100000002, 1, { matchMode: 4 }),
+      paigeMatch(100000003, 2),
+      // Never listed: another hero, Street Brawl, a private lobby, another account.
+      paigeMatch(100000004, 0, { heroId: PAIGE_HERO_ID + 1 }),
+      paigeMatch(100000005, 0, { gameMode: 4 }),
+      paigeMatch(100000006, 0, { matchMode: 2 }),
+      paigeMatch(100000007, 0, { accountId: OTHER_ACCOUNT_ID }),
+    ]);
+    await setDetailStatus(database, 100000002, 'ready');
+    const service = new MatchesService(accountSource(ACCOUNT_ID), repository, () => NOW);
+
+    const latest = await service.listLatest(PAIGE_HERO_ID, 10);
+
+    expect(latest.kind).toBe('ready');
+    if (latest.kind !== 'ready') {
+      return;
+    }
+    expect(latest.matches.map((match) => [match.matchId, match.detailStatus])).toEqual([
+      [100000002, 'ready'],
+      [100000003, 'pending'],
+      [100000001, 'pending'],
+    ]);
+  });
+
+  it('keeps the limit of matches, the newest ones', async () => {
     const repository = new MatchesRepository(createTestDatabase());
     await repository.upsertMany([
-      // Inside the 7 days; the second one began exactly 7 days ago, the limit of the period.
-      paigeMatch(100000001, 1, { won: true, kills: 8, deaths: 2, assists: 10 }),
-      paigeMatch(100000002, 7, { won: false, kills: 4, deaths: 6, assists: 20 }),
-      // Outside the 7 days, inside the 30.
-      paigeMatch(100000003, 8, { won: true, kills: 12, deaths: 1, assists: 3 }),
-      // Never counted, whatever the period: another hero, Street Brawl, another account.
-      paigeMatch(100000004, 1, { heroId: PAIGE_HERO_ID + 1, kills: 100 }),
-      paigeMatch(100000005, 1, { gameMode: 4, kills: 100 }),
-      paigeMatch(100000006, 1, { accountId: OTHER_ACCOUNT_ID, kills: 100 }),
+      paigeMatch(100000001, 3),
+      paigeMatch(100000002, 2),
+      paigeMatch(100000003, 1),
     ]);
     const service = new MatchesService(accountSource(ACCOUNT_ID), repository, () => NOW);
 
-    await expect(service.getPeriodSummary('7d', PAIGE_HERO_ID)).resolves.toEqual({
-      kind: 'stats',
+    const latest = await service.listLatest(PAIGE_HERO_ID, 2);
+
+    expect(latest.kind === 'ready' && latest.matches.map((match) => match.matchId)).toEqual([
+      100000003, 100000002,
+    ]);
+  });
+
+  it('sums the results of the latest matches', async () => {
+    const repository = new MatchesRepository(createTestDatabase());
+    await repository.upsertMany([
+      paigeMatch(100000001, 1, { won: true, kills: 8, deaths: 2, assists: 10 }),
+      paigeMatch(100000002, 2, { won: false, kills: 4, deaths: 6, assists: 20 }),
+      // Older than the two latest matches: out of the sums when the limit is 2.
+      paigeMatch(100000003, 3, { won: true, kills: 12, deaths: 1, assists: 3 }),
+    ]);
+    const service = new MatchesService(accountSource(ACCOUNT_ID), repository, () => NOW);
+
+    await expect(service.listLatest(PAIGE_HERO_ID, 2)).resolves.toMatchObject({
+      kind: 'ready',
       stats: {
         matches: 2,
         wins: 1,
@@ -338,31 +363,157 @@ describe('MatchesService.getPeriodSummary', () => {
         averageAssists: 15,
       },
     });
-    // The period decides which matches count: the wider one takes the third match in.
-    await expect(service.getPeriodSummary('30d', PAIGE_HERO_ID)).resolves.toMatchObject({
-      kind: 'stats',
-      stats: { matches: 3, wins: 2 },
+  });
+
+  it('has no figures when there is no match', async () => {
+    const service = new MatchesService(
+      accountSource(ACCOUNT_ID),
+      new MatchesRepository(createTestDatabase()),
+      () => NOW,
+    );
+
+    await expect(service.listLatest(PAIGE_HERO_ID, 10)).resolves.toEqual({
+      kind: 'ready',
+      matches: [],
+      stats: null,
     });
   });
 
-  it('says when the period has no match', async () => {
+  it('answers no account when no account is linked', async () => {
     const repository = new MatchesRepository(createTestDatabase());
-    // The only match is older than the period.
-    await repository.upsertMany([paigeMatch(100000001, 20)]);
-    const service = new MatchesService(accountSource(ACCOUNT_ID), repository, () => NOW);
-
-    await expect(service.getPeriodSummary('7d', PAIGE_HERO_ID)).resolves.toEqual({
-      kind: 'empty',
-    });
-  });
-
-  it('needs a linked account', async () => {
-    const repository = new MatchesRepository(createTestDatabase());
-    // Matches are stored, but none is the numbers of an account that is not linked.
+    // Matches are stored, but none belongs to an account that is not linked.
     await repository.upsertMany([paigeMatch(100000001, 1)]);
     const service = new MatchesService(accountSource(null), repository, () => NOW);
 
-    await expect(service.getPeriodSummary('7d', PAIGE_HERO_ID)).resolves.toEqual({
+    await expect(service.listLatest(PAIGE_HERO_ID, 10)).resolves.toEqual({ kind: 'no_account' });
+  });
+
+  it('does not take an unreadable linked account for no account', async () => {
+    const unreadable: AccountSource = {
+      currentAccountId: () =>
+        Promise.reject(new AppError('storage', 'The linked account is invalid')),
+    };
+    const service = new MatchesService(
+      unreadable,
+      new MatchesRepository(createTestDatabase()),
+      () => NOW,
+    );
+
+    await expect(service.listLatest(PAIGE_HERO_ID, 10)).rejects.toMatchObject({
+      kind: 'storage',
+    });
+  });
+});
+
+describe('MatchesService.listHistory', () => {
+  const ACCOUNT_ID = testAccountId(1000001);
+  const OTHER_ACCOUNT_ID = testAccountId(2000001);
+  const OTHER_HERO_ID = PAIGE_HERO_ID + 1;
+
+  /**
+   * A match of the account that started some days before {@link NOW}.
+   *
+   * @param matchId - The match id.
+   * @param days - How many days before {@link NOW} it started.
+   * @param overrides - Other fields to change.
+   * @returns The match.
+   */
+  function match(
+    matchId: number,
+    days: number,
+    overrides: Parameters<typeof matchSummary>[0] = {},
+  ): ReturnType<typeof matchSummary> {
+    return matchSummary({
+      matchId,
+      accountId: ACCOUNT_ID,
+      startTime: startedDaysAgo(days),
+      ...overrides,
+    });
+  }
+
+  /**
+   * The ids of the history under a filter, as the service lists them.
+   *
+   * @param service - The service.
+   * @param filter - The filter.
+   * @returns The ids, newest first; an empty list when the history is not ready.
+   */
+  async function idsOf(service: MatchesService, filter: HistoryFilter): Promise<number[]> {
+    const history = await service.listHistory(filter);
+    return history.kind === 'ready' ? history.matches.map((item) => item.matchId) : [];
+  }
+
+  it('lists the whole history newest first', async () => {
+    const database = createTestDatabase();
+    const repository = new MatchesRepository(database);
+    await repository.upsertMany([
+      match(100000001, 5),
+      match(100000002, 1, { matchMode: 4 }),
+      match(100000003, 3, { heroId: OTHER_HERO_ID }),
+      // Modes the dashboard leaves out are part of the history, and an old match too.
+      match(100000004, 2, { gameMode: 4 }),
+      match(100000005, 4, { matchMode: 2 }),
+      match(100000006, 200),
+      // Never listed: the match of another account.
+      match(100000007, 0, { accountId: OTHER_ACCOUNT_ID }),
+    ]);
+    await setDetailStatus(database, 100000002, 'ready');
+    const service = new MatchesService(accountSource(ACCOUNT_ID), repository, () => NOW);
+
+    const history = await service.listHistory({ hero: 'all', result: 'all' });
+
+    expect(history.kind).toBe('ready');
+    if (history.kind !== 'ready') {
+      return;
+    }
+    // The total counts every stored match of the account: with no filter it is the list's length.
+    expect(history.total).toBe(6);
+    expect(history.matches.map((listed) => [listed.matchId, listed.detailStatus])).toEqual([
+      [100000002, 'ready'],
+      [100000004, null],
+      [100000003, null],
+      [100000005, null],
+      [100000001, 'pending'],
+      [100000006, null],
+    ]);
+  });
+
+  it('filters by hero and by result, and keeps the total unfiltered', async () => {
+    const repository = new MatchesRepository(createTestDatabase());
+    await repository.upsertMany([
+      match(100000001, 4, { won: true }),
+      match(100000002, 3, { won: false }),
+      match(100000003, 2, { won: true, heroId: OTHER_HERO_ID }),
+      match(100000004, 1, { won: false, heroId: OTHER_HERO_ID }),
+    ]);
+    const service = new MatchesService(accountSource(ACCOUNT_ID), repository, () => NOW);
+
+    await expect(idsOf(service, { hero: PAIGE_HERO_ID, result: 'all' })).resolves.toEqual([
+      100000002, 100000001,
+    ]);
+    await expect(idsOf(service, { hero: 'all', result: 'win' })).resolves.toEqual([
+      100000003, 100000001,
+    ]);
+    await expect(idsOf(service, { hero: 'all', result: 'loss' })).resolves.toEqual([
+      100000004, 100000002,
+    ]);
+    await expect(idsOf(service, { hero: OTHER_HERO_ID, result: 'loss' })).resolves.toEqual([
+      100000004,
+    ]);
+    // A hero with no match gives an empty list, and the total still counts the whole history.
+    await expect(service.listHistory({ hero: 999, result: 'win' })).resolves.toEqual({
+      kind: 'ready',
+      total: 4,
+      matches: [],
+    });
+  });
+
+  it('answers no account when no account is linked', async () => {
+    const repository = new MatchesRepository(createTestDatabase());
+    await repository.upsertMany([match(100000001, 1)]);
+    const service = new MatchesService(accountSource(null), repository, () => NOW);
+
+    await expect(service.listHistory({ hero: 'all', result: 'all' })).resolves.toEqual({
       kind: 'no_account',
     });
   });
@@ -378,7 +529,7 @@ describe('MatchesService.getPeriodSummary', () => {
       () => NOW,
     );
 
-    await expect(service.getPeriodSummary('7d', PAIGE_HERO_ID)).rejects.toMatchObject({
+    await expect(service.listHistory({ hero: 'all', result: 'all' })).rejects.toMatchObject({
       kind: 'storage',
     });
   });

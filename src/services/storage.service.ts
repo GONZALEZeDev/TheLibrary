@@ -4,13 +4,19 @@
  *
  * The limit is a setting. It is enforced in two places: by the synchronisation, after the detail
  * downloads of every run (inside the run), and right after the player changes it (inside the
- * synchronisation's exclusive section, which an account change waits for). The archives of the
- * {@link PROTECTED_RECENT_ARCHIVES} newest Paige matches are never removed, so the archive folder can
- * stay over a limit they overrun on their own.
+ * synchronisation's exclusive section, which an account change waits for). The settings page can
+ * also ask, before it changes the limit, what an enforcement would remove under a new one: the
+ * preview walks the same candidates the same way, without writing.
  *
- * An evicted match keeps its stored metrics: only its file goes. Its row is marked `evicted` before
- * its file is removed, so a crash or a failed removal leaves a file no `ready` row points to, never a
- * `ready` row without its file. That orphan file is deleted by the start-up cleanup.
+ * Two kinds of archives are never removed, so the archive folder can stay over a limit they overrun
+ * on their own: those of the matches of the last 90 days, which the detail queue would download
+ * again as soon as their page opens, and those of the {@link PROTECTED_RECENT_ARCHIVES} newest Paige
+ * matches, which the review reads.
+ *
+ * An evicted match keeps its stored metrics: only its file goes, and only once its metrics of the
+ * current version are stored. Its row is marked `evicted` before its file is removed, so a crash or a
+ * failed removal leaves a file no `ready` row points to, never a `ready` row without its file. That
+ * orphan file is deleted by the start-up cleanup.
  *
  * The errors of the disk are logged with their kind only: the file system's message quotes the path
  * of the file, which holds the account id.
@@ -28,7 +34,7 @@ import {
 import type { AccountSource } from '../ports/account-source.port';
 import type { ArchiveStore } from '../ports/archive-store.port';
 import type { Logger } from '../ports/logger.port';
-import type { MatchDetailRepository } from './match-detail.repository';
+import type { EvictionCandidate, MatchDetailRepository } from './match-detail.repository';
 import type { SettingsService } from './settings.service';
 import { isSuspensionRefusal } from './sync.service';
 
@@ -53,6 +59,52 @@ export interface EnforcementReport {
   readonly evicted: number;
 }
 
+/** What an enforcement of a limit would evict, as {@link StorageService.previewEviction} tells it. */
+export interface EvictionPreview {
+  /** How many archives would be evicted. */
+  readonly evicted: number;
+  /** How many bytes their files take. */
+  readonly freedBytes: number;
+}
+
+/**
+ * The walk of the candidates that the enforcement and its preview share, so that the two cannot
+ * disagree: the candidates are taken in their order while the archives take more than the limit,
+ * and each is handed to `evict`. One that `evict` answers `false` for is skipped: it is neither
+ * counted nor subtracted, and the next one is taken instead. When the list runs out, only archives
+ * that are never candidates are left.
+ *
+ * The walk itself reads and writes nothing: whatever is done to a candidate is done by `evict`.
+ *
+ * @param usedBytes - How many bytes the archives take before the walk.
+ * @param limitBytes - The limit, in bytes.
+ * @param candidates - The candidates, in the order they go.
+ * @param evict - Evicts one candidate, or pretends to; answers whether it counts as evicted.
+ * @returns How many candidates were evicted, and the bytes their files took.
+ */
+async function walkEvictionCandidates(
+  usedBytes: number,
+  limitBytes: number,
+  candidates: readonly EvictionCandidate[],
+  evict: (candidate: EvictionCandidate) => Promise<boolean>,
+): Promise<EvictionPreview> {
+  let used = usedBytes;
+  let evicted = 0;
+  let freedBytes = 0;
+  for (const candidate of candidates) {
+    if (used <= limitBytes) {
+      break;
+    }
+    if (!(await evict(candidate))) {
+      continue;
+    }
+    used -= candidate.archivedBytes;
+    freedBytes += candidate.archivedBytes;
+    evicted += 1;
+  }
+  return { evicted, freedBytes };
+}
+
 /** What {@link StorageService} needs. */
 export interface StorageServiceDependencies {
   /** The linked account, read for the usage and for a change of the limit. */
@@ -70,6 +122,8 @@ export interface StorageServiceDependencies {
    */
   readonly runExclusive: <T>(task: () => Promise<T>) => Promise<T>;
   readonly logger: Logger;
+  /** Current time (Unix ms), which tells the matches of the last 90 days; `Date.now` by default. */
+  readonly now?: () => number;
 }
 
 /** Keeps the archive folder under the size limit the player chose. */
@@ -80,6 +134,7 @@ export class StorageService {
   readonly #settings: SettingsService;
   readonly #runExclusive: <T>(task: () => Promise<T>) => Promise<T>;
   readonly #logger: Logger;
+  readonly #now: () => number;
   /**
    * The end of the last enforcement asked for, failed or not: the next one starts after it.
    *
@@ -101,6 +156,7 @@ export class StorageService {
     this.#settings = dependencies.settings;
     this.#runExclusive = dependencies.runExclusive;
     this.#logger = dependencies.logger;
+    this.#now = dependencies.now ?? Date.now;
   }
 
   /**
@@ -129,9 +185,43 @@ export class StorageService {
   }
 
   /**
+   * What {@link StorageService.enforceCap} would evict under a limit, for the linked account, now:
+   * the same candidates, walked the same way, without writing anything (no row, no file, no setting,
+   * no log line). The settings page asks it before a lower limit removes archives.
+   *
+   * It waits for an enforcement that runs, so that it reads the sizes that one leaves. A candidate
+   * the detail queue takes back before the enforcement reaches it is counted here but skipped there,
+   * where a later candidate can go instead.
+   *
+   * @param capMb - The limit to try, one of the presets.
+   * @returns How many archives would be evicted and the bytes their files take, or `null` when no
+   *   account is linked.
+   * @throws AppError of kind `storage` when the database cannot be read, or the error of the account
+   *   source.
+   */
+  async previewEviction(capMb: StorageCapMb): Promise<EvictionPreview | null> {
+    await this.#lastEnforcement;
+    const accountId = await this.#accountSource.currentAccountId();
+    if (accountId === null) {
+      return null;
+    }
+    const limit = capBytes(capMb);
+    const used = await this.#details.sumArchivedBytes(accountId);
+    if (used <= limit) {
+      return { evicted: 0, freedBytes: 0 };
+    }
+    // Every candidate counts as evicted: nothing can take one back, since nothing is written.
+    return walkEvictionCandidates(used, limit, await this.#listCandidates(accountId), () =>
+      Promise.resolve(true),
+    );
+  }
+
+  /**
    * Evict archives of an account, the oldest first, until its archives fit in the limit, or until
-   * only the protected ones are left. Nothing is written when they fit already; otherwise one `info`
-   * line counts the archives evicted and the bytes freed.
+   * only the ones that are never evicted are left: those of the matches of the last 90 days, those
+   * of the {@link PROTECTED_RECENT_ARCHIVES} newest Paige matches, and those whose metrics of the
+   * current version are not stored yet. Nothing is written when they fit already; otherwise one
+   * `info` line counts the archives evicted and the bytes freed.
    *
    * Each archive is marked `evicted` first, then its file is removed. A removal that fails leaves the
    * row `evicted` and the file on the disk, for the start-up cleanup: it is logged as an `error` with
@@ -169,43 +259,52 @@ export class StorageService {
   async #evictOverCap(accountId: AccountId): Promise<EnforcementReport> {
     const { storageCapMb } = await this.#settings.get();
     const limit = capBytes(storageCapMb);
-    let used = await this.#details.sumArchivedBytes(accountId);
+    const used = await this.#details.sumArchivedBytes(accountId);
     if (used <= limit) {
       return { evicted: 0 };
     }
-    let evicted = 0;
-    let freedBytes = 0;
-    // Oldest first, without the protected archives: when the list runs out, only they are left.
-    for (const candidate of await this.#details.listEvictionCandidates(
-      accountId,
-      PROTECTED_RECENT_ARCHIVES,
-    )) {
-      if (used <= limit) {
-        break;
-      }
-      // Only a row that is still `ready` is evicted. The detail queue can change a row between the
-      // listing and its turn (a change of the limit runs alongside a synchronisation): its file is
-      // then the queue's, so it is neither removed nor counted.
-      if (!(await this.#details.markEvicted(accountId, candidate.matchId))) {
-        continue;
-      }
-      try {
-        await this.#archive.remove(accountId, candidate.matchId);
-      } catch (error) {
-        // The adapters do not wrap their failures: anything that is not an `AppError` yet is a
-        // failure of the disk. Its message is never logged, since it quotes the path of the file.
-        this.#logger.log('error', LOG_SCOPE, 'An evicted archive could not be removed', {
-          kind: isAppError(error) ? error.kind : 'storage',
-        });
-      }
-      used -= candidate.archivedBytes;
-      freedBytes += candidate.archivedBytes;
-      evicted += 1;
-    }
+    const { evicted, freedBytes } = await walkEvictionCandidates(
+      used,
+      limit,
+      await this.#listCandidates(accountId),
+      async (candidate) => {
+        // Only a row that is still `ready` is evicted. The detail queue can change a row between
+        // the listing and its turn (a change of the limit runs alongside a synchronisation): its
+        // file is then the queue's, so it is neither removed nor counted.
+        if (!(await this.#details.markEvicted(accountId, candidate.matchId))) {
+          return false;
+        }
+        try {
+          await this.#archive.remove(accountId, candidate.matchId);
+        } catch (error) {
+          // The adapters do not wrap their failures: anything that is not an `AppError` yet is a
+          // failure of the disk. Its message is never logged, since it quotes the path of the file.
+          this.#logger.log('error', LOG_SCOPE, 'An evicted archive could not be removed', {
+            kind: isAppError(error) ? error.kind : 'storage',
+          });
+        }
+        // Counted either way: the row is `evicted`, so its bytes no longer count as used.
+        return true;
+      },
+    );
     if (evicted > 0) {
       this.#logger.log('info', LOG_SCOPE, 'Archives evicted', { evicted, freedBytes });
     }
     return { evicted };
+  }
+
+  /**
+   * The archives of an account that may be evicted now, oldest first: none of the matches of the
+   * last 90 days (by this service's clock), of the protected newest Paige matches, or of the
+   * matches whose metrics of the current version are not stored. When the list runs out, only
+   * those are left.
+   *
+   * @param accountId - The account.
+   * @returns The candidates, in the order they go.
+   * @throws AppError of kind `storage` when the database fails.
+   */
+  #listCandidates(accountId: AccountId): Promise<readonly EvictionCandidate[]> {
+    return this.#details.listEvictionCandidates(accountId, PROTECTED_RECENT_ARCHIVES, this.#now());
   }
 
   /**

@@ -1,17 +1,17 @@
 /**
- * The numbers behind the dashboard tiles for one period: how many matches were played, how many
- * were won, and the average kills, deaths and assists.
+ * The numbers behind the dashboard tiles for the matches considered (the latest ones of a hero): how
+ * many matches were played, how many were won, and the average kills, deaths and assists.
  *
- * Only the totals are computed over the matches (by the database); turning them into averages and a
+ * Only the totals are computed over the matches (by the caller); turning them into averages and a
  * rate is this module's job, so the rule (and the empty case) lives in the pure core and is tested
  * without a database.
  *
  * @packageDocumentation
  */
 
-/** Sums over the matches of a period, as the database computes them. */
+/** Sums over the matches considered. */
 export interface PeriodTotals {
-  /** Number of matches played in the period. */
+  /** Number of matches considered. */
   readonly matches: number;
   /** Number of those matches the player's team won. */
   readonly wins: number;
@@ -23,9 +23,9 @@ export interface PeriodTotals {
   readonly assists: number;
 }
 
-/** What the dashboard tiles show for a period that has at least one match. */
+/** What the dashboard tiles show for matches that number at least one. */
 export interface PeriodStats {
-  /** Number of matches played in the period. */
+  /** Number of matches considered. */
   readonly matches: number;
   /** Number of those matches the player's team won. */
   readonly wins: number;
@@ -40,9 +40,9 @@ export interface PeriodStats {
 }
 
 /**
- * Turn the totals of a period into the numbers of the dashboard tiles.
+ * Turn the totals of the matches considered into the numbers of the dashboard tiles.
  *
- * @param totals - The sums over the matches of the period.
+ * @param totals - The sums over the matches considered.
  * @returns The win rate and the averages, or `null` when there is no match: the averages of
  *   nothing are undefined, and the dashboard shows an empty state instead of a row of zeros.
  */

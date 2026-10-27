@@ -15,11 +15,14 @@ import {
 } from '../test/test-data';
 import { MatchesRepository } from './matches.repository';
 
-/** The account of the tests of the account methods and of the period numbers. */
+/** The account of the tests of the account methods and of the latest matches. */
 const ACCOUNT_ID = testAccountId(1000001);
 
 /** Another account, whose matches the methods of {@link ACCOUNT_ID} must never reach. */
 const OTHER_ACCOUNT_ID = testAccountId(2000001);
+
+/** The history with no filter: every match of a player, of every hero and result. */
+const EVERY_MATCH = { heroId: null, won: null } as const;
 
 /**
  * Insert a match row with any account id, as a damaged database could hold it. `upsertMany` cannot
@@ -52,7 +55,7 @@ describe('MatchesRepository', () => {
     await repository.upsertMany([older, newer]);
 
     // A saved match starts as `pending` in the detail queue: the rows carry that status too.
-    await expect(repository.listRecent(TEST_ACCOUNT_ID, 10)).resolves.toEqual([
+    await expect(repository.listHistory(TEST_ACCOUNT_ID, EVERY_MATCH)).resolves.toEqual([
       { ...newer, detailStatus: 'pending' },
       { ...older, detailStatus: 'pending' },
     ]);
@@ -81,7 +84,7 @@ describe('MatchesRepository', () => {
       },
     };
 
-    const matches = await new MatchesRepository(spied).listRecent(TEST_ACCOUNT_ID, 10);
+    const matches = await new MatchesRepository(spied).listHistory(TEST_ACCOUNT_ID, EVERY_MATCH);
 
     expect(matches.map((match) => [match.matchId, match.detailStatus])).toEqual([
       [3, 'ready'],
@@ -98,7 +101,9 @@ describe('MatchesRepository', () => {
     await repository.upsertMany([matchSummary({ kills: 9 })]);
 
     await expect(repository.count(TEST_ACCOUNT_ID)).resolves.toBe(1);
-    await expect(repository.listRecent(TEST_ACCOUNT_ID, 1)).resolves.toMatchObject([{ kills: 9 }]);
+    await expect(repository.listHistory(TEST_ACCOUNT_ID, EVERY_MATCH)).resolves.toMatchObject([
+      { kills: 9 },
+    ]);
   });
 
   it('saves a history larger than one batch', async () => {
@@ -110,10 +115,10 @@ describe('MatchesRepository', () => {
     await repository.upsertMany(matches);
 
     await expect(repository.count(TEST_ACCOUNT_ID)).resolves.toBe(123);
-    await expect(repository.listRecent(TEST_ACCOUNT_ID, 2)).resolves.toMatchObject([
-      { matchId: 123 },
-      { matchId: 122 },
-    ]);
+    // The newest two, so the last batch (the newest rows) was written too.
+    const history = await repository.listHistory(TEST_ACCOUNT_ID, EVERY_MATCH);
+    expect(history).toHaveLength(123);
+    expect(history.slice(0, 2)).toMatchObject([{ matchId: 123 }, { matchId: 122 }]);
   });
 
   it('keeps the matches of each player apart', async () => {
@@ -123,7 +128,7 @@ describe('MatchesRepository', () => {
     await repository.upsertMany([matchSummary(), matchSummary({ accountId: otherPlayer })]);
 
     await expect(repository.count(otherPlayer)).resolves.toBe(1);
-    await expect(repository.listRecent(otherPlayer, 10)).resolves.toMatchObject([
+    await expect(repository.listHistory(otherPlayer, EVERY_MATCH)).resolves.toMatchObject([
       { accountId: otherPlayer },
     ]);
   });
@@ -167,7 +172,7 @@ describe('MatchesRepository', () => {
     await database.execute(`UPDATE matches SET kills = 9007199254740993`);
 
     await expect(
-      new MatchesRepository(database).listRecent(TEST_ACCOUNT_ID, 10),
+      new MatchesRepository(database).listHistory(TEST_ACCOUNT_ID, EVERY_MATCH),
     ).rejects.toMatchObject({ kind: 'storage' });
   });
 
@@ -178,7 +183,7 @@ describe('MatchesRepository', () => {
     await database.execute(`UPDATE matches SET match_id = $1`, [0]);
 
     await expect(
-      new MatchesRepository(database).listRecent(TEST_ACCOUNT_ID, 10),
+      new MatchesRepository(database).listHistory(TEST_ACCOUNT_ID, EVERY_MATCH),
     ).rejects.toMatchObject({ kind: 'storage', message: 'A stored match is invalid' });
   });
 
@@ -192,7 +197,7 @@ describe('MatchesRepository', () => {
     await database.execute(`UPDATE matches SET detail_status = $1`, ['corrupt-status']);
 
     await expect(
-      new MatchesRepository(database).listRecent(TEST_ACCOUNT_ID, 10),
+      new MatchesRepository(database).listHistory(TEST_ACCOUNT_ID, EVERY_MATCH),
     ).rejects.toMatchObject({
       kind: 'storage',
       message: 'A stored match is invalid',
@@ -284,7 +289,7 @@ describe('MatchesRepository', () => {
     await expect(repository.deleteAccount(ACCOUNT_ID)).resolves.toBe(2);
 
     await expect(repository.count(ACCOUNT_ID)).resolves.toBe(0);
-    await expect(repository.listRecent(OTHER_ACCOUNT_ID, 10)).resolves.toMatchObject([
+    await expect(repository.listHistory(OTHER_ACCOUNT_ID, EVERY_MATCH)).resolves.toMatchObject([
       { matchId: 100000003 },
     ]);
     // Deleting an account that has no match left (an unlink retried) is not an error.
@@ -321,111 +326,126 @@ describe('MatchesRepository', () => {
     await expect(repository.listAccountIds()).resolves.toEqual([ACCOUNT_ID]);
   });
 
-  it('sums the normal-mode matches of a hero since a time', async () => {
+  it('lists the latest matches of a hero in the normal modes, newest first', async () => {
     const repository = new MatchesRepository(createTestDatabase());
-    const since = 1_760_000_000;
     await repository.upsertMany([
-      // Counted: ranked, and unranked; the first one starts exactly at the limit of the period.
-      matchSummary({
-        matchId: 100000001,
-        accountId: ACCOUNT_ID,
-        startTime: since,
-        matchMode: 4,
-        won: true,
-        kills: 5,
-        deaths: 2,
-        assists: 10,
-      }),
-      matchSummary({
-        matchId: 100000002,
-        accountId: ACCOUNT_ID,
-        startTime: since + 3_600,
-        matchMode: 1,
-        won: false,
-        kills: 3,
-        deaths: 4,
-        assists: 6,
-      }),
-      // Left out, each with numbers that would show in the sums if it was counted.
-      // Street Brawl.
-      matchSummary({
-        matchId: 100000003,
-        accountId: ACCOUNT_ID,
-        startTime: since + 7_200,
-        gameMode: 4,
-        kills: 100,
-        deaths: 100,
-        assists: 100,
-      }),
-      // A private lobby.
-      matchSummary({
-        matchId: 100000004,
-        accountId: ACCOUNT_ID,
-        startTime: since + 7_200,
-        matchMode: 2,
-        kills: 100,
-        deaths: 100,
-        assists: 100,
-      }),
-      // Another hero.
-      matchSummary({
-        matchId: 100000005,
-        accountId: ACCOUNT_ID,
-        startTime: since + 7_200,
-        heroId: PAIGE_HERO_ID + 1,
-        kills: 100,
-        deaths: 100,
-        assists: 100,
-      }),
-      // One second before the period.
+      // Kept: ranked, unranked, and two matches that started the same second (the higher id first).
+      matchSummary({ matchId: 100000001, accountId: ACCOUNT_ID, startTime: 1_000, matchMode: 4 }),
+      matchSummary({ matchId: 100000002, accountId: ACCOUNT_ID, startTime: 3_000, matchMode: 1 }),
+      matchSummary({ matchId: 100000003, accountId: ACCOUNT_ID, startTime: 3_000, matchMode: 1 }),
+      // Left out: Street Brawl, a private lobby, another hero, another account.
+      matchSummary({ matchId: 100000004, accountId: ACCOUNT_ID, startTime: 4_000, gameMode: 4 }),
+      matchSummary({ matchId: 100000005, accountId: ACCOUNT_ID, startTime: 4_000, matchMode: 2 }),
       matchSummary({
         matchId: 100000006,
         accountId: ACCOUNT_ID,
-        startTime: since - 1,
-        kills: 100,
-        deaths: 100,
-        assists: 100,
+        startTime: 4_000,
+        heroId: PAIGE_HERO_ID + 1,
       }),
-      // Another account.
-      matchSummary({
-        matchId: 100000007,
-        accountId: OTHER_ACCOUNT_ID,
-        startTime: since + 7_200,
-        kills: 100,
-        deaths: 100,
-        assists: 100,
-      }),
+      matchSummary({ matchId: 100000007, accountId: OTHER_ACCOUNT_ID, startTime: 4_000 }),
     ]);
 
-    await expect(repository.periodTotals(ACCOUNT_ID, PAIGE_HERO_ID, since)).resolves.toEqual({
-      matches: 2,
-      wins: 1,
-      kills: 8,
-      deaths: 6,
-      assists: 16,
-    });
+    const latest = await repository.listLatest(ACCOUNT_ID, PAIGE_HERO_ID, 10);
+
+    expect(latest.map((match) => match.matchId)).toEqual([100000003, 100000002, 100000001]);
+    // Each match comes with where its detail stands, like the rows of the other lists.
+    expect(latest.every((match) => match.detailStatus === 'pending')).toBe(true);
   });
 
-  it('sums nothing for an empty period', async () => {
+  it('stops the latest matches at the limit, keeping the newest', async () => {
+    const repository = new MatchesRepository(createTestDatabase());
+    await repository.upsertMany([
+      matchSummary({ matchId: 100000001, accountId: ACCOUNT_ID, startTime: 1_000 }),
+      matchSummary({ matchId: 100000002, accountId: ACCOUNT_ID, startTime: 2_000 }),
+      matchSummary({ matchId: 100000003, accountId: ACCOUNT_ID, startTime: 3_000 }),
+    ]);
+
+    const latest = await repository.listLatest(ACCOUNT_ID, PAIGE_HERO_ID, 2);
+
+    expect(latest.map((match) => match.matchId)).toEqual([100000003, 100000002]);
+  });
+
+  it('lists no latest match for a player or a hero without one', async () => {
     const repository = new MatchesRepository(createTestDatabase());
     await repository.upsertMany([
       matchSummary({ matchId: 100000001, accountId: ACCOUNT_ID, startTime: 1_000 }),
     ]);
 
-    // The sums of no row are NULL in SQL: they must come back as zeros, not as an error.
-    await expect(repository.periodTotals(ACCOUNT_ID, PAIGE_HERO_ID, 2_000)).resolves.toEqual({
-      matches: 0,
-      wins: 0,
-      kills: 0,
-      deaths: 0,
-      assists: 0,
-    });
-    await expect(
-      repository.periodTotals(OTHER_ACCOUNT_ID, PAIGE_HERO_ID, 0),
-    ).resolves.toMatchObject({ matches: 0 });
+    await expect(repository.listLatest(OTHER_ACCOUNT_ID, PAIGE_HERO_ID, 10)).resolves.toEqual([]);
+    await expect(repository.listLatest(ACCOUNT_ID, PAIGE_HERO_ID + 1, 10)).resolves.toEqual([]);
   });
 
-  it('reports a failure of the account and period methods as a storage error', async () => {
+  it('lists the whole history of a player newest first, whatever the hero and the mode', async () => {
+    const repository = new MatchesRepository(createTestDatabase());
+    await repository.upsertMany([
+      matchSummary({ matchId: 100000001, accountId: ACCOUNT_ID, startTime: 1_000, matchMode: 4 }),
+      // Two matches that started the same second: the higher id first, so the order never shuffles.
+      matchSummary({ matchId: 100000002, accountId: ACCOUNT_ID, startTime: 3_000 }),
+      matchSummary({ matchId: 100000003, accountId: ACCOUNT_ID, startTime: 3_000 }),
+      // Matches the latest-match list leaves out are part of the history: Street Brawl, a private
+      // lobby and another hero.
+      matchSummary({ matchId: 100000004, accountId: ACCOUNT_ID, startTime: 4_000, gameMode: 4 }),
+      matchSummary({ matchId: 100000005, accountId: ACCOUNT_ID, startTime: 5_000, matchMode: 2 }),
+      matchSummary({
+        matchId: 100000006,
+        accountId: ACCOUNT_ID,
+        startTime: 6_000,
+        heroId: PAIGE_HERO_ID + 1,
+      }),
+      // Never listed: the match of another account.
+      matchSummary({ matchId: 100000007, accountId: OTHER_ACCOUNT_ID, startTime: 7_000 }),
+    ]);
+
+    const history = await repository.listHistory(ACCOUNT_ID, { heroId: null, won: null });
+
+    expect(history.map((match) => match.matchId)).toEqual([
+      100000006, 100000005, 100000004, 100000003, 100000002, 100000001,
+    ]);
+    // Each match comes with where its detail stands, like the rows of the other lists.
+    expect(history.every((match) => match.detailStatus === 'pending')).toBe(true);
+  });
+
+  it('filters the history by hero and by result', async () => {
+    const repository = new MatchesRepository(createTestDatabase());
+    const otherHero = PAIGE_HERO_ID + 1;
+    await repository.upsertMany([
+      matchSummary({ matchId: 100000001, accountId: ACCOUNT_ID, startTime: 1_000, won: true }),
+      matchSummary({ matchId: 100000002, accountId: ACCOUNT_ID, startTime: 2_000, won: false }),
+      matchSummary({
+        matchId: 100000003,
+        accountId: ACCOUNT_ID,
+        startTime: 3_000,
+        won: true,
+        heroId: otherHero,
+      }),
+      matchSummary({
+        matchId: 100000004,
+        accountId: ACCOUNT_ID,
+        startTime: 4_000,
+        won: false,
+        heroId: otherHero,
+      }),
+      // Another account, whose matches no filter reaches.
+      matchSummary({ matchId: 100000005, accountId: OTHER_ACCOUNT_ID, startTime: 5_000 }),
+    ]);
+
+    /** The ids of the history under a filter. */
+    const idsOf = async (heroId: number | null, won: boolean | null) =>
+      (await repository.listHistory(ACCOUNT_ID, { heroId, won })).map((match) => match.matchId);
+
+    await expect(idsOf(PAIGE_HERO_ID, null)).resolves.toEqual([100000002, 100000001]);
+    await expect(idsOf(null, true)).resolves.toEqual([100000003, 100000001]);
+    await expect(idsOf(null, false)).resolves.toEqual([100000004, 100000002]);
+    await expect(idsOf(otherHero, true)).resolves.toEqual([100000003]);
+    await expect(idsOf(PAIGE_HERO_ID, false)).resolves.toEqual([100000002]);
+    // A hero with no match gives an empty list, not an error.
+    await expect(idsOf(PAIGE_HERO_ID + 2, null)).resolves.toEqual([]);
+    await expect(
+      repository.listHistory(OTHER_ACCOUNT_ID, { heroId: PAIGE_HERO_ID, won: true }),
+    ).resolves.toHaveLength(1);
+  });
+
+  it('reports a failure of the account and latest-match methods as a storage error', async () => {
     const broken: Database = {
       execute: () => Promise.reject(new Error('disk I/O error')),
       select: () => Promise.reject(new Error('disk I/O error')),
@@ -437,19 +457,25 @@ describe('MatchesRepository', () => {
       cause: new Error('disk I/O error'),
     });
     await expect(repository.listAccountIds()).rejects.toMatchObject({ kind: 'storage' });
-    await expect(repository.periodTotals(ACCOUNT_ID, PAIGE_HERO_ID, 0)).rejects.toMatchObject({
+    await expect(repository.listLatest(ACCOUNT_ID, PAIGE_HERO_ID, 10)).rejects.toMatchObject({
       kind: 'storage',
     });
+    await expect(
+      repository.listHistory(ACCOUNT_ID, { heroId: null, won: null }),
+    ).rejects.toMatchObject({ kind: 'storage' });
   });
 
-  it('reports unexpected period totals as a storage error', async () => {
+  it('reports an invalid stored match among the latest as a storage error', async () => {
     const database: Database = {
       execute: () => Promise.resolve(0),
-      select: () => Promise.resolve([{ matches: 'many' }]),
+      select: () => Promise.resolve([{ match_id: 'many' }]),
     };
 
     await expect(
-      new MatchesRepository(database).periodTotals(ACCOUNT_ID, PAIGE_HERO_ID, 0),
+      new MatchesRepository(database).listLatest(ACCOUNT_ID, PAIGE_HERO_ID, 10),
+    ).rejects.toMatchObject({ kind: 'storage' });
+    await expect(
+      new MatchesRepository(database).listHistory(ACCOUNT_ID, { heroId: null, won: null }),
     ).rejects.toMatchObject({ kind: 'storage' });
   });
 });

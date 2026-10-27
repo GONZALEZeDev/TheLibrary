@@ -2458,7 +2458,7 @@ describe('MatchDetailService.getMatchDetail', () => {
     ]);
   });
 
-  it('says the archive is lost, not missing, once the match is past the 90 days', async () => {
+  it('marks the match evicted, and says its detail is gone, once it is past the 90 days', async () => {
     /** The ways the archive of a ready match can be unusable: the damaged files, and the others. */
     const unusable: readonly Pick<UnreadableArchive, 'label' | 'plant'>[] = [
       ...UNREADABLE_ARCHIVES,
@@ -2478,22 +2478,31 @@ describe('MatchDetailService.getMatchDetail', () => {
     for (const { label, plant } of unusable) {
       const context = await setUp({ matches: summariesOf([SERVED]) });
       await plant(context);
+      const before = await storedDetail(context.repository, SERVED);
       // The match aged past the window while its archive was unusable: it is not downloaded again.
       context.clock.now = START + 91 * DAY;
 
       const view = await context.service.getMatchDetail(matchOf(SERVED));
 
-      expect(view, label).toEqual({ kind: 'lost' });
-      // The row no longer claims an archive that is not there.
-      await expect(storedDetail(context.repository, SERVED), label).resolves.toEqual(UNTOUCHED);
-      // The page said it once; from now on the match is one the app does not archive.
+      expect(view, label).toEqual({ kind: 'evicted_lost' });
+      // The row no longer claims an archive that is there: it is evicted, with the size of the file
+      // it lost, so that the match keeps its metrics.
+      await expect(storedDetail(context.repository, SERVED), label).resolves.toEqual({
+        ...before,
+        status: 'evicted',
+      });
+      // The page says the same from now on, and leaves the row as it is.
       await expect(context.service.getMatchDetail(matchOf(SERVED)), label).resolves.toEqual({
-        kind: 'not_eligible',
+        kind: 'evicted_lost',
+      });
+      await expect(storedDetail(context.repository, SERVED), label).resolves.toEqual({
+        ...before,
+        status: 'evicted',
       });
     }
   });
 
-  it('answers missing, not lost, until the match leaves the window', async () => {
+  it('answers missing, not evicted_lost, until the match leaves the window', async () => {
     const context = await setUp({ matches: summariesOf([SERVED]) });
     await context.repository.markReady(ACCOUNT, matchOf(SERVED), 52_431, ARCHIVE_FORMAT);
     // The very last instant at which the match is still inside the window.
@@ -2502,7 +2511,41 @@ describe('MatchDetailService.getMatchDetail', () => {
     await expect(context.service.getMatchDetail(matchOf(SERVED))).resolves.toEqual({
       kind: 'missing',
     });
+    await expect(storedDetail(context.repository, SERVED)).resolves.toEqual(UNTOUCHED);
   });
+
+  it.each([
+    ['evicted by the storage', 'evicted'],
+    ['put back to pending by the analysis', 'pending'],
+  ] as const)(
+    'answers from the row as it is now when the match was %s while its archive was read',
+    async (_name, changedTo) => {
+      const context = await setUp({ matches: summariesOf([SERVED]) });
+      await context.repository.markReady(ACCOUNT, matchOf(SERVED), 52_431, ARCHIVE_FORMAT);
+      const markArchiveMissing = vi.spyOn(context.repository, 'markArchiveMissing');
+      // Someone else changes the row between the read of the page and its record of the missing
+      // archive: the record finds the match no longer `ready`, and changes nothing.
+      vi.spyOn(context.reader, 'readArchive').mockImplementationOnce(async (accountId, matchId) => {
+        if (changedTo === 'evicted') {
+          await context.repository.markEvicted(accountId, matchId);
+        } else {
+          await context.repository.resetToPending(accountId, matchId);
+        }
+        return { kind: 'unreadable' };
+      });
+
+      const view = await context.service.getMatchDetail(matchOf(SERVED));
+
+      await expect(markArchiveMissing.mock.results[0]?.value).resolves.toBe('unchanged');
+      if (changedTo === 'evicted') {
+        // An evicted match of the last 90 days, as its page says it: put back in the queue.
+        expect(view).toEqual({ kind: 'evicted' });
+      } else {
+        expect(view).toEqual({ kind: 'waiting', nextAttemptAt: null });
+      }
+      await expect(storedDetail(context.repository, SERVED)).resolves.toEqual(UNTOUCHED);
+    },
+  );
 
   it.each([
     ['the file cannot be read', 'read'],
@@ -2514,7 +2557,7 @@ describe('MatchDetailService.getMatchDetail', () => {
       await context.service.runQueue(ACCOUNT, RUN);
       const archivedBefore = await storedDetail(context.repository, SERVED);
       expect(archivedBefore).toMatchObject({ status: 'ready' });
-      const resetToPending = vi.spyOn(context.repository, 'resetToPending');
+      const markArchiveMissing = vi.spyOn(context.repository, 'markArchiveMissing');
       // The failure of the worker adapter when the compressor itself is broken.
       const compressorFailure = new AppError('storage', 'The compressor failed');
       if (step === 'read') {
@@ -2535,7 +2578,7 @@ describe('MatchDetailService.getMatchDetail', () => {
         expect(failure).toBe(compressorFailure);
       }
       // Nothing says the archive is damaged: the match is still archived, and its file still there.
-      expect(resetToPending).not.toHaveBeenCalled();
+      expect(markArchiveMissing).not.toHaveBeenCalled();
       await expect(storedDetail(context.repository, SERVED)).resolves.toEqual(archivedBefore);
       expect(context.archive.files.has(archivePath(ACCOUNT, matchOf(SERVED)))).toBe(true);
       await expect(context.service.getMatchDetail(matchOf(SERVED))).resolves.toMatchObject({
@@ -2548,7 +2591,7 @@ describe('MatchDetailService.getMatchDetail', () => {
     const context = await setUp({ matches: summariesOf([SERVED]) });
     await context.service.runQueue(ACCOUNT, RUN);
     const archivedBefore = await storedDetail(context.repository, SERVED);
-    const resetToPending = vi.spyOn(context.repository, 'resetToPending');
+    const markArchiveMissing = vi.spyOn(context.repository, 'markArchiveMissing');
     // An envelope no archive could decode to: reading its facts fails with a `TypeError`, which is
     // not a problem of the data (those are `invalid_payload` errors).
     const brokenEnvelope = {
@@ -2570,7 +2613,7 @@ describe('MatchDetailService.getMatchDetail', () => {
     expect(failure).toMatchObject({ name: 'TypeError' });
     expect(failure).not.toBeInstanceOf(AppError);
     expect(linesAt(context.logger, 'warn')).toEqual([]);
-    expect(resetToPending).not.toHaveBeenCalled();
+    expect(markArchiveMissing).not.toHaveBeenCalled();
     await expect(storedDetail(context.repository, SERVED)).resolves.toEqual(archivedBefore);
     await expect(context.service.getMatchDetail(matchOf(SERVED))).resolves.toMatchObject({
       kind: 'ready',
@@ -2596,10 +2639,10 @@ describe('MatchDetailService.getMatchDetail', () => {
     });
   });
 
-  it('lets a failure to put the match back to pending reach the caller', async () => {
+  it('lets a failure to record the missing archive reach the caller', async () => {
     const { service, repository } = await setUp({ matches: summariesOf([SERVED]) });
     await repository.markReady(ACCOUNT, matchOf(SERVED), 52_431, ARCHIVE_FORMAT);
-    vi.spyOn(repository, 'resetToPending').mockRejectedValueOnce(
+    vi.spyOn(repository, 'markArchiveMissing').mockRejectedValueOnce(
       new AppError('storage', 'Could not reset the detail state of a match'),
     );
 

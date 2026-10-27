@@ -13,13 +13,14 @@
  * makes the link change first, and the sweep retries until the data is gone.
  *
  * The sweep also brings the archive files of the linked account back in line with its rows, so that
- * the size of the archive folder is what the rows say: a `ready` match whose file is gone is marked
- * `evicted` (it keeps its stored metrics), and a file that no `ready` match stands for (an eviction
- * whose removal failed, or a write that crashed before its row was marked) is deleted. It runs only
- * when both listings could be read: a listing that failed is not an empty one, and taking it for
- * one would evict every archive, or delete every file. An empty list of files while the account has
- * `ready` matches is not trusted either, since a missing or unreachable folder reads the same: the
- * archives are left as they are, with a warning.
+ * the size of the archive folder is what the rows say: a `ready` match whose file is gone goes back
+ * to `pending` while it is in the window of the last 90 days (the queue downloads it again), and is
+ * marked `evicted` past it (it keeps its stored metrics); and a file that no `ready` match stands for
+ * (an eviction whose removal failed, or a write that crashed before its row was marked) is deleted.
+ * It runs only when both listings could be read: a listing that failed is not an empty one, and
+ * taking it for one would take every archive for gone, or delete every file. An empty list of files
+ * while the account has `ready` matches is not trusted either, since a missing or unreachable folder
+ * reads the same: the archives are left as they are, with a warning.
  *
  * The values that belong to no account stay: the request budget and the pause of deadlock-api in the
  * synchronisation state, the API cache, and the logs (the owner's decision D9).
@@ -82,8 +83,8 @@ const NO_ARCHIVE_FILES_MESSAGE =
  * analysis (`metrics`) or the synchronisation state (`sync_state`) of an account, the files of the
  * `archive`, the compaction (`vacuum`, its flag included), the `check` after a deletion, or the
  * reconciliation of the linked account's archives, on the side of its rows (`reconcile_rows`:
- * listing the `ready` matches, marking one evicted) or of its files (`reconcile_files`: listing
- * them, removing one).
+ * listing the `ready` matches, marking one whose file is missing) or of its files
+ * (`reconcile_files`: listing them, removing one).
  */
 type Step =
   | 'matches'
@@ -133,14 +134,21 @@ export interface AccountDataServiceDependencies {
   readonly syncState: SyncStateRepository;
   /** The archive folder. */
   readonly archive: ArchiveStore;
-  /** The detail status of the matches: which are archived, and the mark of an evicted archive. */
-  readonly detailRepository: Pick<MatchDetailRepository, 'listReadyMatchIds' | 'markEvicted'>;
+  /** The detail status of the matches: which are archived, and the mark of a missing archive. */
+  readonly detailRepository: Pick<
+    MatchDetailRepository,
+    'listReadyMatchIds' | 'markArchiveMissing'
+  >;
   /** Compacts the database. */
   readonly maintenance: DatabaseMaintenanceRepository;
   /** The detail queue, which remembers in memory why its last run stopped. */
   readonly details: MatchDetailService;
   /** Structured logger. */
   readonly logger: Logger;
+  /**
+   * Current time (Unix ms), which tells the matches of the last 90 days; `Date.now` by default.
+   */
+  readonly now?: () => number;
 }
 
 /** How a deletion went. */
@@ -175,10 +183,14 @@ export class AccountDataService {
   readonly #metrics: MetricsRepository;
   readonly #syncState: SyncStateRepository;
   readonly #archive: ArchiveStore;
-  readonly #detailRepository: Pick<MatchDetailRepository, 'listReadyMatchIds' | 'markEvicted'>;
+  readonly #detailRepository: Pick<
+    MatchDetailRepository,
+    'listReadyMatchIds' | 'markArchiveMissing'
+  >;
   readonly #maintenance: DatabaseMaintenanceRepository;
   readonly #details: MatchDetailService;
   readonly #logger: Logger;
+  readonly #now: () => number;
 
   /**
    * @param dependencies - See {@link AccountDataServiceDependencies}.
@@ -192,6 +204,7 @@ export class AccountDataService {
     this.#maintenance = dependencies.maintenance;
     this.#details = dependencies.details;
     this.#logger = dependencies.logger;
+    this.#now = dependencies.now ?? Date.now;
   }
 
   /**
@@ -251,9 +264,10 @@ export class AccountDataService {
    * the folder of the linked account (the folders of other accounts, the quarantine folder of the
    * first layout, leftover temporary files, anything unknown). Then reconcile the archive files of
    * the linked account with its rows (see the header of the file): a `ready` match without a file
-   * is marked evicted, a file without a `ready` match is deleted, and one "Archives reconciled" line
-   * says how many when there were any. Then compact the database if a compaction is owed, which is
-   * also how a deletion interrupted before its compaction is finished.
+   * goes back to `pending` in the window of the last 90 days and is marked evicted past it, a file
+   * without a `ready` match is deleted, and one "Archives reconciled" line says how many of each
+   * when there were any. Then compact the database if a compaction is owed, which is also how a
+   * deletion interrupted before its compaction is finished.
    *
    * A listing that fails is logged with its step, and that part is skipped; for the
    * reconciliation, a failure of either of its listings skips all of it, and so does a listing
@@ -380,10 +394,13 @@ export class AccountDataService {
   }
 
   /**
-   * Bring the archive files of an account back in line with its rows: mark evicted each `ready`
-   * match whose file is gone, then delete each file that no `ready` match stands for. One failure
-   * is logged with its step and the others are still tried; whatever is left is found again by the
-   * next start. When there was anything to do, one line says how much was done.
+   * Bring the archive files of an account back in line with its rows: each `ready` match whose file
+   * is gone goes back to `pending` in the window of the last 90 days, or is marked evicted past it
+   * (`MatchDetailRepository.markArchiveMissing`, the one rule of the app for a missing archive),
+   * then each file that no `ready` match stands for is deleted. One failure is logged with its step
+   * and the others are still tried; whatever is left is found again by the next start. When there
+   * was anything to do, one line says how much was done: the matches marked evicted, those put back
+   * to `pending`, and the files removed.
    *
    * Nothing changes when either listing fails, nor when the account has `ready` matches and no
    * archive file at all (logged as a warning with the number of `ready` matches): its folder may
@@ -409,25 +426,30 @@ export class AccountDataService {
     if (files.value.length === 0 && ready.value.size > 0) {
       // The store answers an empty list both for an empty folder and for an account folder that is
       // missing or out of reach (a folder moved or deleted by hand, a drive that is not there).
-      // Taken at its word, it would mark every archive evicted; and if the folder is back at the
+      // Taken at its word, it would take every archive for gone; and if the folder is back at the
       // next start, every file there would then have no `ready` row, and be deleted. So nothing
       // changes this start. A match whose file really is gone is still caught when its page is
-      // read: a missing archive puts the match back to `pending` there.
+      // read, or when the analysis reads it: the same rule applies to a missing archive there.
       this.#logger.log('warn', LOG_SCOPE, NO_ARCHIVE_FILES_MESSAGE, { ready: ready.value.size });
       return;
     }
     const archived = new Set(files.value);
+    // One clock for the whole pass, so that every row is judged against the same window.
+    const now = this.#now();
     let evicted = 0;
+    let pending = 0;
     for (const matchId of ready.value) {
       if (archived.has(matchId)) {
         continue;
       }
       const marked = await this.#attempt('reconcile_rows', 'database', () =>
-        this.#detailRepository.markEvicted(accountId, matchId),
+        this.#detailRepository.markArchiveMissing(accountId, matchId, now),
       );
-      // Counted only when the row was still `ready` and changed.
-      if (marked.ok && marked.value) {
+      // Counted only when the row was still `ready` and changed (`unchanged` counts nothing).
+      if (marked.ok && marked.value === 'evicted') {
         evicted += 1;
+      } else if (marked.ok && marked.value === 'pending') {
+        pending += 1;
       }
     }
     let removed = 0;
@@ -443,8 +465,8 @@ export class AccountDataService {
         removed += 1;
       }
     }
-    if (evicted > 0 || removed > 0) {
-      this.#logger.log('info', LOG_SCOPE, 'Archives reconciled', { evicted, removed });
+    if (evicted > 0 || pending > 0 || removed > 0) {
+      this.#logger.log('info', LOG_SCOPE, 'Archives reconciled', { evicted, pending, removed });
     }
   }
 

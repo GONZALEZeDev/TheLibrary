@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { REVIEW_MATCHES } from '../analysis/insights/thresholds';
 import {
+  bytesToMegabytes,
   capBytes,
   DEFAULT_STORAGE_CAP_MB,
   estimatedCapacity,
@@ -29,6 +30,12 @@ describe('the storage rules', () => {
   it('counts a megabyte as a million bytes', () => {
     expect(capBytes(100)).toBe(100_000_000);
     expect(capBytes(5000)).toBe(5_000_000_000);
+  });
+
+  it('converts bytes to megabytes the way the limits count them', () => {
+    expect(bytesToMegabytes(capBytes(100))).toBe(100);
+    expect(bytesToMegabytes(4_200_000)).toBe(4.2);
+    expect(bytesToMegabytes(0)).toBe(0);
   });
 
   it('estimates the capacity from the measured average, else the typical size', () => {

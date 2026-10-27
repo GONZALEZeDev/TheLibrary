@@ -624,7 +624,9 @@ describe('AccountService.link', () => {
     await whenIdle(services.sync);
     expect(startedRuns(logger)).toEqual(['link']);
     expect(http.requests.filter(isHistoryRequest)).toHaveLength(1);
-    expect((await services.matches.listRecent(1)).total).toBeGreaterThan(0);
+    const history = await services.matches.listHistory({ hero: 'all', result: 'all' });
+    expect(history).toMatchObject({ kind: 'ready' });
+    expect('total' in history ? history.total : 0).toBeGreaterThan(0);
     expect(logger.entries).toContainEqual({
       level: 'info',
       scope: 'account',
@@ -640,10 +642,9 @@ describe('AccountService.link', () => {
 
     expect(result).toEqual({ kind });
     await expect(test.account.getLinkedAccount()).resolves.toBeNull();
-    await expect(test.services.matches.listRecent(1)).resolves.toMatchObject({
-      accountLinked: false,
-      total: 0,
-    });
+    await expect(
+      test.services.matches.listHistory({ hero: 'all', result: 'all' }),
+    ).resolves.toEqual({ kind: 'no_account' });
     // No account, so no synchronisation: the first one belongs to a link that succeeded.
     expect(startedRuns(test.logger)).toEqual([]);
   });
@@ -909,10 +910,8 @@ describe('AccountService.unlink', () => {
 
     await expect(account.unlink()).resolves.toEqual({ complete: true });
 
-    await expect(services.matches.listRecent(10)).resolves.toEqual({
-      accountLinked: false,
-      total: 0,
-      matches: [],
+    await expect(services.matches.listHistory({ hero: 'all', result: 'all' })).resolves.toEqual({
+      kind: 'no_account',
     });
     await expect(account.getLinkedAccount()).resolves.toBeNull();
     await expect(storedDataOf(test, OLD)).resolves.toEqual(NOTHING_LEFT);
@@ -1118,7 +1117,9 @@ describe('AccountService.unlink', () => {
     await expect(account.unlink()).resolves.toEqual({ complete: false });
 
     // The link is gone, the database is clean, and the folder is left for the next start.
-    await expect(services.matches.listRecent(1)).resolves.toMatchObject({ accountLinked: false });
+    await expect(services.matches.listHistory({ hero: 'all', result: 'all' })).resolves.toEqual({
+      kind: 'no_account',
+    });
     await expect(archiveStore.listEntries()).resolves.toEqual([accountFolderName(OLD)]);
     expect(logger.entries).toContainEqual(
       expect.objectContaining({ message: 'Steam account unlinked', context: { complete: false } }),

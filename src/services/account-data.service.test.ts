@@ -16,6 +16,7 @@ import { PROJECTION_VERSION } from '../core/analysis/registry';
 import type { AccountId } from '../core/domain/account';
 import type { MatchId } from '../core/domain/match';
 import { accountFolderName } from '../core/match-detail/archive-layout';
+import { DETAIL_WINDOW_MS } from '../core/match-detail/detail-status';
 import { INITIAL_ACCOUNT_SYNC_STATE } from '../core/sync/sync-status';
 import type { ArchiveStore } from '../ports/archive-store.port';
 import type { Database, SqlRow, SqlValue } from '../ports/database.port';
@@ -389,7 +390,8 @@ function reconcileFailures(logger: MemoryLogger) {
  * side. Nothing is synchronised until the test calls `populate`.
  *
  * @param archiveStore - The archive store; a fresh one by default.
- * @returns The service, what it works on, and the means to fill and inspect it.
+ * @returns The service, what it works on, the clock of the service (`clock.now`, in Unix ms), and
+ *   the means to fill and inspect it.
  */
 function setUp(archiveStore: MemoryArchiveStore = new MemoryArchiveStore()) {
   const database = new SpyDatabase(createTestDatabase());
@@ -412,6 +414,9 @@ function setUp(archiveStore: MemoryArchiveStore = new MemoryArchiveStore()) {
   const syncState = new SyncStateRepository(database, logger);
   const details = linkedServices.services.details;
   const detailRepository = new MatchDetailRepository(database);
+  // The clock of the service alone, which a test moves forward to put the matches past the window
+  // of the last 90 days; the synchronisation keeps its own fixed clock.
+  const clock = { now: START };
   const service = new AccountDataService({
     matches,
     metrics,
@@ -421,6 +426,7 @@ function setUp(archiveStore: MemoryArchiveStore = new MemoryArchiveStore()) {
     maintenance: new DatabaseMaintenanceRepository(database),
     details,
     logger,
+    now: () => clock.now,
   });
 
   /**
@@ -456,6 +462,7 @@ function setUp(archiveStore: MemoryArchiveStore = new MemoryArchiveStore()) {
     syncState,
     details,
     detailRepository,
+    clock,
     populate,
     snapshot: () => stored(database, archiveStore),
   };
@@ -1278,9 +1285,8 @@ describe('AccountDataService.sweep', () => {
 });
 
 describe('AccountDataService.sweep, the archives of the linked account', () => {
-  it('marks a ready match whose file is gone evicted', async () => {
-    const { service, populate, database, logger, archiveStore, detailRepository, metrics } =
-      setUp();
+  it('puts a ready match of the last 90 days whose file is gone back to pending', async () => {
+    const { service, populate, logger, archiveStore, detailRepository, metrics } = setUp();
     await populate('linked');
     const gone = await firstArchive(archiveStore);
     const kept = new Set(await archiveStore.list(LINKED));
@@ -1290,15 +1296,53 @@ describe('AccountDataService.sweep, the archives of the linked account', () => {
 
     await service.sweep(LINKED);
 
-    await expect(detailStatusOf(database, gone)).resolves.toBe('evicted');
-    // The other archives are untouched, and the evicted match keeps its analysis.
+    // The queue downloads it again: the match is still in the window of the last 90 days.
+    await expect(detailRepository.getDetail(LINKED, gone)).resolves.toMatchObject({
+      status: 'pending',
+      attempts: 0,
+      archivedBytes: null,
+    });
+    // The other archives are untouched, and the match keeps its analysis.
     await expect(detailRepository.listReadyMatchIds(LINKED)).resolves.toEqual(kept);
     await expect(archiveStore.list(LINKED)).resolves.toEqual([...kept]);
     await expect(metrics.countAccount(LINKED)).resolves.toBe(metricRows);
     expect(reconciliations(logger)).toEqual([
-      { level: 'info', context: { evicted: 1, removed: 0 } },
+      { level: 'info', context: { evicted: 0, pending: 1, removed: 0 } },
     ]);
     expect(failures(logger)).toEqual([]);
+    expect(reconcileFailures(logger)).toEqual([]);
+  });
+
+  it('marks a ready match past the 90 days whose file is gone evicted', async () => {
+    const { service, populate, logger, archiveStore, detailRepository, metrics, clock } = setUp();
+    await populate('linked');
+    const gone = await firstArchive(archiveStore);
+    const kept = new Set(await archiveStore.list(LINKED));
+    kept.delete(gone);
+    const before = await detailRepository.getDetail(LINKED, gone);
+    expect(before?.archivedBytes).toEqual(expect.any(Number));
+    const metricRows = await metrics.countAccount(LINKED);
+    await archiveStore.remove(LINKED, gone);
+    // A day past the window: every match of the history is older than the 90 days by then.
+    clock.now = START + DETAIL_WINDOW_MS + 86_400_000;
+
+    await service.sweep(LINKED);
+
+    // The queue never takes a match past the window: it stays evicted, with the size and the format
+    // of the file it lost, and keeps its analysis.
+    await expect(detailRepository.getDetail(LINKED, gone)).resolves.toMatchObject({
+      status: 'evicted',
+      archivedBytes: before?.archivedBytes,
+      archiveFormat: before?.archiveFormat,
+    });
+    await expect(detailRepository.listReadyMatchIds(LINKED)).resolves.toEqual(kept);
+    await expect(archiveStore.list(LINKED)).resolves.toEqual([...kept]);
+    await expect(metrics.countAccount(LINKED)).resolves.toBe(metricRows);
+    expect(reconciliations(logger)).toEqual([
+      { level: 'info', context: { evicted: 1, pending: 0, removed: 0 } },
+    ]);
+    expect(failures(logger)).toEqual([]);
+    expect(reconcileFailures(logger)).toEqual([]);
   });
 
   it('removes a file that has no ready match', async () => {
@@ -1323,7 +1367,7 @@ describe('AccountDataService.sweep, the archives of the linked account', () => {
     await expect(archiveStore.list(LINKED)).resolves.toEqual(archives);
     await expect(detailRepository.listReadyMatchIds(LINKED)).resolves.toEqual(ready);
     expect(reconciliations(logger)).toEqual([
-      { level: 'info', context: { evicted: 0, removed: 2 } },
+      { level: 'info', context: { evicted: 0, pending: 0, removed: 2 } },
     ]);
     expect(failures(logger)).toEqual([]);
   });
@@ -1369,14 +1413,14 @@ describe('AccountDataService.sweep, the archives of the linked account', () => {
     expect(reconcileFailures(logger)).toEqual([{ step: 'reconcile_files', kind: 'unexpected' }]);
     expect(failures(logger)).toEqual([]);
     expect(reconciliations(logger)).toEqual([
-      { level: 'info', context: { evicted: 0, removed: 1 } },
+      { level: 'info', context: { evicted: 0, pending: 0, removed: 1 } },
     ]);
     expect(JSON.stringify(logger.entries)).not.toContain(String(LINKED));
     // The start-up went on to its end.
     expect(logger.entries).toContainEqual(expect.objectContaining({ message: 'Startup cleanup' }));
   });
 
-  it('goes on when a row cannot be marked evicted, and marks it at the next start', async () => {
+  it('goes on when a row cannot be marked, and marks it at the next start', async () => {
     const { service, populate, database, logger, archiveStore } = setUp();
     await populate('linked');
     const gone = await firstArchive(archiveStore);
@@ -1395,15 +1439,16 @@ describe('AccountDataService.sweep, the archives of the linked account', () => {
     expect(failures(logger)).toEqual([]);
     expect(JSON.stringify(logger.entries)).not.toContain(String(LINKED));
     expect(reconciliations(logger)).toEqual([
-      { level: 'info', context: { evicted: 0, removed: 1 } },
+      { level: 'info', context: { evicted: 0, pending: 0, removed: 1 } },
     ]);
 
     await service.sweep(LINKED);
 
-    await expect(detailStatusOf(database, gone)).resolves.toBe('evicted');
+    // The match is still in the window of the last 90 days: it goes back to the queue.
+    await expect(detailStatusOf(database, gone)).resolves.toBe('pending');
     expect(reconciliations(logger)).toEqual([
-      { level: 'info', context: { evicted: 0, removed: 1 } },
-      { level: 'info', context: { evicted: 1, removed: 0 } },
+      { level: 'info', context: { evicted: 0, pending: 0, removed: 1 } },
+      { level: 'info', context: { evicted: 0, pending: 1, removed: 0 } },
     ]);
   });
 

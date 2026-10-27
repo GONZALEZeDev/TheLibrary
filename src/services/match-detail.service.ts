@@ -54,13 +54,14 @@
  * logs why not; the service reads the facts of the match page from the envelope it gives back, and
  * decides what the page shows. A file that is absent, or whose content is damaged (it does not
  * decompress, decode, or yield the facts of the match), is not an error for the page: the match
- * goes back to `pending`, so that the next run downloads it again, and the view says `missing`, or
- * `lost` when the match is past the 90 days and so will not be downloaded. That cannot loop, since
- * the queue archives nothing whose facts it could not read back: the same detail would be refused
- * as `invalid`. The file of a damaged archive is left alone, for the next archive written to
- * replace it. A failure that says nothing about the archive (the disk cannot be read, the
- * compressor is broken) is an error for the page, and the match stays as it is: the archive may be
- * fine, and a match past the 90 days that went back to `pending` could never come back.
+ * goes back to `pending`, so that the next run downloads it again, and the view says `missing`; or,
+ * when the match is past the 90 days and so will not be downloaded, it is marked `evicted` (it
+ * keeps its metrics) and the view says `evicted_lost`. That cannot loop, since the queue archives
+ * nothing whose facts it could not read back: the same detail would be refused as `invalid`. The
+ * file of a damaged archive is left alone, for the next archive written to replace it. A failure
+ * that says nothing about the archive (the disk cannot be read, the compressor is broken) is an
+ * error for the page, and the match stays as it is: the archive may be fine, and a match past the
+ * 90 days that was marked `evicted` could never come back.
  *
  * @packageDocumentation
  */
@@ -205,21 +206,16 @@ export type MatchDetailView =
    */
   | { readonly kind: 'missing' }
   /**
-   * The match was recorded as archived but its file is absent or damaged, and the match is past the
-   * 90 days. It was put back to `pending`, but the queue only downloads the matches of the last 90
-   * days: the archive is gone for good.
-   */
-  | { readonly kind: 'lost' }
-  /**
    * The archive file of the match was removed to keep the archive folder under its size limit, and
    * the match is still inside the 90 days. It was put back to `pending`: the page asks for the
    * download that fetches it again.
    */
   | { readonly kind: 'evicted' }
   /**
-   * The archive file of the match was removed to keep the archive folder under its size limit, and
-   * the match is past the 90 days. It stays `evicted` (its stored metrics are kept), and the queue
-   * only downloads the matches of the last 90 days: the archive is gone for good.
+   * The match is `evicted` and past the 90 days: its archive file was removed to keep the archive
+   * folder under its size limit, or it was found absent or damaged once the match was past them
+   * (it was then marked `evicted`). Its stored metrics are kept, and the queue only downloads the
+   * matches of the last 90 days: the archive is gone for good.
    */
   | { readonly kind: 'evicted_lost' }
   /** The detail is archived: what the page shows of it, and the size of the archive file. */
@@ -432,34 +428,37 @@ export class MatchDetailService {
    * 1. a match the app does not know is `not_eligible`;
    * 2. an archived (`ready`) match is read, whatever its age: the file is there, so the page shows
    *    it even once the match has aged past the 90 days of the window;
-   * 3. an `evicted` match (its file was removed to keep the archive folder under its size limit) is
-   *    told before the eligibility check, so that an old one is not taken for a match the app never
-   *    archives: inside the 90 days it is put back to `pending` and the view is `evicted` (the page
-   *    asks for the download that fetches it again), past them the view is `evicted_lost` and the
-   *    row is left as it is;
+   * 3. an `evicted` match (no archive file left, its metrics kept: the file was removed to keep the
+   *    archive folder under its size limit, or found missing past the 90 days) is told before the
+   *    eligibility check, so that an old one is not taken for a match the app never archives:
+   *    inside the 90 days it is put back to `pending` and the view is `evicted` (the page asks for
+   *    the download that fetches it again), past them the view is `evicted_lost` and the row is
+   *    left as it is;
    * 4. any other match that the queue would not archive (`isDetailEligible`) is `not_eligible`;
    * 5. a `pending` or `retry` match is `waiting`, and an `unavailable` or `invalid` one says so,
    *    with the code of its last failure.
    *
    * An archive that is absent, or whose content cannot be used at any step (it does not
-   * decompress, decode, or yield the facts), is not an error for the page: the match is put back to
-   * `pending`, and the view is `missing` while the match is inside the 90 days (the next run
-   * downloads it again), or `lost` once it is past them (it never will). The file of a damaged
-   * archive is not deleted; the next archive written replaces it.
+   * decompress, decode, or yield the facts), is not an error for the page: while the match is
+   * inside the 90 days it is put back to `pending` and the view is `missing` (the next run
+   * downloads it again); once it is past them it is marked `evicted`, keeping its metrics, and the
+   * view is `evicted_lost` (it never will be). A row someone else changed meanwhile is left as it
+   * is, and the view is the one of its current state. The file of a damaged archive is not deleted;
+   * the next archive written replaces it.
    *
    * A failure that says nothing about the content is an error for the page, and changes nothing:
    * the file cannot be read (a lock, a permission), or the compressor is broken (its worker failed
-   * to load or crashed). The archive may be perfectly fine, and putting the match back to `pending`
-   * would at best download it again for nothing and at worst, for a match past the 90 days, detach
-   * an archive from the database for ever. The next view tries again.
+   * to load or crashed). The archive may be perfectly fine, and recording it as missing would at
+   * best download it again for nothing and at worst, for a match past the 90 days, detach an
+   * archive from the database for ever. The next view tries again.
    *
    * @param matchId - The match.
    * @returns What to show.
    * @throws AppError of kind `storage` when the database fails, when the archive file cannot be
-   *   read, or when the compressor is broken. The failure to put a match back to `pending` is one
-   *   too: the view is a read for the interface, which shows the error, and answering `missing`
-   *   while the database still says `ready` would be a lie, since the queue would never download
-   *   the match. The next read tries again.
+   *   read, or when the compressor is broken. The failure to record a missing archive is one too:
+   *   the view is a read for the interface, which shows the error, and answering `missing` while
+   *   the database still says `ready` would be a lie, since the queue would never download the
+   *   match. The next read tries again.
    */
   async getMatchDetail(matchId: MatchId): Promise<MatchDetailView> {
     const accountId = await this.#accountSource.currentAccountId();
@@ -869,23 +868,25 @@ export class MatchDetailService {
   }
 
   /**
-   * Show the archive of a match recorded as archived, or put the match back to `pending` when the
-   * archive is absent or damaged.
+   * Show the archive of a match recorded as archived, or record that it is absent or damaged, by
+   * the one rule of the app for a missing archive (`MatchDetailRepository.markArchiveMissing`).
    *
    * @param accountId - The tracked account.
    * @param matchId - The match, recorded as `ready`.
    * @param stored - What the database holds about the match: the size of the archive file as it
-   *   recorded it, and the fields of the match that tell whether the queue would download it again.
-   * @returns The facts of the archive; or, once the match is back to `pending`, `missing` when the
-   *   next run downloads it again and `lost` when the match is past the 90 days.
+   *   recorded it.
+   * @returns The facts of the archive; or, once the missing archive is recorded, `missing` when the
+   *   match is back to `pending` (the next run downloads it again), `evicted_lost` when it is past
+   *   the 90 days and now `evicted`, and the view of the row as it is now when someone else changed
+   *   it meanwhile.
    * @throws AppError of kind `storage` when the file cannot be read, when the compressor is broken,
-   *   or when the match cannot be put back to `pending`. Any error of the reading of the facts that
-   *   is not a problem of the archive (a bug) is thrown as it is.
+   *   or when the missing archive cannot be recorded. Any error of the reading of the facts that is
+   *   not a problem of the archive (a bug) is thrown as it is.
    */
   async #showArchive(
     accountId: AccountId,
     matchId: MatchId,
-    stored: Pick<StoredDetail, 'archivedBytes' | 'match'>,
+    stored: Pick<StoredDetail, 'archivedBytes'>,
   ): Promise<MatchDetailView> {
     const { archivedBytes } = stored;
     if (archivedBytes === null) {
@@ -918,11 +919,22 @@ export class MatchDetailService {
     }
     // Whatever was wrong, the file is not deleted. The next download writes the archive again
     // (replacing it), and a detail that cannot be read back is refused by the queue instead of
-    // archived, so this never loops.
-    await this.#repository.resetToPending(accountId, matchId);
-    // The queue only downloads the matches of the last 90 days, and it is the same rule that tells
-    // the two apart: `missing` promises a download that `nextDue` would never make for an older match.
-    return isDetailEligible(stored.match, this.#now()) ? { kind: 'missing' } : { kind: 'lost' };
+    // archived, so this never loops. The repository cuts the window of the last 90 days where the
+    // queue cuts it: `missing` promises a download that `nextDue` makes.
+    const outcome = await this.#repository.markArchiveMissing(accountId, matchId, this.#now());
+    switch (outcome) {
+      case 'pending':
+        return { kind: 'missing' };
+      case 'evicted':
+        // Past the window the queue never downloads it again: the match keeps its metrics, and its
+        // page says the detail is gone, as for an archive removed to free space.
+        return { kind: 'evicted_lost' };
+      case 'unchanged':
+        // Someone else changed the row since it was read (the storage evicted it, the analysis put
+        // it back to `pending`): the page answers from the row as it is now. Another turn here
+        // would take a new archive, written and found unusable meanwhile, so this ends.
+        return this.getMatchDetail(matchId);
+    }
   }
 
   /**

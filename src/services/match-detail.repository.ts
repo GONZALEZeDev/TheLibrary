@@ -16,6 +16,7 @@
  * @packageDocumentation
  */
 import { z } from 'zod';
+import { PROJECTION_VERSION } from '../core/analysis/registry';
 import type { AccountId } from '../core/domain/account';
 import { PAIGE_HERO_ID } from '../core/domain/hero';
 import { matchIdSchema, type MatchId, type MatchSummary } from '../core/domain/match';
@@ -103,6 +104,13 @@ export interface EvictionCandidate {
   readonly archivedBytes: number;
 }
 
+/**
+ * What became of a `ready` match whose archive file is missing or unreadable (see
+ * `MatchDetailRepository.markArchiveMissing`): back to `pending` in the window of the last 90 days,
+ * `evicted` past it, or `unchanged` when the match was not `ready` any more.
+ */
+export type MissingArchiveOutcome = 'pending' | 'evicted' | 'unchanged';
+
 /** Schema of a counter of attempts. */
 const attemptsSchema = z.int().nonnegative();
 
@@ -185,6 +193,38 @@ class SqlParams {
 }
 
 /**
+ * The start of the window of the last 90 days, in the unit of `start_time`: a match started at or
+ * after it is in the window, one started before it is past it. Every statement that cuts at the
+ * window reads it from here, so that they all cut exactly where `isDetailEligible` does.
+ *
+ * `start_time` is in Unix seconds while `now` and the window are in milliseconds, so the limit is
+ * converted to seconds once, here. It stays fractional on purpose: with a `now` that is not a whole
+ * second, a match that started on the whole second before the limit is out, exactly as the core's
+ * `startTime * 1000 >= now - window` says. A limit that is not a whole second is at least a
+ * thousandth away from the nearest one, far more than the rounding error of a double, so the
+ * comparison of a whole `start_time` with it cannot differ from the core's.
+ *
+ * @param now - The current time, in Unix milliseconds: the end of the window.
+ * @returns The start of the window, in Unix seconds (not rounded).
+ */
+function windowStartSeconds(now: number): number {
+  return (now - DETAIL_WINDOW_MS) / 1000;
+}
+
+/**
+ * The assignments that put a match back in the queue as if it was never tried: its failures, its
+ * archive size and its archive format are forgotten.
+ *
+ * @param params - The values of the statement, to which the assignments bind theirs.
+ * @returns The assignments, for the `SET` of an `UPDATE`.
+ */
+function pendingAssignments(params: SqlParams): string {
+  return `detail_status = ${params.bind(PENDING)}, detail_attempts = 0,
+           detail_next_attempt_at = NULL, detail_last_error = NULL, archived_bytes = NULL,
+           archive_format = NULL`;
+}
+
+/**
  * The `WHERE` conditions that select the matches of a player whose detail is archived: the SQL
  * form of `isDetailEligible`.
  *
@@ -207,13 +247,7 @@ function eligibleConditions(
       AND hero_id = ${params.bind(PAIGE_HERO_ID)}
       AND game_mode = ${params.bind(ARCHIVED_GAME_MODE)}
       AND match_mode IN (${params.bindAll(ARCHIVED_MATCH_MODES)})`;
-  // `start_time` is in Unix seconds while `now` and the window are in milliseconds, so the limit
-  // is converted to seconds once, here. It stays fractional on purpose: with a `now` that is not a
-  // whole second, a match that started on the whole second before the limit is out, exactly as
-  // the core's `startTime * 1000 >= now - window` says. A limit that is not a whole second is at
-  // least a thousandth away from the nearest one, far more than the rounding error of a double,
-  // so the comparison of a whole `start_time` with it cannot differ from the core's.
-  const inWindow = `start_time >= ${params.bind((now - DETAIL_WINDOW_MS) / 1000)}`;
+  const inWindow = `start_time >= ${params.bind(windowStartSeconds(now))}`;
   return statusKeptPastWindow === undefined
     ? `${identity}
       AND ${inWindow}`
@@ -457,9 +491,7 @@ export class MatchDetailRepository {
   async resetToPending(accountId: AccountId, matchId: MatchId): Promise<void> {
     const params = new SqlParams();
     const sql = `UPDATE matches
-       SET detail_status = ${params.bind(PENDING)}, detail_attempts = 0,
-           detail_next_attempt_at = NULL, detail_last_error = NULL, archived_bytes = NULL,
-           archive_format = NULL
+       SET ${pendingAssignments(params)}
        WHERE ${matchCondition(params, accountId, matchId)}`;
     await this.#run(
       () => this.#database.execute(sql, params.values),
@@ -492,6 +524,60 @@ export class MatchDetailRepository {
       'Could not record an evicted archive',
     );
     return changed > 0;
+  }
+
+  /**
+   * Record that the archive file of a `ready` match is missing or unreadable, by the one rule the
+   * app has for it. In the window of the last 90 days, the match goes back to `pending` as
+   * {@link MatchDetailRepository.resetToPending} puts it, so that the queue downloads it again.
+   * Past the window, where the queue never takes a match, it goes to `evicted` as
+   * {@link MatchDetailRepository.markEvicted} puts it, its archive size and its format kept: it
+   * keeps its metrics, and its page says the detail is gone. The window is cut where
+   * `isDetailEligible` cuts it (for the age of the match). Only a match still `ready` changes: one
+   * that is anything else by then (evicted, or reset, in the meantime) is left as it is.
+   *
+   * @param accountId - The player.
+   * @param matchId - The match.
+   * @param now - The current time, in Unix milliseconds: the end of the window.
+   * @returns What became of the match: `pending` or `evicted`, or `unchanged` when it was not
+   *   `ready` (or is not stored).
+   * @throws AppError of kind `storage` when the database fails.
+   */
+  async markArchiveMissing(
+    accountId: AccountId,
+    matchId: MatchId,
+    now: number,
+  ): Promise<MissingArchiveOutcome> {
+    const windowStart = windowStartSeconds(now);
+    // Two statements, one for each side of the window, with the same start: a `ready` match is on
+    // exactly one side, so at most one of them changes it. Each changes only a match still `ready`,
+    // so a row that someone else changes between the two is left alone. The placeholders are
+    // numbered as the text is read, so each part is written after the one that precedes it.
+    const pendingParams = new SqlParams();
+    const pendingSql = `UPDATE matches
+       SET ${pendingAssignments(pendingParams)}
+       WHERE ${matchCondition(pendingParams, accountId, matchId)}
+         AND detail_status = ${pendingParams.bind(READY)}
+         AND start_time >= ${pendingParams.bind(windowStart)}`;
+    // Each statement changes one row (the account and the match make the key) or none.
+    const reset = await this.#run(
+      () => this.#database.execute(pendingSql, pendingParams.values),
+      'Could not reset the detail state of a match',
+    );
+    if (reset > 0) {
+      return 'pending';
+    }
+    const evictedParams = new SqlParams();
+    const evictedSql = `UPDATE matches
+       SET detail_status = ${evictedParams.bind(EVICTED)}
+       WHERE ${matchCondition(evictedParams, accountId, matchId)}
+         AND detail_status = ${evictedParams.bind(READY)}
+         AND start_time < ${evictedParams.bind(windowStart)}`;
+    const evicted = await this.#run(
+      () => this.#database.execute(evictedSql, evictedParams.values),
+      'Could not record an evicted archive',
+    );
+    return evicted > 0 ? 'evicted' : 'unchanged';
   }
 
   /**
@@ -547,17 +633,29 @@ export class MatchDetailRepository {
   }
 
   /**
-   * The archives the storage may remove to free space, in the order it removes them: every `ready`
-   * match of a player but the `protectedCount` newest `ready` Paige matches, oldest first.
+   * The archives the storage may remove to free space, in the order it removes them: the `ready`
+   * matches of a player that started before the window of the last 90 days and whose metrics of the
+   * current version are stored, but the `protectedCount` newest `ready` Paige matches, oldest first.
    *
-   * Only Paige archives are protected, since only they feed the review and the analysis: an archive
-   * of another hero, if one is ever stored, is a candidate whatever its age. Matches are ordered by
-   * start time, and by match id when two started at the same second, so the order is total: the
-   * protected ones are the last in that order, and the candidates come from its start.
+   * The matches of the window are never candidates, whatever the limit: the detail queue would
+   * download such a match again as soon as its page opens, so evicting it would only start a loop of
+   * downloads and evictions. Their start time is compared with the window as `eligibleConditions`
+   * compares it, so a match is in the window here exactly when `isDetailEligible` says so (for its
+   * age). A match is a candidate only once its projection of the current `PROJECTION_VERSION` is
+   * stored, since an evicted match keeps its metrics and cannot have them computed again: a
+   * projection of that version that failed counts too, as it is final for the version.
+   *
+   * Only Paige archives are protected by the count, since only they feed the review and the
+   * analysis: an archive of another hero, if one is ever stored, is a candidate once it is past the
+   * window and projected. The protected ones are counted among every `ready` Paige match, inside the
+   * window or not, projected or not. Matches are ordered by start time, and by match id when two
+   * started at the same second, so the order is total: the protected ones are the last in that order,
+   * and the candidates come from its start.
    *
    * @param accountId - The player.
    * @param protectedCount - How many of the newest Paige archives are never candidates: a whole
    *   number, 0 or more.
+   * @param now - The current time, in Unix milliseconds: the end of the window.
    * @returns The candidates with the size of their file, oldest first; a `ready` match with no size
    *   recorded counts as 0 bytes, as {@link MatchDetailRepository.sumArchivedBytes} counts it.
    * @throws AppError of kind `storage` when the database fails or returns an invalid row.
@@ -565,21 +663,28 @@ export class MatchDetailRepository {
   async listEvictionCandidates(
     accountId: AccountId,
     protectedCount: number,
+    now: number,
   ): Promise<readonly EvictionCandidate[]> {
     const params = new SqlParams();
     // The placeholders are numbered as the text is read, so each part is written after the one
-    // that precedes it.
-    const sql = `SELECT match_id, COALESCE(archived_bytes, 0) AS archived_bytes FROM matches
-       WHERE account_id = ${params.bind(accountId)}
-         AND detail_status = ${params.bind(READY)}
-         AND match_id NOT IN (
+    // that precedes it. The inner join keeps the matches that have a projection row only; its
+    // version is then compared with the current one, whatever its `failed` flag. A match started
+    // before the start of the window is out of it (see `windowStartSeconds`).
+    const sql = `SELECT m.match_id, COALESCE(m.archived_bytes, 0) AS archived_bytes
+       FROM matches AS m
+       JOIN match_projections AS p ON p.account_id = m.account_id AND p.match_id = m.match_id
+       WHERE m.account_id = ${params.bind(accountId)}
+         AND m.detail_status = ${params.bind(READY)}
+         AND m.start_time < ${params.bind(windowStartSeconds(now))}
+         AND p.projection_version = ${params.bind(PROJECTION_VERSION)}
+         AND m.match_id NOT IN (
            SELECT match_id FROM matches
            WHERE account_id = ${params.bind(accountId)}
              AND detail_status = ${params.bind(READY)}
              AND hero_id = ${params.bind(PAIGE_HERO_ID)}
            ORDER BY start_time DESC, match_id DESC
            LIMIT ${params.bind(protectedCount)})
-       ORDER BY start_time ASC, match_id ASC`;
+       ORDER BY m.start_time ASC, m.match_id ASC`;
     const rows = await this.#run(
       () => this.#database.select(sql, params.values),
       'Could not read the archives to evict',

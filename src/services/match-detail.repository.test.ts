@@ -5,6 +5,8 @@
  * @packageDocumentation
  */
 import { describe, expect, it } from 'vitest';
+import { PROJECTION_VERSION } from '../core/analysis/registry';
+import type { AccountId } from '../core/domain/account';
 import { PAIGE_HERO_ID } from '../core/domain/hero';
 import type { MatchId, MatchSummary } from '../core/domain/match';
 import { ARCHIVE_FORMAT } from '../core/match-detail/archive-envelope';
@@ -25,6 +27,7 @@ import {
 } from '../test/test-data';
 import { MatchDetailRepository, type StoredDetail } from './match-detail.repository';
 import { MatchesRepository } from './matches.repository';
+import { MetricsRepository } from './metrics.repository';
 
 /** The current time of the tests (Unix milliseconds, a whole number of seconds). */
 const NOW = 1_792_154_119_000;
@@ -697,44 +700,193 @@ describe('MatchDetailRepository', () => {
     });
   });
 
-  it('lists eviction candidates oldest first outside the newest protected archives', async () => {
-    const otherHero = PAIGE_HERO_ID + 1;
+  it('puts a ready match with a missing archive back to pending in the window and evicts it past it', async () => {
     const { repository } = await createRepositories([
-      // Paige archives: 5 and 10 started at the same second, and so did 3 and 4.
+      // Archives in the window: a recent one, and one started on its first second.
       matchSummary({ matchId: 1, startTime: daysAgo(1) }),
-      matchSummary({ matchId: 2, startTime: daysAgo(2) }),
-      matchSummary({ matchId: 3, startTime: daysAgo(3) }),
-      matchSummary({ matchId: 4, startTime: daysAgo(3) }),
+      matchSummary({ matchId: 2, startTime: daysAgo(90) }),
+      // Archives past the window: one started a second before it, and an old format-1 one whose
+      // refresh failed for good.
+      matchSummary({ matchId: 3, startTime: daysAgo(90) - 1 }),
+      matchSummary({ matchId: 4, startTime: daysAgo(120) }),
+      // Not archived: a match given up on and a pending one in the window, an evicted one past it.
       matchSummary({ matchId: 5, startTime: daysAgo(5) }),
-      matchSummary({ matchId: 10, startTime: daysAgo(5) }),
-      // Newer than every archive, but not archives: a pending match and an evicted one. They take
-      // no place among the protected ones, and are never candidates.
-      matchSummary({ matchId: 6, startTime: daysAgo(0.5) }),
-      matchSummary({ matchId: 8, startTime: daysAgo(0.1) }),
-      // The newest archive, of another hero: never protected, so always a candidate.
-      matchSummary({ matchId: 7, startTime: daysAgo(0.25), heroId: otherHero }),
-      // Another player's newest archive: never listed, and protects nothing.
-      matchSummary({ matchId: 9, startTime: daysAgo(0), accountId: testAccountId(42) }),
+      matchSummary({ matchId: 6, startTime: daysAgo(6) }),
+      matchSummary({ matchId: 7, startTime: daysAgo(100) }),
+      // Another player's archives with the same ids, one in the window and one past it.
+      matchSummary({ matchId: 1, startTime: daysAgo(1), accountId: testAccountId(42) }),
+      matchSummary({ matchId: 3, startTime: daysAgo(90) - 1, accountId: testAccountId(42) }),
     ]);
-    for (const id of [1, 2, 3, 4, 5, 10, 7, 8]) {
+    for (const id of [1, 2, 3, 4, 7]) {
+      await repository.markReady(TEST_ACCOUNT_ID, testMatchId(id), 1_000 + id, ARCHIVE_FORMAT);
+    }
+    await repository.markRefreshFinal(TEST_ACCOUNT_ID, testMatchId(4));
+    await repository.markEvicted(TEST_ACCOUNT_ID, testMatchId(7));
+    await repository.saveState(TEST_ACCOUNT_ID, testMatchId(5), {
+      status: 'unavailable',
+      attempts: 6,
+      nextAttemptAt: null,
+      lastError: 'http_404',
+    });
+    for (const id of [1, 3]) {
+      await repository.markReady(testAccountId(42), testMatchId(id), 9_000 + id, ARCHIVE_FORMAT);
+    }
+    const others = await Promise.all(
+      [1, 3].map((id) => repository.getDetail(testAccountId(42), testMatchId(id))),
+    );
+    const notReady = await Promise.all(
+      [5, 6, 7].map((id) => repository.getDetail(TEST_ACCOUNT_ID, testMatchId(id))),
+    );
+
+    // It answers what it did: only the ready matches change, by the side of the window they are on.
+    for (const [id, outcome] of [
+      [1, 'pending'],
+      [2, 'pending'],
+      [3, 'evicted'],
+      [4, 'evicted'],
+      [5, 'unchanged'],
+      [6, 'unchanged'],
+      [7, 'unchanged'],
+    ] as const) {
+      await expect(
+        repository.markArchiveMissing(TEST_ACCOUNT_ID, testMatchId(id), NOW),
+      ).resolves.toBe(outcome);
+    }
+    // Asking again, or for a match that is not stored, changes nothing.
+    for (const id of [1, 3, 99]) {
+      await expect(
+        repository.markArchiveMissing(TEST_ACCOUNT_ID, testMatchId(id), NOW),
+      ).resolves.toBe('unchanged');
+    }
+
+    // In the window, the match is back in the queue as if it was never tried, so it is due again.
+    for (const id of [1, 2]) {
+      await expect(repository.getDetail(TEST_ACCOUNT_ID, testMatchId(id))).resolves.toMatchObject({
+        status: 'pending',
+        attempts: 0,
+        nextAttemptAt: null,
+        lastError: null,
+        archivedBytes: null,
+        archiveFormat: null,
+      });
+    }
+    await expect(takeAllDue(repository, NOW)).resolves.toEqual([1, 6, 2].map(testMatchId));
+    // Past the window, the match is evicted with the size and the format of its file kept.
+    await expect(repository.getDetail(TEST_ACCOUNT_ID, testMatchId(3))).resolves.toMatchObject({
+      status: 'evicted',
+      attempts: 0,
+      archivedBytes: 1_003,
+      archiveFormat: ARCHIVE_FORMAT,
+    });
+    await expect(repository.getDetail(TEST_ACCOUNT_ID, testMatchId(4))).resolves.toMatchObject({
+      status: 'evicted',
+      archivedBytes: 1_004,
+      archiveFormat: 1,
+    });
+    // The matches that were not ready are left exactly as they were, and so are another player's.
+    await expect(
+      Promise.all([5, 6, 7].map((id) => repository.getDetail(TEST_ACCOUNT_ID, testMatchId(id)))),
+    ).resolves.toEqual(notReady);
+    await expect(
+      Promise.all([1, 3].map((id) => repository.getDetail(testAccountId(42), testMatchId(id)))),
+    ).resolves.toEqual(others);
+  });
+
+  it('cuts the window of a missing archive to the millisecond, as isDetailEligible does', async () => {
+    const { repository } = await createRepositories([
+      matchSummary({ matchId: 1, startTime: daysAgo(90) }),
+      matchSummary({ matchId: 2, startTime: daysAgo(90) }),
+    ]);
+    for (const id of [1, 2]) {
+      await repository.markReady(TEST_ACCOUNT_ID, testMatchId(id), 100, ARCHIVE_FORMAT);
+    }
+    // A match started on the first second of the window is in it at that time, and out of it a
+    // millisecond later.
+    const firstSecondOfWindow = matchSummary({ startTime: daysAgo(90) });
+    expect(isDetailEligible(firstSecondOfWindow, NOW)).toBe(true);
+    expect(isDetailEligible(firstSecondOfWindow, NOW + 1)).toBe(false);
+
+    await expect(repository.markArchiveMissing(TEST_ACCOUNT_ID, testMatchId(1), NOW)).resolves.toBe(
+      'pending',
+    );
+    await expect(
+      repository.markArchiveMissing(TEST_ACCOUNT_ID, testMatchId(2), NOW + 1),
+    ).resolves.toBe('evicted');
+  });
+
+  it('lists eviction candidates oldest first outside the protected and unprojected archives', async () => {
+    const otherHero = PAIGE_HERO_ID + 1;
+    const { database, repository } = await createRepositories([
+      // Paige archives past the window: 5 and 10 started at the same second, and so did 3 and 4.
+      matchSummary({ matchId: 1, startTime: daysAgo(101) }),
+      matchSummary({ matchId: 2, startTime: daysAgo(102) }),
+      matchSummary({ matchId: 3, startTime: daysAgo(103) }),
+      matchSummary({ matchId: 4, startTime: daysAgo(103) }),
+      matchSummary({ matchId: 5, startTime: daysAgo(105) }),
+      matchSummary({ matchId: 10, startTime: daysAgo(105) }),
+      // The newest Paige archive, started on the first second of the window: never a candidate,
+      // and it takes a place among the protected ones.
+      matchSummary({ matchId: 11, startTime: daysAgo(90) }),
+      // The oldest Paige archives, whose metrics of the current version are not all stored: none,
+      // or those of an older version, so not candidates; or a projection of the current version
+      // that failed, which is final for that version, so a candidate.
+      matchSummary({ matchId: 13, startTime: daysAgo(110) }),
+      matchSummary({ matchId: 14, startTime: daysAgo(111) }),
+      matchSummary({ matchId: 15, startTime: daysAgo(112) }),
+      // Newer than the archives past the window, but not archives: a pending match and an evicted
+      // one. They take no place among the protected ones, and are never candidates.
+      matchSummary({ matchId: 6, startTime: daysAgo(100.5) }),
+      matchSummary({ matchId: 8, startTime: daysAgo(100.1) }),
+      // Archives of another hero: never protected, so candidates past the window, whatever their
+      // age; 12 started one second before the window.
+      matchSummary({ matchId: 7, startTime: daysAgo(100.25), heroId: otherHero }),
+      matchSummary({ matchId: 12, startTime: daysAgo(90) - 1, heroId: otherHero }),
+      // Another player's archive: never listed, and protects nothing.
+      matchSummary({ matchId: 9, startTime: daysAgo(100), accountId: testAccountId(42) }),
+    ]);
+    for (const id of [1, 2, 3, 4, 5, 10, 11, 13, 14, 15, 7, 12, 8]) {
       await repository.markReady(TEST_ACCOUNT_ID, testMatchId(id), 100 + id, ARCHIVE_FORMAT);
     }
     await repository.markEvicted(TEST_ACCOUNT_ID, testMatchId(8));
     await repository.markReady(testAccountId(42), testMatchId(9), 109, ARCHIVE_FORMAT);
+    // Every match has its metrics of the current version stored, but 13 (none), 14 (an older
+    // version) and 15 (the current version, failed).
+    const metrics = new MetricsRepository(database);
+    const project = (accountId: AccountId, id: number, version: number, failed: boolean) =>
+      metrics.saveProjection(
+        accountId,
+        testMatchId(id),
+        { version, playerBadge: null, hasLeaver: false, failed, projectedAt: NOW },
+        new Map(),
+      );
+    for (const id of [1, 2, 3, 4, 5, 10, 11, 7, 12, 8, 6]) {
+      await project(TEST_ACCOUNT_ID, id, PROJECTION_VERSION, false);
+    }
+    await project(TEST_ACCOUNT_ID, 14, PROJECTION_VERSION - 1, false);
+    await project(TEST_ACCOUNT_ID, 15, PROJECTION_VERSION, true);
+    await project(testAccountId(42), 9, PROJECTION_VERSION, false);
     const candidate = (id: number) => ({ matchId: testMatchId(id), archivedBytes: 100 + id });
 
-    // The 3 newest Paige archives are 1, 2 and 4 (the higher id of the two at the same second).
-    await expect(repository.listEvictionCandidates(TEST_ACCOUNT_ID, 3)).resolves.toEqual(
-      [5, 10, 3, 7].map(candidate),
+    // The 4 newest Paige archives are 11, 1, 2 and 4 (the higher id of the two at the same second).
+    await expect(repository.listEvictionCandidates(TEST_ACCOUNT_ID, 4, NOW)).resolves.toEqual(
+      [15, 5, 10, 3, 7, 12].map(candidate),
     );
-    // Nothing protected: every archive, oldest first, the lower id first at the same second.
-    await expect(repository.listEvictionCandidates(TEST_ACCOUNT_ID, 0)).resolves.toEqual(
-      [5, 10, 3, 4, 2, 1, 7].map(candidate),
+    // Nothing protected: every projected archive past the window, oldest first, the lower id first
+    // at the same second.
+    await expect(repository.listEvictionCandidates(TEST_ACCOUNT_ID, 0, NOW)).resolves.toEqual(
+      [15, 5, 10, 3, 4, 2, 1, 7, 12].map(candidate),
     );
-    // More protected than there are Paige archives: only the other hero's is left.
-    await expect(repository.listEvictionCandidates(TEST_ACCOUNT_ID, 100)).resolves.toEqual([
-      candidate(7),
-    ]);
+    // More protected than there are Paige archives: only the other hero's are left.
+    await expect(repository.listEvictionCandidates(TEST_ACCOUNT_ID, 100, NOW)).resolves.toEqual(
+      [7, 12].map(candidate),
+    );
+    // A millisecond later, 11 started before the window too, as `isDetailEligible` says.
+    const firstSecondOfWindow = matchSummary({ startTime: daysAgo(90) });
+    expect(isDetailEligible(firstSecondOfWindow, NOW)).toBe(true);
+    expect(isDetailEligible(firstSecondOfWindow, NOW + 1)).toBe(false);
+    await expect(repository.listEvictionCandidates(TEST_ACCOUNT_ID, 0, NOW + 1)).resolves.toEqual(
+      [15, 5, 10, 3, 4, 2, 1, 7, 12, 11].map(candidate),
+    );
   });
 
   it('sums the bytes of ready archives only', async () => {
@@ -811,7 +963,9 @@ describe('MatchDetailRepository', () => {
     await history.upsertMany([resynchronised]);
 
     // The history columns follow the new synchronisation, the detail columns are left alone.
-    await expect(history.listRecent(TEST_ACCOUNT_ID, 1)).resolves.toMatchObject([{ kills: 9 }]);
+    await expect(
+      history.listHistory(TEST_ACCOUNT_ID, { heroId: null, won: null }),
+    ).resolves.toMatchObject([{ kills: 9 }]);
     await expect(repository.getDetail(TEST_ACCOUNT_ID, testMatchId(1))).resolves.toEqual({
       status: 'ready',
       attempts: 0,
@@ -908,7 +1062,8 @@ describe('MatchDetailRepository', () => {
         repository.resetToPending(TEST_ACCOUNT_ID, matchId),
         repository.summary(TEST_ACCOUNT_ID, NOW),
         repository.markEvicted(TEST_ACCOUNT_ID, matchId),
-        repository.listEvictionCandidates(TEST_ACCOUNT_ID, 40),
+        repository.markArchiveMissing(TEST_ACCOUNT_ID, matchId, NOW),
+        repository.listEvictionCandidates(TEST_ACCOUNT_ID, 40, NOW),
         repository.sumArchivedBytes(TEST_ACCOUNT_ID),
         repository.averageArchiveBytes(TEST_ACCOUNT_ID),
         repository.listReadyMatchIds(TEST_ACCOUNT_ID),
@@ -989,12 +1144,14 @@ describe('MatchDetailRepository', () => {
     await repository.nextStale(TEST_ACCOUNT_ID, NOW, new Set([testMatchId(987_654_322)]));
     await repository.markRefreshFinal(TEST_ACCOUNT_ID, matchId);
     await repository.markEvicted(TEST_ACCOUNT_ID, matchId);
-    await repository.listEvictionCandidates(TEST_ACCOUNT_ID, 7_777_777);
+    await repository.listEvictionCandidates(TEST_ACCOUNT_ID, 7_777_777, NOW);
     await repository.sumArchivedBytes(TEST_ACCOUNT_ID);
     await repository.averageArchiveBytes(TEST_ACCOUNT_ID);
     await repository.listReadyMatchIds(TEST_ACCOUNT_ID);
+    // The match is not ready any more, so both of its statements run.
+    await repository.markArchiveMissing(TEST_ACCOUNT_ID, matchId, NOW);
 
-    expect(statements).toHaveLength(13);
+    expect(statements).toHaveLength(15);
     for (const sql of statements) {
       for (const value of [
         TEST_ACCOUNT_ID,

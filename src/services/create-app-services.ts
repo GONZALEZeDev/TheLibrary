@@ -168,6 +168,7 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     // after it, and this is only called once both exist (when the player changes the limit).
     runExclusive: <T>(task: () => Promise<T>): Promise<T> => sync.runExclusive(task),
     logger,
+    now,
   });
   // The synchronisation runs the detail queue after the history: it gets the one `details`, and
   // keeps the rank, the size of the archive folder and the analysis of the archived matches up to
@@ -270,6 +271,7 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     maintenance: new DatabaseMaintenanceRepository(database),
     details,
     logger,
+    now,
   });
   // The only writer of the link: the other services only read it, through `linkedAccounts`.
   const account = new AccountService({

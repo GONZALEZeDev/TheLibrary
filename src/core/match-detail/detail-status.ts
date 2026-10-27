@@ -19,9 +19,10 @@ import { PAIGE_HERO_ID } from '../domain/hero';
  * - `unavailable`: every attempt failed; the queue gives up on this match.
  * - `invalid`: the API answered, but with a detail the app cannot use; trying again would get the
  *   same answer, so the queue gives up at once.
- * - `evicted`: the detail was archived, but its file was removed to keep the archive folder under
- *   its size limit; the match keeps its archive size, its format and its stored metrics. The queue
- *   never takes it on its own.
+ * - `evicted`: the detail was archived, but no archive file is left; the match keeps its archive
+ *   size, its format and its stored metrics. Either the file was removed to keep the archive
+ *   folder under its size limit, or it was found missing or unreadable past the 90-day window. The
+ *   queue never takes it on its own.
  */
 export const DETAIL_STATUSES = [
   'pending',

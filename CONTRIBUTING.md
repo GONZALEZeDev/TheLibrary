@@ -67,6 +67,24 @@ A metric of the match analysis is a `<key>.metric.ts` file under `src/core/analy
 | `pnpm canary`                          | The weekly API canary: calls the real deadlock-api; GitHub Actions also runs it every Monday                  |
 | `pnpm lint` / `pnpm format`            | Lint / format everything                                                                                      |
 | `pnpm tauri build --debug --no-bundle` | Production-mode executable (CSP enforced) without installer; it uses the data folders of an installed release |
+| `pnpm notices`                         | Regenerates `THIRD_PARTY_NOTICES.md` from the production dependencies and the Rust crates of the app          |
+| `pnpm release:prepare <X.Y.Z>`         | Prepares a release (see below)                                                                                |
+
+## Seeing the update dialog in the browser
+
+`pnpm dev` checks for updates with a synthetic gateway that finds none, so the dialog does not open at every reload. To see it, run `localStorage.setItem('thelibrary.dev.fakeUpdate', '1')` in the console of the page and reload: it offers version 9.9.9 with a summary in both languages, and "Install now" pretends to download it. `localStorage.removeItem('thelibrary.dev.fakeUpdate')` turns it off. `pnpm dev:desktop` never checks for updates: a development build must not offer the public releases as updates of itself.
+
+## Releasing
+
+Releases are built by GitHub Actions only, never on a developer's PC ([ADR 0007](docs/adr/0007-updates-through-github-releases.md)). For a version `X.Y.Z`:
+
+1. Write its section, `## [X.Y.Z] - YYYY-MM-DD`, in [CHANGELOG.md](CHANGELOG.md) (required) and [CHANGELOG.fr.md](CHANGELOG.fr.md) (the app shows it to French players; without it they see the English one). Move what was under `[Unreleased]`. Keep it short and written for players: the app shows it in the update dialog.
+2. Run `pnpm release:prepare X.Y.Z`. It writes the version into `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock`, checks the changelogs, regenerates `THIRD_PARTY_NOTICES.md` and prints the commands that commit, tag and push the release. The first release keeps the version the repository already holds.
+3. Review the changes, then run those commands. The tag starts the release workflow, which runs every check again, builds the installer, signs it for the updater and creates a **draft** release with the installer, its signature, `latest.json` and the notices.
+4. Download the installer from the draft and try it.
+5. Publish the draft. **Never tick "Set as a pre-release"**: the installed apps only look at the latest full release, so they would never see it. From then on, every installed app offers the version at its next start.
+
+The updater's private key and its password live only in the repository secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` and in the owner's backup. If it were lost, the installed apps could never be updated again: they trust only its public key, pinned in `tauri.conf.json`.
 
 ## Signing in during development
 

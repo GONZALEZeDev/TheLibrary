@@ -5,7 +5,7 @@
 | Folder                | Purpose                                                                                                                                                         |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `app/`                | App shell, router, providers, query client, route error screen, the way back from a match to the history, the app version                                       |
-| `features/<feature>/` | Screens and components of one feature (account, dashboard, matches, match-detail, review, settings) and their hooks                                             |
+| `features/<feature>/` | Screens and components of one feature (account, dashboard, matches, match-detail, review, settings, update) and their hooks                                     |
 | `components/`         | Shared presentational components (button, panel, status line, result badge, stat tile, segmented control, tabs…), the shared button styles and the focus helper |
 | `format/`             | Display formatters shared by several features (durations, dates in the local time zone)                                                                         |
 | `i18n/`               | i18next setup and the `en`/`fr` catalogues                                                                                                                      |
@@ -61,9 +61,16 @@ The settings page (`/settings`) is one titled panel per group (all but the accou
 | Storage     | `features/settings/StorageSection.tsx`     | What the archives take against the limit (100, 250, 500, 1000, 2000 or 5000 MB; 500 by default), a select to change the limit, about how many matches it holds, and that the archives of the last 90 days and the 40 newest stay; a limit that would remove archives asks first in a dialog (`StorageCapConfirmation.tsx`) |
 | Language    | `features/settings/LanguageSwitcher.tsx`   | The language of the interface, a `SegmentedControl`                                                                                                                                                                                                                                                                        |
 | Diagnostics | `features/settings/DiagnosticsSection.tsx` | The detailed log switch (it lets the debug lines reach the log file) and the button that opens the folder of the log files                                                                                                                                                                                                 |
-| About       | `features/settings/AboutSection.tsx`       | The version of the app, its licence, where the match data comes from, the notice that Valve is not involved, and what the app does with the data of the player                                                                                                                                                             |
+| About       | `features/settings/AboutSection.tsx`       | The version of the app with a button that checks for a newer one (a found version opens the update dialog), its licence and where the licences of the included software are listed, where the match data comes from, the notice that Valve is not involved, and what the app does with the data of the player              |
 
 The hooks of `features/settings/use-settings.ts` read and save the settings, read the storage limit, preview what a lower one would evict (`usePreviewStorageEviction`) and change it, switch the detailed log and open the log folder; the saves of the settings run one after another.
+
+## Updates
+
+| File                               | Role                                                                                                                                                                                                                                                                                                            |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `features/update/UpdateHost.tsx`   | The one update dialog of the app, mounted once in `AppShell` beside the pages: it starts the startup check and shows the update the service offers, whichever check found it (the startup one or the one of the about section); a failed startup check shows nothing                                            |
+| `features/update/UpdateDialog.tsx` | The dialog of a newer version: the versions, the date, the summary in the language of the app (headings and items, never markup), a link to its GitHub page, and **Install now** / **Later**. Installing shows the progress and cannot be closed; a failure says so with a fixed text and gives the choice back |
 
 ## The review
 

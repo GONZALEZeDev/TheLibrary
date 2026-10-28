@@ -23,3 +23,4 @@ A port is a small TypeScript interface describing one kind of side effect (loggi
 | `archive-store.port.ts`   | The archive files of the match details: atomic write, read, cleanup of leftovers, per-account quarantine, listing and removal of the folder's entries |
 | `compressor.port.ts`      | zstd compression and decompression of the archive files (bytes in, bytes out)                                                                         |
 | `diagnostics.port.ts`     | The detailed log switch (whether the `debug` lines reach the log) and opening the log folder                                                          |
+| `update-gateway.port.ts`  | Whether a newer version of the app exists, installing it (download, signature check, restart), and opening the GitHub page of a release               |

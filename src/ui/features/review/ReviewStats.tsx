@@ -10,9 +10,10 @@
  * table is for a match that reached no phase. The page around the tab handles every state (no
  * account, no match, a review being read): this component only renders rows.
  *
- * The sections are stacked, unlike the families of the match page, which flow in two columns on a
- * wide window: a row needs most of the width of the tab for its figures, which two columns would not
- * leave it.
+ * The sections stand two by two when the tab is wide enough for two lists of rows side by side
+ * (`REVIEW_TWO_LISTS`), in reading order (combat and survival, then farm and support…), and one under
+ * the other on a narrower tab. Unlike the families of the match page, which flow in columns, each
+ * section keeps its own cell: a section is never cut between two columns.
  *
  * The headings: the page title is the `h1` of the page, the tab panel is named by its tab, and each
  * family and the phases are an `h2` that names their section, with the look of the families of the
@@ -23,6 +24,7 @@
 import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Review, ReviewRow as ReviewRowData } from '../../../services/review-view';
+import { REVIEW_TWO_LISTS } from './review-layout';
 import { ReviewRowList } from './ReviewRowList';
 
 /** Props of {@link ReviewStats}. */
@@ -60,18 +62,21 @@ function renderSection(title: string, rows: readonly ReviewRowData[], headingId:
 /**
  * The stats of the review.
  *
- * @returns The families, then the phase metrics, stacked.
+ * @returns The families, then the phase metrics, two by two on a wide tab.
  */
 export function ReviewStats({ stats }: ReviewStatsProps) {
   const { t } = useTranslation();
   const idPrefix = useId();
 
   return (
-    <div className="space-y-4">
-      {stats.families.map(({ family, rows }) =>
-        renderSection(t(`analysis.family.${family}`), rows, `${idPrefix}-${family}`),
-      )}
-      {renderSection(t('analysis.phaseTable.title'), stats.phases, `${idPrefix}-phases`)}
+    // The container is what the grid reads its width from: the room of the tab, not the window.
+    <div className="@container">
+      <div className={REVIEW_TWO_LISTS}>
+        {stats.families.map(({ family, rows }) =>
+          renderSection(t(`analysis.family.${family}`), rows, `${idPrefix}-${family}`),
+        )}
+        {renderSection(t('analysis.phaseTable.title'), stats.phases, `${idPrefix}-phases`)}
+      </div>
     </div>
   );
 }

@@ -169,7 +169,7 @@ export function formatReviewGap(
 
 /**
  * Write in how many of the last matches a point was weak and in how many it was strong, out of the
- * matches a rule could judge it in ("weak in 7/18 · strong in 2/18").
+ * matches a rule could judge it in ("weak 7/18 · strong 2/18").
  *
  * @param row - The row of the point.
  * @param t - Translation function.

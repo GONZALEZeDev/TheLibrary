@@ -59,7 +59,8 @@ const STRINGS = {
       "The tier's deaths come from its match counters and can differ by one per match from yours.",
     avoidableTitle: 'Avoidable deaths',
     avoidableCaption: 'Alone, no ally near you, facing at least 2 enemies. No community figure.',
-    avoidableMatches: 'Matches with avoidable deaths',
+    avoidableSummary: '{{period}}: {{matches}} matches for {{deaths}} avoidable deaths',
+    avoidableShow: 'Show the matches',
     avoidableLinks: ['{{date}} · 2 avoidable', '{{date}} · 1 avoidable'],
     noPositions: ['1 match without positions, left out', '3 matches without positions, left out'],
   },
@@ -78,7 +79,8 @@ const STRINGS = {
     avoidableTitle: 'Morts évitables',
     avoidableCaption:
       'Seul, sans allié près de toi, face à au moins 2 ennemis. Pas de chiffre de la communauté.',
-    avoidableMatches: 'Parties avec des morts évitables',
+    avoidableSummary: '{{period}} : {{matches}} parties pour {{deaths}} morts évitables',
+    avoidableShow: 'Voir les parties',
     avoidableLinks: ['{{date}} · 2 évitables', '{{date}} · 1 évitable'],
     noPositions: ['1 partie sans positions, mise à part', '3 parties sans positions, mises à part'],
   },
@@ -420,6 +422,36 @@ function dateOf(language: Language, startTime: number): string {
   );
 }
 
+/**
+ * The line that sums up the matches with avoidable deaths, as the tab writes it.
+ *
+ * @param language - The language of the interface.
+ * @param oldest - The start of the oldest of these matches, in Unix seconds.
+ * @param newest - The start of the most recent one, in Unix seconds.
+ * @param matches - How many they are (two or more, for the plural of the texts).
+ * @param deaths - How many avoidable deaths they hold (two or more).
+ * @returns The line: the span of their days, their number and the number of their deaths, with its
+ *   spaces made plain, as the queries of the tests read the page (the English span puts thin spaces
+ *   around its dash).
+ */
+function summaryOf(
+  language: Language,
+  oldest: number,
+  newest: number,
+  matches: number,
+  deaths: number,
+): string {
+  const period = new Intl.DateTimeFormat(language, { dateStyle: 'medium' }).formatRange(
+    oldest * 1_000,
+    newest * 1_000,
+  );
+  return STRINGS[language].avoidableSummary
+    .replace('{{period}}', period)
+    .replace('{{matches}}', String(matches))
+    .replace('{{deaths}}', String(deaths))
+    .replace(/\s+/gu, ' ');
+}
+
 describe('ReviewDeaths', () => {
   it.each(LANGUAGES)('shows the deaths of the three phases in %s', async (language) => {
     const strings = STRINGS[language];
@@ -673,7 +705,7 @@ describe('ReviewDeaths', () => {
     // One row, the avoidable deaths of the view, and no line about matches left out or to link.
     expect(within(list).getAllByRole('listitem')).toHaveLength(1);
     expect(within(list).getByText(strings.avoidableTitle)).toBeVisible();
-    expect(within(section).queryByText(strings.avoidableMatches)).toBeNull();
+    expect(within(section).queryByText(strings.avoidableShow)).toBeNull();
     expect(within(section).queryByText(/without positions|sans positions/u)).toBeNull();
   });
 
@@ -688,10 +720,21 @@ describe('ReviewDeaths', () => {
         <ReviewDeaths recentCount={matches.length} deaths={deathsWithAvoidable(matches)} />,
       );
 
-      // A list named by its title, under the row, with a link for each match that had some: most
-      // recent first, the short date of the match and its number of avoidable deaths.
+      // One line sums the matches that had some up: the span of their days, the two matches and
+      // their three avoidable deaths. It names the list of their links, folded under it.
       const section = sectionNamed(strings.avoidableTitle);
-      const list = within(section).getByRole('list', { name: strings.avoidableMatches });
+      const summary = summaryOf(language, MATCH_STARTS[2], MATCH_STARTS[0], 2, 3);
+      const line = within(section).getByText(summary);
+      expect(line).toHaveClass('font-medium');
+      // The name of the list is the text of the line, its thin spaces included.
+      const list = within(section).getByRole('list', { name: line.textContent });
+      const disclosure = within(section).getByText(strings.avoidableShow);
+      expect(list).not.toBeVisible();
+      await userEvent.click(disclosure);
+      expect(list).toBeVisible();
+
+      // A link for each match that had some: most recent first, the short date of the match and its
+      // number of avoidable deaths.
       const links = within(list).getAllByRole('link');
       const [first, second] = strings.avoidableLinks;
       expect(links.map((link) => link.textContent)).toEqual([
@@ -732,6 +775,12 @@ describe('ReviewDeaths', () => {
         template.replace('{{date}}', dateOf(language, MATCH_STARTS[0])),
       ]);
       expect(new Set(names).size).toBe(2);
+      // Both matches fall on one day, which the line that sums them up writes once.
+      expect(
+        within(sectionNamed(STRINGS[language].avoidableTitle)).getByText(
+          summaryOf(language, MATCH_STARTS[0], SAME_DAY_START, 2, 4),
+        ),
+      ).toBeInTheDocument();
       expect(links.map((link) => link.getAttribute('href'))).toEqual([
         '/matches/100000001?tab=timeline',
         '/matches/100000002?tab=timeline',
@@ -778,7 +827,7 @@ describe('ReviewDeaths', () => {
       // The row stays, the title and the list of links go.
       const section = sectionNamed(strings.avoidableTitle);
       expect(within(section).getAllByRole('list')).toHaveLength(1);
-      expect(within(section).queryByText(strings.avoidableMatches)).toBeNull();
+      expect(within(section).queryByText(strings.avoidableShow)).toBeNull();
       expect(within(section).queryByRole('link')).toBeNull();
     },
   );

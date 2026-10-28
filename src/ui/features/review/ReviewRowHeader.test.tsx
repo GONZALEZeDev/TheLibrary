@@ -22,6 +22,15 @@ const COLUMN_NAMES = {
   fr: ['Toi', 'Palier au-dessus · Écart', 'Faible / fort', 'Progression'],
 } as const satisfies Record<Language, readonly string[]>;
 
+/**
+ * The cells of the header, as the names stand in them, by language: the weak and strong counts and
+ * the progress share the last column, one line each.
+ */
+const HEADER_CELLS = {
+  en: [['You'], ['Tier above · Gap'], ['Weak / strong', 'Progress']],
+  fr: [['Toi'], ['Palier au-dessus · Écart'], ['Faible / fort', 'Progression']],
+} as const satisfies Record<Language, readonly (readonly string[])[]>;
+
 /** A row of the review, for the tests that set the header beside one. */
 const ROW: ReviewRowData = {
   subject: { kind: 'metric', key: 'deaths' },
@@ -84,11 +93,20 @@ describe('ReviewRowHeader', () => {
       await renderIn(language, <ReviewRowHeader />);
 
       const header = headerOf(COLUMN_NAMES[language][0]);
-      expect(Array.from(header.children).map((cell) => cell.textContent)).toEqual([
-        '',
-        '',
-        ...COLUMN_NAMES[language],
-      ]);
+      const [arrow, name, ...figures] = Array.from(header.children);
+      expect(arrow).toHaveTextContent(/^$/);
+      expect(name).toHaveTextContent(/^$/);
+      // Each cell holds its names, one element each, so that two names in one cell are two lines.
+      expect(
+        figures.map((cell) =>
+          cell.children.length === 0
+            ? [cell.textContent]
+            : Array.from(cell.children).map((line) => line.textContent),
+        ),
+      ).toEqual(HEADER_CELLS[language]);
+      for (const line of figures.flatMap((cell) => Array.from(cell.children))) {
+        expect(line).toHaveClass('block');
+      }
     },
   );
 

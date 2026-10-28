@@ -4,10 +4,10 @@
  *
  * It is laid out on the grid the rows are (`REVIEW_ROW_GRID`), so that each name stands above its
  * figures: the player's figure, the tier above with its gap (they share one column, since a row
- * writes them side by side), the weak and strong counts, and the progress. The columns of the arrow
- * and of the name have no caption. The names are the ones each figure of a row carries for assistive
- * technologies, so the header is for the eye only and is hidden from them, or they would read every
- * name twice.
+ * writes them side by side), and the weak and strong counts over the progress (one column too, as
+ * a row writes them one over the other). The columns of the arrow and of the name have no caption.
+ * The names are the ones each figure of a row carries for assistive technologies, so the header is
+ * for the eye only and is hidden from them, or they would read every name twice.
  *
  * The header and the rows line up when they sit in the same box: place it inside the container of
  * the list, above the rows, not outside the padding the container gives them.
@@ -37,8 +37,10 @@ export function ReviewRowHeader() {
       {/* The player's figures are right-aligned in a row, and so is their name. */}
       <span className="text-right">{t('review.columns.you')}</span>
       <span>{`${t('review.columns.tier')} ${TIER_GAP_SEPARATOR} ${t('review.columns.gap')}`}</span>
-      <span>{t('review.columns.marks')}</span>
-      <span>{t('review.columns.progress')}</span>
+      <span>
+        <span className="block">{t('review.columns.marks')}</span>
+        <span className="block">{t('review.columns.progress')}</span>
+      </span>
     </div>
   );
 }

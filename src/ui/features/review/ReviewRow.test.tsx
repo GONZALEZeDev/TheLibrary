@@ -210,7 +210,7 @@ describe('ReviewRow', () => {
     expect(row.getByText('1.6')).toBeInTheDocument();
     expect(row.getByText('1.3')).toBeInTheDocument();
     expect(row.getByText('+0.3')).toBeInTheDocument();
-    expect(row.getByText('weak in 7/18 · strong in 2/18')).toBeInTheDocument();
+    expect(row.getByText('weak 7/18 · strong 2/18')).toBeInTheDocument();
     expect(row.getByText('1.8 → 1.6 · better')).toBeInTheDocument();
   });
 
@@ -222,7 +222,7 @@ describe('ReviewRow', () => {
     expect(row.getByText('1,6')).toBeInTheDocument();
     expect(row.getByText('1,3')).toBeInTheDocument();
     expect(row.getByText('+0,3')).toBeInTheDocument();
-    expect(row.getByText('faible dans 7/18 · fort dans 2/18')).toBeInTheDocument();
+    expect(row.getByText('faible 7/18 · fort 2/18')).toBeInTheDocument();
     expect(row.getByText('1,8 → 1,6 · mieux')).toBeInTheDocument();
     expect(row.getByText('18 parties')).toBeInTheDocument();
   });
@@ -293,8 +293,14 @@ describe('ReviewRow', () => {
     await renderIn('en', <ReviewRow row={rowOf()} />);
 
     expect(theGrid()).toHaveClass(REVIEW_ROW_GRID);
-    // One cell for each of the six columns: the arrow, the name and the four figures.
-    expect(theGrid().children).toHaveLength(6);
+    // One cell for each of the five columns: the arrow, the name, the player, the tier, and the
+    // marks over the progress.
+    expect(theGrid().children).toHaveLength(5);
+    const last = theGrid().lastElementChild ?? expect.unreachable('A row has its cells');
+    expect(Array.from(last.children).map((line) => line.textContent)).toEqual([
+      'Weak / strong weak 7/18 · strong 2/18',
+      'Progress 1.8 → 1.6 · better',
+    ]);
   });
 
   it('writes the longest figure of the player in the semibold of the first column', async () => {
@@ -311,7 +317,7 @@ describe('ReviewRow', () => {
         { figure: '1.6', column: 'You' },
         { figure: '1.3', column: 'Tier above' },
         { figure: '+0.3', column: 'Gap' },
-        { figure: 'weak in 7/18 · strong in 2/18', column: 'Weak / strong' },
+        { figure: 'weak 7/18 · strong 2/18', column: 'Weak / strong' },
         { figure: '1.8 → 1.6 · better', column: 'Progress' },
       ],
     },
@@ -321,7 +327,7 @@ describe('ReviewRow', () => {
         { figure: '1,6', column: 'Toi' },
         { figure: '1,3', column: 'Palier au-dessus' },
         { figure: '+0,3', column: 'Écart' },
-        { figure: 'faible dans 7/18 · fort dans 2/18', column: 'Faible / fort' },
+        { figure: 'faible 7/18 · fort 2/18', column: 'Faible / fort' },
         { figure: '1,8 → 1,6 · mieux', column: 'Progression' },
       ],
     },
@@ -432,8 +438,8 @@ describe('ReviewRow', () => {
     const group = within(theRow()).getByRole('group');
     expect(group).toHaveAccessibleName('Deaths');
     expect(group).toHaveAttribute('tabindex', '0');
-    // The panel hangs from the right edge of the row, so that it leaves the names below free.
-    expect(within(theRow()).getByRole('tooltip')).toHaveClass('right-0', 'left-auto');
+    // The panel lines up with the right edge of the row, so that it leaves the names below free.
+    expect(within(theRow()).getByRole('tooltip')).toHaveAttribute('data-placement', 'end');
   });
 
   it('lists each match in French', async () => {
@@ -551,7 +557,7 @@ describe('ReviewRow', () => {
       'Progress —',
     ]);
     // The matches it has are judged all the same, and counted.
-    expect(row.getByText('weak in 1/3 · strong in 0/3')).toBeInTheDocument();
+    expect(row.getByText('weak 1/3 · strong 0/3')).toBeInTheDocument();
     // No gap to a tier that has no figure, and no figure it was measured on.
     expect(row.queryByText('Gap')).not.toBeInTheDocument();
     expect(row.queryByText(/same stretch/)).not.toBeInTheDocument();
@@ -584,7 +590,7 @@ describe('ReviewRow', () => {
     await renderIn('en', <ReviewRow row={rowOf({ weak: 0, strong: 0, marked: 0 })} />);
 
     expect(within(theRow()).getByText(DASH)).toHaveTextContent('Weak / strong —');
-    expect(within(theRow()).queryByText(/weak in/)).not.toBeInTheDocument();
+    expect(within(theRow()).queryByText(/weak \d/)).not.toBeInTheDocument();
   });
 
   it.each([
@@ -699,7 +705,7 @@ describe('REVIEW_ROW_GRID', () => {
 
   it('has one column that takes what the others leave, for the name', () => {
     expect(columnsOfGrid().flexible).toBe(1);
-    expect(columnsOfGrid().fixedRem).toHaveLength(5);
+    expect(columnsOfGrid().fixedRem).toHaveLength(4);
   });
 
   it('gives the figure of the player the room of the longest one on a line', () => {

@@ -7,12 +7,13 @@
  * that every point the review flags is here. A section where nothing recurs says so in a sentence,
  * with no header of columns over an empty list.
  *
- * The two sections are always stacked: a row needs most of the width of the tab for its figures,
- * which two columns would not leave it. The points come from every other tab (a metric, the deaths
- * of a phase, a place among the players, a resistance item…), and a resistance item shows its
- * picture before its name, so that the item is known at a glance. The name of each point is a link to
- * the tab it comes from, which sets it among the points of its kind. The page around the tab handles
- * every state (no account, no match, a review being read): this component only renders rows.
+ * The two sections are always stacked, the weaknesses over the strengths: they are read in that
+ * order, unlike the families of the stats tab, which stand side by side on a wide tab. The points
+ * come from every other tab (a metric, the deaths of a phase, a place among the players, a
+ * resistance item…), and a resistance item shows its picture before its name, so that the item is
+ * known at a glance. The name of each point is a link to the tab it comes from, which sets it among
+ * the points of its kind. The page around the tab handles every state (no account, no match, a
+ * review being read): this component only renders rows.
  *
  * The headings: the page title is the `h1` of the page, the tab panel is named by its tab, and each
  * section is an `h2` that names it (the rows are its content).

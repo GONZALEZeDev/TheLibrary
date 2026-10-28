@@ -10,30 +10,40 @@ import { PANEL_CLASSES } from '../../components/Panel';
 /**
  * The grid of a row of the review (`ReviewRow`) and of the header of its columns (`ReviewRowHeader`),
  * with the horizontal padding of both, so that a name and its figures line up from the first row to
- * the header. It has six columns, in this order:
+ * the header. It has five columns, in this order:
  *
  * 1. the arrow of a point the summary flags (1.25 rem);
  * 2. the name of the point, which takes what the others leave;
  * 3. the player's figure with the number of matches it counts (7 rem: wide enough for "1,8 pour
  *    10 min" in semibold, the longest figure of a point, on one line);
  * 4. the tier's figure with its gap, and the figure the gap was measured on (up to 8 rem);
- * 5. the weak and strong counts (up to 6.5 rem);
- * 6. the progress (up to 7 rem).
+ * 5. the weak and strong counts over the progress, one line each (up to 11 rem: wide enough for
+ *    "faible 12/20 · fort 1/20" and for "1 299 → 1 167 · moins bien" in small print).
  *
  * **The widths are a budget.** The window is at least 1100 px wide. The sidebar (15 rem) and the
  * padding of the main column (2 × 2.5 rem) leave about 780 px; the border and padding of the list
  * and a scrollbar take about 30 px of it, and the padding of a row 24 px. The fixed columns (20 + 112
- * + 128 + 104 + 112 = 476 px) and the five gaps between the columns (60 px) leave the name about
- * 190 px (12 rem) at the narrowest window, two lines for the longest names; a wider window gives it
- * the rest. A column added here, or a wider one, comes out of the name: recount before changing it.
- * The marks and the progress, which are sentences, wrap in their narrow columns rather than push the
- * name out.
+ * + 128 + 176 = 436 px) and the four gaps between the columns (48 px) leave the name about 240 px
+ * (15 rem) at the narrowest window; a wider window gives it the rest. A column added here, or a wider
+ * one, comes out of the name: recount before changing it. The last column wraps its lines rather
+ * than push the name out.
+ *
+ * A list of rows is about 690 px wide at the least with a name of 150 px, so two lists stand side by
+ * side when the tab is at least {@link REVIEW_TWO_LISTS} wide.
  *
  * The row adds its own look (rounded corners, vertical padding, a tint); the header, its caption
  * style.
  */
 export const REVIEW_ROW_GRID =
-  'grid grid-cols-[1.25rem_minmax(0,1fr)_7rem_minmax(0,8rem)_minmax(0,6.5rem)_minmax(0,7rem)] items-center gap-x-3 px-3';
+  'grid grid-cols-[1.25rem_minmax(0,1fr)_7rem_minmax(0,8rem)_minmax(0,11rem)] items-center gap-x-3 px-3';
+
+/**
+ * The grid of the lists of a tab that stand two by two on a wide tab, and one under the other on a
+ * narrower one: two lists of rows and the gap between them need about 87 rem (see
+ * {@link REVIEW_ROW_GRID}). It reads the width of the nearest `@container`, which the caller sets
+ * around it, so that it follows the room the tab has and not the window.
+ */
+export const REVIEW_TWO_LISTS = 'grid grid-cols-1 items-start gap-4 @min-[87rem]:grid-cols-2';
 
 /**
  * The look of the box of a list of the review: the rounded border of the lists of the match page. A

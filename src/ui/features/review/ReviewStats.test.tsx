@@ -17,6 +17,7 @@ import type { Language } from '../../../core/settings/language';
 import { statsRowsOf } from '../../../services/review-stats';
 import type { Review } from '../../../services/review-view';
 import { createI18n } from '../../i18n/i18n';
+import { REVIEW_TWO_LISTS } from './review-layout';
 import { ReviewStats } from './ReviewStats';
 
 /** The texts of the tab in English: the title of each family with the metrics it holds, in order. */
@@ -211,6 +212,18 @@ describe('ReviewStats', () => {
       }
     },
   );
+
+  it('sets the sections two by two on a wide tab, each in its own cell, in reading order', async () => {
+    await renderIn('en', <ReviewStats stats={serviceStats()} />);
+
+    const sections = screen.getAllByRole('region');
+    const grid = sections[0]?.parentElement ?? expect.unreachable('The tab holds sections');
+    // The grid reads the width of the tab, not of the window.
+    expect(grid).toHaveClass(REVIEW_TWO_LISTS);
+    expect(grid.parentElement).toHaveClass('@container');
+    // Every section is a cell of the grid, so that none is cut between two columns.
+    expect(Array.from(grid.children)).toEqual(sections);
+  });
 
   it('leaves out a section that holds no row', async () => {
     const [combat] = serviceStats().families;

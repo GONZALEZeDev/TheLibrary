@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MS_PER_SECOND,
   formatMediumDate,
+  formatMediumDateRange,
   formatMediumDateTime,
   formatShortDateTime,
   formatShortDateTimeMs,
@@ -71,6 +72,24 @@ describe('date formats', () => {
     expect(formatMediumDateTime(evening, 'fr')).toMatch(/^20 oct. 2026,? (à )?15:45$/);
     expect(formatTime(evening, 'en')).toMatch(/^3:45\sPM$/);
     expect(formatTime(evening, 'fr')).toBe('15:45');
+  });
+
+  it('writes a span of days with the parts its two ends share written once', () => {
+    const first = localSeconds(2026, 10, 1, 21, 10);
+    // `\s*` stands for the thin spaces some versions of the locale data put around the dash.
+    expect(formatMediumDateRange(first, evening, 'en')).toMatch(/^Oct 1\s*–\s*20, 2026$/u);
+    expect(formatMediumDateRange(first, evening, 'fr')).toMatch(/^1\s*–\s*20 oct\. 2026$/u);
+    // Across two months and two years, each end keeps what differs.
+    const september = localSeconds(2026, 9, 28);
+    expect(formatMediumDateRange(september, evening, 'en')).toMatch(/^Sep 28\s*–\s*Oct 20, 2026$/u);
+    const lastYear = localSeconds(2025, 12, 30);
+    expect(formatMediumDateRange(lastYear, evening, 'fr')).toMatch(
+      /^30 déc\. 2025\s*–\s*20 oct\. 2026$/u,
+    );
+    // Two times of one day are that day.
+    expect(formatMediumDateRange(localSeconds(2026, 10, 20, 9), evening, 'en')).toBe(
+      'Oct 20, 2026',
+    );
   });
 
   it('writes the same text on every call, the formatter being cached', () => {

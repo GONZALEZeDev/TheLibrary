@@ -229,14 +229,14 @@ describe('formatMarks', () => {
   it('writes weak and strong counts', async () => {
     const row = rowOf({ weak: 7, strong: 2, marked: 18 });
 
-    expect(formatMarks(row, await translatorOf('en'))).toBe('weak in 7/18 · strong in 2/18');
-    expect(formatMarks(row, await translatorOf('fr'))).toBe('faible dans 7/18 · fort dans 2/18');
+    expect(formatMarks(row, await translatorOf('en'))).toBe('weak 7/18 · strong 2/18');
+    expect(formatMarks(row, await translatorOf('fr'))).toBe('faible 7/18 · fort 2/18');
   });
 
   it('writes a count of zero, which is an answer', async () => {
     const row = rowOf({ weak: 0, strong: 0, marked: 20 });
 
-    expect(formatMarks(row, await translatorOf('en'))).toBe('weak in 0/20 · strong in 0/20');
+    expect(formatMarks(row, await translatorOf('en'))).toBe('weak 0/20 · strong 0/20');
   });
 
   it('writes nothing for a point no match could judge', async () => {
@@ -720,10 +720,12 @@ describe('the strings of the review page', () => {
       fr: 'Seul, sans allié près de toi, face à au moins 2 ennemis. Pas de chiffre de la communauté.',
     },
     {
-      key: 'review.deaths.avoidableMatches',
-      en: 'Matches with avoidable deaths',
-      fr: 'Parties avec des morts évitables',
+      key: 'review.deaths.avoidableSummary',
+      options: { period: '1–28 Oct', matches: '15 matches', deaths: '22 deaths' },
+      en: '1–28 Oct: 15 matches for 22 deaths',
+      fr: '1–28 Oct : 15 matches pour 22 deaths',
     },
+    { key: 'review.deaths.avoidableShow', en: 'Show the matches', fr: 'Voir les parties' },
     { key: 'matchDetail.tabs.timeline', en: 'Timeline', fr: 'Chronologie' },
     { key: 'timeline.chart.unknownItem', en: 'an item', fr: 'un objet' },
     {
@@ -799,6 +801,30 @@ describe('the strings of the review page', () => {
       options: { date: '21 Oct', count: 3 },
       en: '21 Oct · 3 avoidable',
       fr: '21 Oct · 3 évitables',
+    },
+    {
+      key: 'review.deaths.avoidableSummaryMatches',
+      options: { count: 1 },
+      en: '1 match',
+      fr: '1 partie',
+    },
+    {
+      key: 'review.deaths.avoidableSummaryMatches',
+      options: { count: 15 },
+      en: '15 matches',
+      fr: '15 parties',
+    },
+    {
+      key: 'review.deaths.avoidableSummaryDeaths',
+      options: { count: 1 },
+      en: '1 avoidable death',
+      fr: '1 mort évitable',
+    },
+    {
+      key: 'review.deaths.avoidableSummaryDeaths',
+      options: { count: 22 },
+      en: '22 avoidable deaths',
+      fr: '22 morts évitables',
     },
     {
       key: 'review.deaths.noPositions',

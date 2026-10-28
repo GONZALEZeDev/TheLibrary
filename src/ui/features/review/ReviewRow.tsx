@@ -7,9 +7,9 @@
  *
  * The row is a grid whose columns line up from one row to the next: the arrow of a flagged point, its
  * name (with a picture before it for an item), the player's figure with the number of matches it
- * counts, the tier's figure with its gap, the weak and strong counts, and the progress. A point that
- * the summary flags as a weakness or a strength has its arrow, a faint colour and a hidden word, the
- * same as the metrics of the match page, so that the colour never says it alone. Each figure carries
+ * counts, the tier's figure with its gap, and the weak and strong counts over the progress. A point
+ * that the summary flags as a weakness or a strength has its arrow, a faint colour and a hidden word,
+ * the same as the metrics of the match page, so that the colour never says it alone. Each figure carries
  * the name of its column for assistive technologies: the header of the columns (`ReviewRowHeader`),
  * which is laid out on the same grid, is for the eye.
  *
@@ -300,16 +300,19 @@ export function ReviewRow({ row, picture, tab }: ReviewRowProps) {
       </div>
       {renderPlayerCell(row, t, language)}
       {renderTierCell(row, t, language)}
-      <ReviewFigure
-        column={t('review.columns.marks')}
-        figure={marks === '' ? NO_VALUE : marks}
-        className={SMALL_FIGURE}
-      />
-      <ReviewFigure
-        column={t('review.columns.progress')}
-        figure={formatProgress(row, language, t)}
-        className={SMALL_FIGURE}
-      />
+      {/* The marks over the progress: two short lines in one column leave the name its room. */}
+      <div>
+        <ReviewFigure
+          column={t('review.columns.marks')}
+          figure={marks === '' ? NO_VALUE : marks}
+          className={SMALL_FIGURE}
+        />
+        <ReviewFigure
+          column={t('review.columns.progress')}
+          figure={formatProgress(row, language, t)}
+          className={SMALL_FIGURE}
+        />
+      </div>
     </div>
   );
 

@@ -73,6 +73,22 @@ export function formatMediumDate(startTimeS: number, language: string): string {
 }
 
 /**
+ * Write a span of days as medium dates, the parts the two ends share written once, e.g.
+ * `Oct 1 – 28, 2026` (`1–28 oct. 2026` in French), or `Oct 20, 2026` when both ends fall on one day.
+ *
+ * @param startS - The first time of the span, in Unix seconds.
+ * @param endS - The last time of the span, in Unix seconds, not before `startS`.
+ * @param language - Language of the interface.
+ * @returns The span in the local time zone.
+ */
+export function formatMediumDateRange(startS: number, endS: number, language: string): string {
+  return formatterFor(language, { dateStyle: 'medium' }).formatRange(
+    startS * MS_PER_SECOND,
+    endS * MS_PER_SECOND,
+  );
+}
+
+/**
  * Write a time as a medium date and a short time, e.g. `Oct 20, 2026, 3:45 PM`.
  *
  * @param startTimeS - Time, in Unix seconds.

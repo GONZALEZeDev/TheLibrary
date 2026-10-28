@@ -12,8 +12,10 @@
  *   match from the death details the player's deaths are read from.
  * - **The avoidable deaths** are one row, under a caption that says what counts as one and that the
  *   row has no figure of the community. The matches the row does not count have no positions of the
- *   players, and a line says how many were left out. Under it, the matches that had avoidable deaths
- *   link to the timeline of the match, where those deaths are marked.
+ *   players, and a line says how many were left out. Under it, one line sums up the matches that had
+ *   avoidable deaths (the days they span, how many they are and how many avoidable deaths they hold),
+ *   and the list of those matches, folded under it until it is opened, links each one to the
+ *   timeline of the match, where those deaths are marked.
  * - **The resistance** is two lists. The first holds the points about the twelve items as a whole: the
  *   minute of the first resistance item, whichever it is, and the deaths before it. The second holds
  *   the twelve items in the order of their list, two rows for each: the minute the player buys it,
@@ -39,7 +41,7 @@ import type { TFunction } from 'i18next';
 import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Review } from '../../../services/review-view';
-import { formatMediumDateTime } from '../../format/date';
+import { formatMediumDateRange, formatMediumDateTime } from '../../format/date';
 import { REVIEW_LINK, REVIEW_SECTION_TITLE } from './review-layout';
 import { ReviewRowList } from './ReviewRowList';
 
@@ -81,14 +83,15 @@ function renderResistance(resistance: Review['deaths']['resistance'], t: TFuncti
 }
 
 /**
- * The list of the matches that had avoidable deaths, each one a link to the timeline of the match.
+ * The matches that had avoidable deaths: one line that sums them up, then the list of them, folded
+ * until it is opened, each one a link to the timeline of the match.
  *
  * @param avoidable - The avoidable deaths row: its matches are the ones that have the positions of
  *   the players, most recent first, with their number of avoidable deaths.
- * @param labelId - The id of the element that names the list.
+ * @param labelId - The id of the line that sums the matches up, which names the list.
  * @param t - Translation function.
  * @param language - The language of the interface.
- * @returns The title of the list and the list, or `null` when no match had an avoidable death.
+ * @returns The line and the folded list, or `null` when no match had an avoidable death.
  */
 function renderAvoidableMatches(
   avoidable: Review['deaths']['avoidable'],
@@ -100,31 +103,44 @@ function renderAvoidableMatches(
   if (withDeaths.length === 0) {
     return null;
   }
-  // The date and the time of the match: two matches of one day with as many avoidable deaths would
-  // otherwise be two links of the same name.
+  // The span of their days, whatever order the row lists them in.
+  const starts = withDeaths.map((match) => match.startTime);
+  const total = withDeaths.reduce((sum, match) => sum + match.value, 0);
+  // The list opens and closes with the native disclosure: the keyboard and the screen readers know
+  // it, and it keeps no state of its own. The date and the time of each match: two matches of one day
+  // with as many avoidable deaths would otherwise be two links of the same name.
   return (
-    <div className="space-y-1">
-      <p id={labelId} className="text-sm font-medium">
-        {t('review.deaths.avoidableMatches')}
+    <div className="space-y-1 text-sm">
+      <p id={labelId} className="font-medium">
+        {t('review.deaths.avoidableSummary', {
+          period: formatMediumDateRange(Math.min(...starts), Math.max(...starts), language),
+          matches: t('review.deaths.avoidableSummaryMatches', { count: withDeaths.length }),
+          deaths: t('review.deaths.avoidableSummaryDeaths', { count: total }),
+        })}
       </p>
-      <ul aria-labelledby={labelId} className="space-y-1 text-sm">
-        {withDeaths.map((match) => (
-          <li key={match.matchId}>
-            {/* No `replace`: the link leaves the review, and going back returns to it. */}
-            <Link
-              to="/matches/$matchId"
-              params={{ matchId: match.matchId }}
-              search={{ tab: 'timeline' }}
-              className={REVIEW_LINK}
-            >
-              {t('review.deaths.avoidableLink', {
-                date: formatMediumDateTime(match.startTime, language),
-                count: match.value,
-              })}
-            </Link>
-          </li>
-        ))}
-      </ul>
+      <details>
+        <summary className="w-fit cursor-pointer rounded-sm text-fg-muted hover:text-fg">
+          {t('review.deaths.avoidableShow')}
+        </summary>
+        <ul aria-labelledby={labelId} className="mt-1 space-y-1">
+          {withDeaths.map((match) => (
+            <li key={match.matchId}>
+              {/* No `replace`: the link leaves the review, and going back returns to it. */}
+              <Link
+                to="/matches/$matchId"
+                params={{ matchId: match.matchId }}
+                search={{ tab: 'timeline' }}
+                className={REVIEW_LINK}
+              >
+                {t('review.deaths.avoidableLink', {
+                  date: formatMediumDateTime(match.startTime, language),
+                  count: match.value,
+                })}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </details>
     </div>
   );
 }
@@ -139,7 +155,7 @@ export function ReviewDeaths({ deaths, recentCount }: ReviewDeathsProps) {
   const idPrefix = useId();
   const phasesId = `${idPrefix}-phases`;
   const avoidableId = `${idPrefix}-avoidable`;
-  const avoidableMatchesId = `${idPrefix}-avoidable-matches`;
+  const avoidableSummaryId = `${idPrefix}-avoidable-summary`;
   const resistanceId = `${idPrefix}-resistance`;
   // The matches the row does not count have no positions of the players in their archive.
   const leftOut = recentCount - deaths.avoidable.count;
@@ -164,7 +180,7 @@ export function ReviewDeaths({ deaths, recentCount }: ReviewDeathsProps) {
             {t('review.deaths.noPositions', { count: leftOut })}
           </p>
         )}
-        {renderAvoidableMatches(deaths.avoidable, avoidableMatchesId, t, i18n.language)}
+        {renderAvoidableMatches(deaths.avoidable, avoidableSummaryId, t, i18n.language)}
       </section>
       <section aria-labelledby={resistanceId} className="space-y-2">
         <h2 id={resistanceId} className={REVIEW_SECTION_TITLE}>

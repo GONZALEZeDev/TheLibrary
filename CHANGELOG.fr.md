@@ -10,6 +10,12 @@ Ajouts, Modifications, Corrections et Suppressions.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-28
+
+### Modifications
+
+- Réglages → Stockage : pendant que l'app vérifie ce qu'une limite plus basse supprimerait, une ligne « Vérification… » s'affiche à côté de la limite.
+
 ## [0.1.0] - 2026-10-28
 
 Première bêta publique.
@@ -17,7 +23,7 @@ Première bêta publique.
 ### Ajouts
 
 - Liaison de ton compte Steam dans ton navigateur ; TheLibrary ne voit jamais ton mot de passe.
-- Ton historique de parties de Deadlock, synchronisé depuis deadlock-api.com au démarrage, toutes les 10 minutes et à la demande.
+- Ton historique de parties de Deadlock, synchronisé depuis deadlock-api.com au démarrage, toutes les 13 minutes et à la demande.
 - Le détail de tes parties de Paige des 90 derniers jours, gardé sur ton PC.
 - Une page par partie avec tes points forts et tes points faibles comparés aux joueurs de Paige de ton rang et à tes habitudes, tes dégâts par source, ton build final, les 12 joueurs et la chronologie de la partie.
 - Un bilan de tes 20 dernières parties : les points faibles et forts qui reviennent, tes morts par phase et le moment où tu achètes tes objets de résistance.

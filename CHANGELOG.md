@@ -10,6 +10,12 @@ Fixed and Removed.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-28
+
+### Changed
+
+- Settings → Storage: while the app checks what a lower limit would remove, a "Checking…" line shows next to the limit.
+
 ## [0.1.0] - 2026-10-28
 
 First public beta.
@@ -17,7 +23,7 @@ First public beta.
 ### Added
 
 - Link your Steam account in your browser; TheLibrary never sees your password.
-- Your Deadlock match history, synchronised from deadlock-api.com at startup, every 10 minutes and on demand.
+- Your Deadlock match history, synchronised from deadlock-api.com at startup, every 13 minutes and on demand.
 - The detail of your Paige matches of the last 90 days, kept on your PC.
 - A match page with your strengths and weaknesses compared with Paige players of your rank and with your own habits, your damage by source, your final build, the 12 players and the timeline of the match.
 - A review of your last 20 matches: the weak and strong points that recur, your deaths by phase and when you buy your resistance items.

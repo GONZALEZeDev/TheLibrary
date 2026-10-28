@@ -6,8 +6,7 @@
  * "Check for updates" asks the update service at once, whatever the startup check found: a newer
  * version becomes the offered update, which the one update dialog of the app shows (the player
  * still chooses whether to install it); otherwise a line says the version is the latest or that
- * the check failed. Everything else is plain text: the
- * section links nowhere.
+ * the check failed. Everything else is plain text: the section links nowhere.
  *
  * @packageDocumentation
  */

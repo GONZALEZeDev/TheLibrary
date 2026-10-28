@@ -411,8 +411,7 @@ app; do not edit it by hand.
 - zerotrie 0.2.5 — Unicode-3.0 — [text 95](#text-95)
 - zerovec 0.11.8 — Unicode-3.0 — [text 95](#text-95)
 - zerovec-derive 0.11.6 — Unicode-3.0 — [text 95](#text-95)
-- zip 4.6.1 — MIT — [text 199](#text-199)
-- zlib-rs 0.6.8 — Zlib — [text 200](#text-200)
+- zlib-rs 0.6.8 — Zlib — [text 199](#text-199)
 - zmij 1.0.23 — MIT — [text 20](#text-20)
 
 ## Licence and notice texts
@@ -7988,37 +7987,6 @@ DEALINGS IN THE SOFTWARE.
 ### Text 199
 
 <a id="text-199"></a>
-
-```text
-The MIT License (MIT)
-
-Copyright (c) 2014 Mathijs van de Nes
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-Some files in the "tests/data" subdirectory of this repository are under other
-licences; see files named LICENSE.*.txt for details.
-```
-
-### Text 200
-
-<a id="text-200"></a>
 
 ```text
 (C) 2024 Trifecta Tech Foundation 

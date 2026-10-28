@@ -20,7 +20,7 @@ TheLibrary runs on Windows 10 and 11 (64-bit).
 
 1. Open the [latest release](https://github.com/GONZALEZeDev/TheLibrary/releases/latest) and download `TheLibrary_<version>_x64-setup.exe`.
 2. Run it. It installs for your Windows user only, with no administrator rights, and installs the Microsoft Edge WebView2 runtime if your PC lacks it.
-3. Windows SmartScreen may say that it protected your PC from an unknown publisher: the installer is not signed with a code signing certificate yet (it is planned through [SignPath Foundation](https://signpath.org/)). Click **More info**, then **Run anyway**. The installer is built from this repository by its public [release workflow](.github/workflows/release.yml).
+3. Windows SmartScreen may say that it protected your PC from an unknown publisher: the installer is not signed with a code signing certificate yet (it is planned through [SignPath Foundation](https://signpath.org/), see the [code signing policy](CODE_SIGNING_POLICY.md)). Click **More info**, then **Run anyway**. The installer is built from this repository by its public [release workflow](.github/workflows/release.yml).
 
    If Windows says instead that it cannot access the file, your antivirus is most likely still analysing the freshly downloaded installer (ESET does, without any notice): wait a minute, then run it again. You can check that your download is intact: its SHA-256, shown next to the file on the release page, must match `Get-FileHash <file>` in PowerShell.
 
@@ -72,4 +72,4 @@ The architecture, conventions and workflow are described in [CONTRIBUTING.md](CO
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Code signing policy: [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md).

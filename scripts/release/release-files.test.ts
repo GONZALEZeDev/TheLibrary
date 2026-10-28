@@ -249,8 +249,20 @@ describe('release files', () => {
     });
   });
 
-  it('builds the release description, French under English', () => {
-    expect(buildReleaseBody('EN', null)).toBe('EN\n');
-    expect(buildReleaseBody('EN', 'FR')).toBe('EN\n\n---\n\n## Français\n\nFR\n');
+  it('builds the release description, French under English, then the links', () => {
+    expect(buildReleaseBody('EN', null)).toMatch(/^EN\n\n---\n\n\[Installation\]/);
+    const both = buildReleaseBody('EN', 'FR');
+    expect(both.startsWith('EN\n\n---\n\n## Français\n\nFR\n\n---\n\n[Installation]')).toBe(true);
+    expect(both.endsWith(')\n')).toBe(true);
+  });
+
+  it('links every release page to the code signing policy and the privacy page', () => {
+    const body = buildReleaseBody('EN', null);
+    expect(body).toContain(
+      '[Code signing policy](https://github.com/GONZALEZeDev/TheLibrary/blob/main/CODE_SIGNING_POLICY.md)',
+    );
+    expect(body).toContain(
+      '[Privacy](https://github.com/GONZALEZeDev/TheLibrary/blob/main/PRIVACY.md)',
+    );
   });
 });

@@ -295,8 +295,20 @@ export function buildLatestJson(input: LatestJsonInput): string {
 }
 
 /**
+ * Links at the end of every release description. The code signing policy must be linked from every
+ * release page (a condition of SignPath Foundation's free code signing), and the privacy page tells
+ * what the installed app contacts.
+ */
+const RELEASE_BODY_FOOTER = [
+  '[Installation](https://github.com/GONZALEZeDev/TheLibrary#installation)',
+  '[Code signing policy](https://github.com/GONZALEZeDev/TheLibrary/blob/main/CODE_SIGNING_POLICY.md)',
+  '[Privacy](https://github.com/GONZALEZeDev/TheLibrary/blob/main/PRIVACY.md)',
+].join(' · ');
+
+/**
  * Build the description of the GitHub release: the English summary, then the French one under its
- * own heading when there is one.
+ * own heading when there is one, then the links to the installation, the code signing policy and
+ * the privacy page.
  *
  * @param en - English summary.
  * @param fr - French summary, or `null`.
@@ -304,5 +316,5 @@ export function buildLatestJson(input: LatestJsonInput): string {
  */
 export function buildReleaseBody(en: string, fr: string | null): string {
   const french = fr === null ? '' : `\n\n---\n\n## Français\n\n${fr}`;
-  return `${en}${french}\n`;
+  return `${en}${french}\n\n---\n\n${RELEASE_BODY_FOOTER}\n`;
 }

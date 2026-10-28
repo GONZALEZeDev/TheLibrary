@@ -186,8 +186,8 @@ export function PhaseTable({ phases }: PhaseTableProps) {
     return null;
   }
   return (
-    // The box does not clip what it holds (no `overflow-hidden`): what a cell shows next to itself,
-    // like a tooltip, may leave the box. The corner cell follows the corner of the box instead.
+    // The box does not clip what it holds (no `overflow-hidden`): the corner cell follows the corner
+    // of the box instead.
     <div className={PANEL_CLASSES.base}>
       <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm tabular-nums">
         <caption className="px-3 py-2 text-left text-base font-semibold">

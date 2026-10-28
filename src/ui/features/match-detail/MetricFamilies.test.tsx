@@ -933,26 +933,14 @@ describe('Evidence', () => {
     await renderFamilies('en');
 
     // A pointer going down the names would stay on the panel of the row above, if it covered them.
-    const panel = panelOf('KDA');
-    expect(panel).toHaveClass('right-0', 'left-auto');
-    expect(panel).not.toHaveClass('left-0');
+    expect(panelOf('KDA')).toHaveAttribute('data-placement', 'end');
   });
 
   it.each([
-    { name: 'by default', props: {}, placed: ['left-0'], notPlaced: ['right-0', 'left-auto'] },
-    {
-      name: 'at the start',
-      props: { placement: 'start' },
-      placed: ['left-0'],
-      notPlaced: ['right-0', 'left-auto'],
-    },
-    {
-      name: 'at the end',
-      props: { placement: 'end' },
-      placed: ['right-0', 'left-auto'],
-      notPlaced: ['left-0'],
-    },
-  ] as const)('places the panel $name', async ({ props, placed, notPlaced }) => {
+    { name: 'by default', props: {}, placement: 'start' },
+    { name: 'at the start', props: { placement: 'start' }, placement: 'start' },
+    { name: 'at the end', props: { placement: 'end' }, placement: 'end' },
+  ] as const)('places the panel $name', async ({ props, placement }) => {
     const row = testFamilies()[0]?.rows[0] ?? expect.unreachable('A family holds rows');
     await renderIn(
       'en',
@@ -961,13 +949,7 @@ describe('Evidence', () => {
       </Evidence>,
     );
 
-    const panel = screen.getByRole('tooltip');
-    for (const name of placed) {
-      expect(panel).toHaveClass(name);
-    }
-    for (const name of notPlaced) {
-      expect(panel).not.toHaveClass(name);
-    }
+    expect(screen.getByRole('tooltip')).toHaveAttribute('data-placement', placement);
   });
 
   it('makes each row reachable by the keyboard, described by its panel', async () => {
@@ -1100,6 +1082,7 @@ describe('Evidence', () => {
     const group = screen.getByRole('group');
     expect(within(group).getByText('Wrapped')).toBeInTheDocument();
     expect(group).toHaveClass('group', 'relative');
-    expect(within(group).getByRole('tooltip')).toHaveClass('absolute', 'hidden');
+    // Fixed to the window, so that what holds the rows never cuts it.
+    expect(within(group).getByRole('tooltip')).toHaveClass('fixed', 'hidden');
   });
 });

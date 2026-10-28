@@ -34,8 +34,8 @@ export interface EvidenceProps {
    */
   readonly formatMedian?: (median: number) => string;
   /**
-   * Which edge of the wrapper the panel is anchored to: `start` (the default) opens it under the
-   * wrapper from its left edge, `end` from its right edge. A row of a list uses `end`, so that the
+   * Which edge of the wrapper the panel is anchored to: `start` (the default) lines it up with the
+   * left edge of the wrapper, `end` with its right edge. A row of a list uses `end`, so that the
    * panel, which hangs over the rows below, leaves their names free: a pointer going down the names
    * then reaches the next row instead of staying on the panel of the one above.
    */

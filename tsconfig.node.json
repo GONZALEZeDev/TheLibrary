@@ -9,6 +9,9 @@
     "module": "esnext",
     // `bundler` rather than `nodenext`: it types the default imports of the ESLint plugins correctly.
     "moduleResolution": "bundler",
+    // The scripts run in Node.js without a build step, which needs the `.ts` extension in the
+    // imports between them (`import … from './release-files.ts'`).
+    "allowImportingTsExtensions": true,
     "types": ["node"],
     // eslint.config.js is plain JavaScript but is type-checked too.
     "allowJs": true,

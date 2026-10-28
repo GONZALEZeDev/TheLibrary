@@ -2,6 +2,8 @@
 
 # Generated or tool-managed files
 pnpm-lock.yaml
+# Written by `pnpm notices`, with the licence texts exactly as their packages ship them
+THIRD_PARTY_NOTICES.md
 
 # Tauri shell: its Rust code is formatted by rustfmt (`cargo fmt`), its JSON files are left as is
 src-tauri/

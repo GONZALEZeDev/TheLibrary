@@ -2,7 +2,7 @@
  * Proves that the production build contains no development-only code.
  *
  * Development-only modules (the browser adapters with their synthetic data, the TanStack devtools)
- * each write a marker in a log line. This script:
+ * contain texts no production module has (see `MARKERS`). This script:
  * 1. scans the production build (`dist/`, made by `pnpm build`): no marker may appear;
  * 2. builds the frontend in development mode into a temporary folder and scans it: every marker
  *    must appear. Without this second step the check could pass forever while proving nothing,
@@ -17,8 +17,23 @@ import { readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { build } from 'vite';
 
-/** Texts that only development-only code contains: the marker of its log lines. */
-const MARKERS = ['thelibrary-dev-only'];
+/**
+ * Texts that only development-only code contains. Several, of different origins, so that a
+ * development module still gets caught if one of them disappears (a log line rewritten, a library
+ * renaming its internals):
+ * - the marker the development modules write in their log lines;
+ * - the persona name of the synthetic Steam account of the browser dev mode;
+ * - the CSS class prefix of the TanStack Query devtools and the name of the TanStack Router
+ *   devtools component;
+ * - the WebAssembly SQLite of the in-memory database of the browser dev mode (sql.js).
+ */
+const MARKERS = [
+  'thelibrary-dev-only',
+  'Fixture Player',
+  'tsqd-',
+  'TanStackRouterDevtools',
+  'sql-wasm',
+];
 
 /** Production build, made by `pnpm build`. */
 const PRODUCTION_DIR = 'dist';

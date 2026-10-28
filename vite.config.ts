@@ -59,7 +59,8 @@ export default defineConfig({
     environment: 'jsdom',
     // Explicit imports (`import { describe } from 'vitest'`) instead of injected globals.
     globals: false,
-    include: ['src/**/*.test.{ts,tsx}'],
+    // The tests of the app, and those of the release scripts (pure helpers run in Node.js).
+    include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.ts'],
     setupFiles: ['./src/test/setup.ts'],
   },
 });

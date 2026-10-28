@@ -28,11 +28,20 @@
   "plugins": {
     "fs": { "scopeDroppedPaths": false },
     "http": { "scopeRedirects": true },
-    "sql": { "preload": ["sqlite:thelibrary.db"] }
+    "sql": { "preload": ["sqlite:thelibrary.db"] },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE0RUQ4RkY3QjVGNUZBNUEKUldSYSt2VzE5NC90Rkg5Ykh3Lyt5UjkwdS9FTTM2YlNqNWpVUkExY3RaYy9SUEREYmNuSjY5eWYK",
+      "endpoints": [
+        "https://github.com/GONZALEZeDev/TheLibrary/releases/latest/download/latest.json"
+      ],
+      "windows": { "installMode": "passive" },
+      "requireSignedVersion": true
+    }
   },
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "publisher": "GONZALEZeDev",
     "category": "Utility",
     "shortDescription": "Desktop companion for Deadlock players who main Paige",

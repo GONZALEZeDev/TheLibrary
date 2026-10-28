@@ -2,8 +2,8 @@
 //!
 //! The application logic is written in TypeScript and runs in the webview. This file
 //! only wires the native plugins, opens the settings store, lists the database migrations,
-//! adds a navigation guard so the window can never leave the bundled app, and defines the one
-//! command of the app: opening the log folder.
+//! adds a navigation guard so the window can never leave the bundled app, defines the one
+//! command of the app (opening the log folder), and tells the player when the app cannot start.
 
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
 use tauri::{Manager, Runtime, Url, Webview};
@@ -11,6 +11,8 @@ use tauri_plugin_log::{RotationStrategy, Target, TargetKind, WEBVIEW_TARGET};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_sql::{Migration, MigrationKind, PluginConfig as SqlPluginConfig};
 use tauri_plugin_store::StoreExt;
+
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Label of the only application window (`app.windows[0].label` in `tauri.conf.json`).
 #[cfg(desktop)]
@@ -51,13 +53,23 @@ const BUNDLED_FRONTEND_ORIGIN: (&str, &str) = ("http", "tauri.localhost");
 #[cfg(not(any(windows, target_os = "android")))]
 const BUNDLED_FRONTEND_ORIGIN: (&str, &str) = ("tauri", "localhost");
 
+/// Identifier of the release app (`identifier` in `tauri.conf.json`, checked by a test below),
+/// i.e. the name of its data folders. Only used to tell the player where the log files are.
+const RELEASE_IDENTIFIER: &str = "io.github.gonzalezedev.thelibrary";
+
+/// Whether the app finished starting (its setup hook ran). A panic before that point is a startup
+/// failure the player must be told about; a later one is only logged.
+static STARTED: AtomicBool = AtomicBool::new(false);
+
 /// Builds and runs the Tauri application.
 ///
-/// # Panics
-///
-/// Panics if the application cannot start, e.g. when the main window cannot be created.
+/// If the application cannot start (a plugin fails to set up, e.g. a migration of the database
+/// fails, or the main window cannot be created), the failure is logged and the player is told in a
+/// message box instead of the app vanishing without a word; the process then exits with code 1.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    report_panics_during_startup();
+
     let builder = tauri::Builder::default();
 
     // Single instance MUST be registered first. Plugins are set up in registration order and
@@ -113,12 +125,92 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_window_state::Builder::new().build());
 
-    builder
+    // Updates of the app. The endpoint and the public key come from `plugins.updater` in
+    // `tauri.conf.json`: the webview can ask for a check and for the installation of the update it
+    // found (the two entries of `capabilities/default.json`). The check command also accepts
+    // headers, a proxy and a target, which the app never passes; none of them changes the endpoint
+    // or the key. An update whose signature does not match the key, or was signed for another
+    // version than the one announced (`requireSignedVersion`), is refused before it runs. On Windows
+    // the installer closes the app and starts it again.
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+    let result = builder
         .plugin(navigation_guard())
         .invoke_handler(app_command_handler())
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        // Runs once every plugin is set up, the database migrated included.
+        .setup(|_app| {
+            STARTED.store(true, Ordering::SeqCst);
+            Ok(())
+        })
+        .run(tauri::generate_context!());
+    if let Err(error) = result {
+        report_startup_failure(&error.to_string());
+        std::process::exit(1);
+    }
 }
+
+/// Installs a panic hook that reports a panic during the startup like any other startup failure.
+/// Every panic still goes to the default hook afterwards (its message on stderr).
+fn report_panics_during_startup() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if STARTED.load(Ordering::SeqCst) {
+            log::error!("panic: {info}");
+        } else {
+            report_startup_failure(&info.to_string());
+        }
+        default_hook(info);
+    }));
+}
+
+/// Logs a startup failure (into the log file when the log plugin is already set up, on stderr in
+/// any case) and tells the player in a message box.
+fn report_startup_failure(details: &str) {
+    log::error!("TheLibrary could not start: {details}");
+    eprintln!("TheLibrary could not start: {details}");
+    show_error_box(&startup_failure_message());
+}
+
+/// The text of the message box of a startup failure. The details stay in the log: the player is
+/// told where it is.
+fn startup_failure_message() -> String {
+    format!(
+        "TheLibrary could not start.\n\n\
+         The details are in the log files, in this folder:\n\
+         %LOCALAPPDATA%\\{RELEASE_IDENTIFIER}\\logs\n\n\
+         If it happens again, please report it with these files on the project's GitHub page."
+    )
+}
+
+/// Shows an error message box (Windows only: the other systems get the stderr line).
+#[cfg(windows)]
+fn show_error_box(text: &str) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+    // The Windows API takes NUL-terminated UTF-16 strings.
+    let wide = |value: &str| {
+        value
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect::<Vec<u16>>()
+    };
+    let text = wide(text);
+    let title = wide("TheLibrary");
+    // SAFETY: both pointers point to NUL-terminated UTF-16 buffers that outlive the call, and a
+    // null owner window is allowed (the box then has no parent).
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            title.as_ptr(),
+            MB_OK | MB_ICONERROR,
+        );
+    }
+}
+
+/// Other systems have no message box here: the stderr line is all.
+#[cfg(not(windows))]
+fn show_error_box(_text: &str) {}
 
 /// Logs to stdout (visible in `tauri dev`) and to `{app_log_dir}/TheLibrary.log`,
 /// i.e. `%LOCALAPPDATA%\io.github.gonzalezedev.thelibrary\logs\TheLibrary.log` on Windows.
@@ -493,6 +585,14 @@ mod tests {
     }
 
     #[test]
+    fn startup_failure_points_to_the_log_folder_of_the_release() {
+        assert_eq!(release_config()["identifier"], RELEASE_IDENTIFIER);
+        let message = startup_failure_message();
+        assert!(message.starts_with("TheLibrary could not start."));
+        assert!(message.contains(r"%LOCALAPPDATA%\io.github.gonzalezedev.thelibrary\logs"));
+    }
+
+    #[test]
     fn database_url_is_the_preloaded_database() {
         // A preload entry that differs from DATABASE_URL would open another, unmigrated database.
         assert_eq!(
@@ -573,8 +673,13 @@ mod tests {
                 "core:event:allow-unlisten",
                 {
                     "identifier": "opener:allow-open-url",
-                    "allow": [{ "url": "https://steamcommunity.com/openid/login*" }]
-                }
+                    "allow": [
+                        { "url": "https://steamcommunity.com/openid/login*" },
+                        { "url": "https://github.com/GONZALEZeDev/TheLibrary/releases/*" }
+                    ]
+                },
+                "updater:allow-check",
+                "updater:allow-download-and-install"
             ])
         );
     }
@@ -631,17 +736,77 @@ mod tests {
     }
 
     #[test]
-    fn main_window_opens_only_the_steam_sign_in_page() {
+    fn main_window_opens_only_the_steam_sign_in_page_and_the_release_pages() {
         // `opener:default` would let the webview open any URL and reveal paths in the file
         // explorer. The only opener entry is `open-url`, scoped to Steam's sign-in page (the glob
-        // ends in `*` because the page is opened with the OpenID parameters in its query string).
+        // ends in `*` because the page is opened with the OpenID parameters in its query string)
+        // and to the pages of the app's GitHub releases (the "View on GitHub" link of the update
+        // dialog).
         assert_eq!(
             permissions_starting_with("opener:"),
             [serde_json::json!({
                 "identifier": "opener:allow-open-url",
-                "allow": [{ "url": "https://steamcommunity.com/openid/login*" }]
+                "allow": [
+                    { "url": "https://steamcommunity.com/openid/login*" },
+                    { "url": "https://github.com/GONZALEZeDev/TheLibrary/releases/*" }
+                ]
             })]
         );
+    }
+
+    #[test]
+    fn main_window_checks_and_installs_updates_only() {
+        // The webview asks for a check and installs the update the check found. `updater:default`
+        // is not granted, so that a later version of the plugin cannot add a command unseen; the
+        // separate `download` and `install` commands are not needed.
+        assert_eq!(
+            permissions_starting_with("updater:"),
+            [
+                serde_json::json!("updater:allow-check"),
+                serde_json::json!("updater:allow-download-and-install")
+            ]
+        );
+    }
+
+    #[test]
+    fn updates_come_only_from_the_github_releases_signed_with_the_owner_key() {
+        // The endpoint is the update file of the latest published release of the repository; the
+        // public key is the owner's (the private key only lives in the secrets of the release
+        // workflow). Another endpoint or key would let someone else ship an update: any change must
+        // be reviewed first, then made here on purpose. `passive`: a progress window, no questions.
+        let updater = &release_config()["plugins"]["updater"];
+        assert_eq!(
+            updater["endpoints"],
+            serde_json::json!([
+                "https://github.com/GONZALEZeDev/TheLibrary/releases/latest/download/latest.json"
+            ])
+        );
+        assert_eq!(
+            updater["pubkey"],
+            "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE0RUQ4RkY3QjVGNUZBNUEKUldSYSt2VzE5NC90Rkg5Ykh3Lyt5UjkwdS9FTTM2YlNqNWpVUkExY3RaYy9SUEREYmNuSjY5eWYK"
+        );
+        assert_eq!(
+            updater["windows"],
+            serde_json::json!({ "installMode": "passive" })
+        );
+        // The signature must name the version it was signed for: `latest.json` itself is not
+        // signed, so without this an older genuine installer could be announced as a newer
+        // version (a downgrade). The Tauri build writes the version into every signature.
+        assert_eq!(updater["requireSignedVersion"], true);
+        // `dangerousInsecureTransportProtocol` and any other key would weaken the check.
+        let mut keys: Vec<&str> = updater
+            .as_object()
+            .expect("plugins.updater must be an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            ["endpoints", "pubkey", "requireSignedVersion", "windows"]
+        );
+        // The build writes the signature of the installer, which the release workflow publishes.
+        assert_eq!(release_config()["bundle"]["createUpdaterArtifacts"], true);
     }
 
     #[test]

@@ -70,6 +70,16 @@ serde_json = "1"
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2.5.0"
 tauri-plugin-window-state = "2.5.0"
+# Updates of the app: downloads `latest.json` from the latest GitHub release, and on the player's
+# request the installer, whose signature it checks against the public key of `tauri.conf.json`
+# before running it. 2.14.0 matches `@tauri-apps/plugin-updater` (the Tauri CLI compares both):
+# keep `Cargo.lock` on it.
+tauri-plugin-updater = "2.14.0"
+
+# The message box that tells the player the app could not start (`report_startup_failure` in
+# lib.rs). Already compiled for Tauri itself: this only turns on the one Windows API it needs.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_UI_WindowsAndMessaging"] }
 
 # Development builds (`pnpm dev:desktop`, `cargo test`, `tauri build --debug`) compile the
 # dependencies without debug information: nobody steps through them, and their debug information

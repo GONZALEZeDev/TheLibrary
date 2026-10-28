@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Least-privilege permissions of the main window: logging through the log plugin; read/write access to the settings store and to the database that the shell opened at startup (the window can use them but cannot open another connection); HTTPS requests to deadlock-api, Steam's sign-in page and the Steam avatar host only; read/write access to the match archive folder only (the app local data folder, archive/), never to any other file; start and stop the one-shot Steam sign-in listener on 127.0.0.1 and receive its event; open Steam's sign-in page in the system browser; POST the sign-in confirmation to Steam and download the Steam avatar. Besides these, the webview can call the app's own open_log_folder command, which takes no argument (the shell finds and opens the log folder itself) and needs no permission here. Nothing else is exposed to the webview.",
+  "description": "Least-privilege permissions of the main window: logging through the log plugin; read/write access to the settings store and to the database that the shell opened at startup (the window can use them but cannot open another connection); HTTPS requests to deadlock-api, Steam's sign-in page and the Steam avatar host only; read/write access to the match archive folder only (the app local data folder, archive/), never to any other file; start and stop the one-shot Steam sign-in listener on 127.0.0.1 and receive its event; open Steam's sign-in page and the GitHub pages of the app's releases in the system browser; check the latest GitHub release for a newer version of the app and, when the player asks, download and install it (the updater refuses an installer whose signature does not match the public key of tauri.conf.json); POST the sign-in confirmation to Steam and download the Steam avatar. Besides these, the webview can call the app's own open_log_folder command, which takes no argument (the shell finds and opens the log folder itself) and needs no permission here. Nothing else is exposed to the webview.",
   "windows": ["main"],
   "permissions": [
     "log:default",
@@ -39,7 +39,12 @@
     "core:event:allow-unlisten",
     {
       "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "https://steamcommunity.com/openid/login*" }]
-    }
+      "allow": [
+        { "url": "https://steamcommunity.com/openid/login*" },
+        { "url": "https://github.com/GONZALEZeDev/TheLibrary/releases/*" }
+      ]
+    },
+    "updater:allow-check",
+    "updater:allow-download-and-install"
   ]
 }

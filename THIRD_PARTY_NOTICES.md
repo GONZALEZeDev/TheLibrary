@@ -25,6 +25,7 @@ app; do not edit it by hand.
 - @tauri-apps/plugin-opener 2.7.2 — MIT OR Apache-2.0 — [text 8](#text-8)
 - @tauri-apps/plugin-sql 2.6.0 — MIT OR Apache-2.0 — [text 8](#text-8)
 - @tauri-apps/plugin-store 2.5.0 — MIT OR Apache-2.0 — [text 8](#text-8)
+- @tauri-apps/plugin-updater 2.14.0 — MIT OR Apache-2.0 — [text 8](#text-8)
 - cookie-es 3.1.1 — MIT — [text 9](#text-9)
 - html-parse-stringify 4.0.1 — MIT — [text 10](#text-10)
 - i18next 26.5.6 — MIT — [text 11](#text-11)
@@ -195,77 +196,80 @@ app; do not edit it by hand.
 - md-5 0.10.6 — MIT OR Apache-2.0 — [text 3](#text-3), [text 108](#text-108)
 - memchr 2.8.3 — Unlicense OR MIT — [text 21](#text-21), [text 22](#text-22)
 - mime 0.3.17 — MIT OR Apache-2.0 — [text 3](#text-3), [text 109](#text-109)
-- miniz_oxide 0.8.9 — MIT OR Zlib OR Apache-2.0 — [text 110](#text-110), [text 3](#text-3), [text 110](#text-110), [text 111](#text-111)
-- miniz_oxide 0.9.1 — MIT OR Zlib OR Apache-2.0 — [text 110](#text-110), [text 3](#text-3), [text 110](#text-110), [text 111](#text-111)
-- mio 1.2.4 — MIT — [text 112](#text-112)
-- muda 0.20.0 — Apache-2.0 OR MIT — [text 3](#text-3), [text 113](#text-113), [text 114](#text-114)
+- minisign-verify 0.3.0 — MIT — [text 110](#text-110)
+- miniz_oxide 0.8.9 — MIT OR Zlib OR Apache-2.0 — [text 111](#text-111), [text 3](#text-3), [text 111](#text-111), [text 112](#text-112)
+- miniz_oxide 0.9.1 — MIT OR Zlib OR Apache-2.0 — [text 111](#text-111), [text 3](#text-3), [text 111](#text-111), [text 112](#text-112)
+- mio 1.2.4 — MIT — [text 113](#text-113)
+- muda 0.20.0 — Apache-2.0 OR MIT — [text 3](#text-3), [text 114](#text-114), [text 115](#text-115)
 - multiversion_no_op 1.0.0 — Apache-2.0 OR MIT — [text 3](#text-3), [text 65](#text-65)
-- new_debug_unreachable 1.0.6 — MIT — [text 115](#text-115)
+- new_debug_unreachable 1.0.6 — MIT — [text 116](#text-116)
 - num-bigint-dig 0.8.6 — MIT/Apache-2.0 — [text 3](#text-3), [text 32](#text-32)
-- num-conv 0.2.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 116](#text-116)
+- num-conv 0.2.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 117](#text-117)
 - num-integer 0.1.47 — MIT OR Apache-2.0 — [text 3](#text-3), [text 32](#text-32)
 - num-iter 0.1.46 — MIT OR Apache-2.0 — [text 3](#text-3), [text 32](#text-32)
 - num-traits 0.2.19 — MIT OR Apache-2.0 — [text 3](#text-3), [text 32](#text-32)
 - once_cell 1.21.4 — MIT OR Apache-2.0 — [text 3](#text-3), [text 20](#text-20)
-- open 5.4.4 — MIT — [text 117](#text-117)
-- option-ext 0.2.0 — MPL-2.0 — [text 118](#text-118)
-- parking 2.2.1 — Apache-2.0 OR MIT — [text 3](#text-3), [text 20](#text-20), [text 119](#text-119)
+- open 5.4.4 — MIT — [text 118](#text-118)
+- option-ext 0.2.0 — MPL-2.0 — [text 119](#text-119)
+- parking 2.2.1 — Apache-2.0 OR MIT — [text 3](#text-3), [text 20](#text-20), [text 120](#text-120)
 - parking_lot 0.12.5 — MIT OR Apache-2.0 — [text 3](#text-3), [text 105](#text-105)
 - parking_lot_core 0.9.12 — MIT OR Apache-2.0 — [text 3](#text-3), [text 105](#text-105)
-- pem-rfc7468 0.7.0 — Apache-2.0 OR MIT — [text 3](#text-3), [text 120](#text-120)
+- pem-rfc7468 0.7.0 — Apache-2.0 OR MIT — [text 3](#text-3), [text 121](#text-121)
 - percent-encoding 2.3.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 52](#text-52)
-- phf 0.13.1 — MIT — [text 121](#text-121)
-- phf_generator 0.13.1 — MIT — [text 121](#text-121)
-- phf_macros 0.13.1 — MIT — [text 121](#text-121)
-- phf_shared 0.13.1 — MIT — [text 121](#text-121)
+- phf 0.13.1 — MIT — [text 122](#text-122)
+- phf_generator 0.13.1 — MIT — [text 122](#text-122)
+- phf_macros 0.13.1 — MIT — [text 122](#text-122)
+- phf_shared 0.13.1 — MIT — [text 122](#text-122)
 - pin-project-lite 0.2.17 — Apache-2.0 OR MIT — [text 3](#text-3), [text 20](#text-20)
-- pkcs1 0.7.5 — Apache-2.0 OR MIT — [text 3](#text-3), [text 122](#text-122)
+- pkcs1 0.7.5 — Apache-2.0 OR MIT — [text 3](#text-3), [text 123](#text-123)
 - pkcs8 0.10.2 — Apache-2.0 OR MIT — [text 3](#text-3), [text 54](#text-54)
-- plist 1.10.2 — MIT — [text 123](#text-123)
-- png 0.18.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 124](#text-124)
+- plist 1.10.2 — MIT — [text 124](#text-124)
+- png 0.18.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 125](#text-125)
 - potential_utf 0.1.6 — Unicode-3.0 — [text 95](#text-95)
-- powerfmt 0.2.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 125](#text-125)
-- ppv-lite86 0.2.21 — MIT OR Apache-2.0 — [text 3](#text-3), [text 126](#text-126)
-- precomputed-hash 0.1.1 — MIT — [text 127](#text-127)
+- powerfmt 0.2.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 126](#text-126)
+- ppv-lite86 0.2.21 — MIT OR Apache-2.0 — [text 3](#text-3), [text 127](#text-127)
+- precomputed-hash 0.1.1 — MIT — [text 128](#text-128)
 - proc-macro-crate 3.5.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 20](#text-20)
 - proc-macro2 1.0.107 — MIT OR Apache-2.0 — [text 3](#text-3), [text 20](#text-20)
-- quick-xml 0.42.0 — MIT — [text 128](#text-128)
-- quinn 0.11.12 — MIT OR Apache-2.0 — [text 3](#text-3), [text 129](#text-129)
-- quinn-proto 0.11.19 — MIT OR Apache-2.0 — [text 3](#text-3), [text 129](#text-129)
-- quinn-udp 0.5.16 — MIT OR Apache-2.0 — [text 3](#text-3), [text 129](#text-129)
+- quick-xml 0.42.0 — MIT — [text 129](#text-129)
+- quinn 0.11.12 — MIT OR Apache-2.0 — [text 3](#text-3), [text 130](#text-130)
+- quinn-proto 0.11.19 — MIT OR Apache-2.0 — [text 3](#text-3), [text 130](#text-130)
+- quinn-udp 0.5.16 — MIT OR Apache-2.0 — [text 3](#text-3), [text 130](#text-130)
 - quote 1.0.47 — MIT OR Apache-2.0 — [text 3](#text-3), [text 20](#text-20)
-- rand 0.10.3 — MIT OR Apache-2.0 — [text 3](#text-3), [text 130](#text-130)
-- rand 0.8.8 — MIT OR Apache-2.0 — [text 3](#text-3), [text 130](#text-130)
-- rand 0.9.5 — MIT OR Apache-2.0 — [text 3](#text-3), [text 130](#text-130)
-- rand_chacha 0.3.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 130](#text-130)
-- rand_chacha 0.9.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 130](#text-130)
-- rand_core 0.10.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 131](#text-131)
-- rand_core 0.6.4 — MIT OR Apache-2.0 — [text 3](#text-3), [text 130](#text-130)
-- rand_core 0.9.5 — MIT OR Apache-2.0 — [text 3](#text-3), [text 130](#text-130)
-- rand_pcg 0.10.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 132](#text-132)
-- raw-window-handle 0.6.2 — MIT OR Apache-2.0 OR Zlib — [text 3](#text-3), [text 133](#text-133), [text 134](#text-134)
+- rand 0.10.3 — MIT OR Apache-2.0 — [text 3](#text-3), [text 131](#text-131)
+- rand 0.8.8 — MIT OR Apache-2.0 — [text 3](#text-3), [text 131](#text-131)
+- rand 0.9.5 — MIT OR Apache-2.0 — [text 3](#text-3), [text 131](#text-131)
+- rand_chacha 0.3.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 131](#text-131)
+- rand_chacha 0.9.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 131](#text-131)
+- rand_core 0.10.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 132](#text-132)
+- rand_core 0.6.4 — MIT OR Apache-2.0 — [text 3](#text-3), [text 131](#text-131)
+- rand_core 0.9.5 — MIT OR Apache-2.0 — [text 3](#text-3), [text 131](#text-131)
+- rand_pcg 0.10.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 133](#text-133)
+- raw-window-handle 0.6.2 — MIT OR Apache-2.0 OR Zlib — [text 3](#text-3), [text 134](#text-134), [text 135](#text-135)
 - ref-cast 1.0.27 — MIT OR Apache-2.0 — [text 3](#text-3), [text 20](#text-20)
 - ref-cast-impl 1.0.27 — MIT OR Apache-2.0 — [text 3](#text-3), [text 20](#text-20)
 - regex 1.13.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 32](#text-32)
 - regex-automata 0.4.18 — MIT OR Apache-2.0 — [text 3](#text-3), [text 32](#text-32)
 - regex-syntax 0.8.11 — MIT OR Apache-2.0 — [text 3](#text-3), [text 32](#text-32)
-- reqwest 0.12.28 — MIT OR Apache-2.0 — [text 3](#text-3), [text 135](#text-135)
-- ring 0.17.14 — Apache-2.0 AND ISC — [text 136](#text-136), [text 3](#text-3), [text 137](#text-137)
+- reqwest 0.12.28 — MIT OR Apache-2.0 — [text 3](#text-3), [text 136](#text-136)
+- reqwest 0.13.5 — MIT OR Apache-2.0 — [text 3](#text-3), [text 137](#text-137)
+- ring 0.17.14 — Apache-2.0 AND ISC — [text 138](#text-138), [text 3](#text-3), [text 139](#text-139)
 - rsa 0.9.10 — MIT OR Apache-2.0 — [text 3](#text-3), [text 20](#text-20)
-- rust_decimal 1.43.0 — MIT — [text 138](#text-138)
+- rust_decimal 1.43.0 — MIT — [text 140](#text-140)
 - rustc-hash 2.1.3 — Apache-2.0 OR MIT — [text 3](#text-3), [text 20](#text-20)
 - rustls 0.23.46 — Apache-2.0 OR ISC OR MIT — [text 3](#text-3), [text 91](#text-91), [text 92](#text-92)
-- rustls-native-certs 0.8.5 — Apache-2.0 OR ISC OR MIT — [text 139](#text-139), [text 3](#text-3), [text 91](#text-91), [text 92](#text-92)
-- rustls-pki-types 1.15.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 140](#text-140)
-- rustls-webpki 0.103.16 — ISC — [text 141](#text-141)
-- ryu 1.0.23 — Apache-2.0 OR BSL-1.0 — [text 3](#text-3), [text 142](#text-142)
-- same-file 1.0.6 — Unlicense/MIT — [text 21](#text-21), [text 143](#text-143)
-- schannel 0.1.30 — MIT — [text 144](#text-144)
-- schemars 0.8.22 — MIT — [text 145](#text-145)
-- schemars 0.9.0 — MIT — [text 145](#text-145)
-- schemars 1.2.3 — MIT — [text 145](#text-145)
-- schemars_derive 0.8.22 — MIT — [text 145](#text-145)
-- scopeguard 1.2.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 146](#text-146)
+- rustls-native-certs 0.8.5 — Apache-2.0 OR ISC OR MIT — [text 141](#text-141), [text 3](#text-3), [text 91](#text-91), [text 92](#text-92)
+- rustls-pki-types 1.15.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 142](#text-142)
+- rustls-platform-verifier 0.7.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 143](#text-143)
+- rustls-webpki 0.103.16 — ISC — [text 144](#text-144)
+- ryu 1.0.23 — Apache-2.0 OR BSL-1.0 — [text 3](#text-3), [text 145](#text-145)
+- same-file 1.0.6 — Unlicense/MIT — [text 21](#text-21), [text 146](#text-146)
+- schannel 0.1.30 — MIT — [text 147](#text-147)
+- schemars 0.8.22 — MIT — [text 148](#text-148)
+- schemars 0.9.0 — MIT — [text 148](#text-148)
+- schemars 1.2.3 — MIT — [text 148](#text-148)
+- schemars_derive 0.8.22 — MIT — [text 148](#text-148)
+- scopeguard 1.2.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 149](#text-149)
 - selectors 0.38.0 — MPL-2.0 — licence text not shipped by the package
 - semver 1.0.28 — MIT OR Apache-2.0 — [text 3](#text-3), [text 20](#text-20)
 - serde 1.0.229 — MIT OR Apache-2.0 — [text 3](#text-3), [text 20](#text-20)
@@ -274,138 +278,141 @@ app; do not edit it by hand.
 - serde_derive_internals 0.29.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 20](#text-20)
 - serde_json 1.0.154 — MIT OR Apache-2.0 — [text 3](#text-3), [text 20](#text-20)
 - serde_repr 0.1.21 — MIT OR Apache-2.0 — [text 3](#text-3), [text 20](#text-20)
-- serde_spanned 1.1.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 147](#text-147)
-- serde_urlencoded 0.7.1 — MIT/Apache-2.0 — [text 3](#text-3), [text 148](#text-148)
+- serde_spanned 1.1.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 150](#text-150)
+- serde_urlencoded 0.7.1 — MIT/Apache-2.0 — [text 3](#text-3), [text 151](#text-151)
 - serde_with 3.24.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 64](#text-64)
 - serde_with_macros 3.24.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 64](#text-64)
 - serde-untagged 0.1.9 — MIT OR Apache-2.0 — [text 3](#text-3), [text 20](#text-20)
-- serialize-to-javascript 0.1.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 149](#text-149)
-- serialize-to-javascript-impl 0.1.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 149](#text-149)
+- serialize-to-javascript 0.1.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 152](#text-152)
+- serialize-to-javascript-impl 0.1.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 152](#text-152)
 - servo_arc 0.4.3 — MIT OR Apache-2.0 — [text 3](#text-3), [text 20](#text-20)
 - sha1 0.10.7 — MIT OR Apache-2.0 — [text 3](#text-3), [text 108](#text-108)
 - sha2 0.10.9 — MIT OR Apache-2.0 — [text 3](#text-3), [text 108](#text-108)
-- signature 2.2.0 — Apache-2.0 OR MIT — [text 3](#text-3), [text 150](#text-150)
-- simd-adler32 0.3.10 — MIT — [text 151](#text-151)
+- signature 2.2.0 — Apache-2.0 OR MIT — [text 3](#text-3), [text 153](#text-153)
+- simd-adler32 0.3.10 — MIT — [text 154](#text-154)
 - simdutf8 0.1.5 — MIT OR Apache-2.0 — [text 3](#text-3), [text 68](#text-68)
-- siphasher 1.0.4 — MIT OR Apache-2.0 — [text 152](#text-152), [text 3](#text-3), [text 20](#text-20)
-- slab 0.4.12 — MIT — [text 153](#text-153)
-- smallvec 1.16.3 — MIT OR Apache-2.0 — [text 3](#text-3), [text 154](#text-154)
+- siphasher 1.0.4 — MIT OR Apache-2.0 — [text 155](#text-155), [text 3](#text-3), [text 20](#text-20)
+- slab 0.4.12 — MIT — [text 156](#text-156)
+- smallvec 1.16.3 — MIT OR Apache-2.0 — [text 3](#text-3), [text 157](#text-157)
 - socket2 0.6.5 — MIT OR Apache-2.0 — [text 3](#text-3), [text 38](#text-38)
-- softbuffer 0.4.8 — MIT OR Apache-2.0 — [text 3](#text-3), [text 155](#text-155)
-- spin 0.9.9 — MIT — [text 156](#text-156)
-- spki 0.7.3 — Apache-2.0 OR MIT — [text 3](#text-3), [text 122](#text-122)
-- sqlx 0.8.6 — MIT OR Apache-2.0 — [text 3](#text-3), [text 157](#text-157)
-- sqlx-core 0.8.6 — MIT OR Apache-2.0 — [text 3](#text-3), [text 157](#text-157)
-- sqlx-macros 0.8.6 — MIT OR Apache-2.0 — [text 3](#text-3), [text 157](#text-157)
-- sqlx-macros-core 0.8.6 — MIT OR Apache-2.0 — [text 3](#text-3), [text 157](#text-157)
-- sqlx-mysql 0.8.6 — MIT OR Apache-2.0 — [text 3](#text-3), [text 157](#text-157)
-- sqlx-postgres 0.8.6 — MIT OR Apache-2.0 — [text 3](#text-3), [text 157](#text-157)
-- sqlx-sqlite 0.8.6 — MIT OR Apache-2.0 — [text 3](#text-3), [text 157](#text-157)
-- stable_deref_trait 1.2.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 158](#text-158)
-- string_cache 0.9.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 159](#text-159)
-- stringprep 0.1.5 — MIT/Apache-2.0 — [text 3](#text-3), [text 160](#text-160)
-- strsim 0.11.1 — MIT — [text 161](#text-161)
-- subtle 2.6.1 — BSD-3-Clause — [text 162](#text-162)
+- softbuffer 0.4.8 — MIT OR Apache-2.0 — [text 3](#text-3), [text 158](#text-158)
+- spin 0.9.9 — MIT — [text 159](#text-159)
+- spki 0.7.3 — Apache-2.0 OR MIT — [text 3](#text-3), [text 123](#text-123)
+- sqlx 0.8.6 — MIT OR Apache-2.0 — [text 3](#text-3), [text 160](#text-160)
+- sqlx-core 0.8.6 — MIT OR Apache-2.0 — [text 3](#text-3), [text 160](#text-160)
+- sqlx-macros 0.8.6 — MIT OR Apache-2.0 — [text 3](#text-3), [text 160](#text-160)
+- sqlx-macros-core 0.8.6 — MIT OR Apache-2.0 — [text 3](#text-3), [text 160](#text-160)
+- sqlx-mysql 0.8.6 — MIT OR Apache-2.0 — [text 3](#text-3), [text 160](#text-160)
+- sqlx-postgres 0.8.6 — MIT OR Apache-2.0 — [text 3](#text-3), [text 160](#text-160)
+- sqlx-sqlite 0.8.6 — MIT OR Apache-2.0 — [text 3](#text-3), [text 160](#text-160)
+- stable_deref_trait 1.2.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 161](#text-161)
+- string_cache 0.9.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 162](#text-162)
+- stringprep 0.1.5 — MIT/Apache-2.0 — [text 3](#text-3), [text 163](#text-163)
+- strsim 0.11.1 — MIT — [text 164](#text-164)
+- subtle 2.6.1 — BSD-3-Clause — [text 165](#text-165)
 - syn 2.0.119 — MIT OR Apache-2.0 — [text 3](#text-3), [text 20](#text-20)
 - syn 3.0.9 — MIT OR Apache-2.0 — [text 3](#text-3), [text 20](#text-20)
 - sync_wrapper 1.0.2 — Apache-2.0 — [text 3](#text-3)
-- synstructure 0.14.0 — MIT — [text 163](#text-163)
-- tao 0.37.1 — Apache-2.0 — [text 3](#text-3), [text 164](#text-164)
+- synstructure 0.14.0 — MIT — [text 166](#text-166)
+- tao 0.37.1 — Apache-2.0 — [text 3](#text-3), [text 167](#text-167)
 - tauri 2.12.5 — Apache-2.0 OR MIT — [text 3](#text-3), [text 6](#text-6)
 - tauri-codegen 2.7.4 — Apache-2.0 OR MIT — [text 3](#text-3), [text 6](#text-6)
 - tauri-macros 2.7.4 — Apache-2.0 OR MIT — [text 3](#text-3), [text 6](#text-6)
 - tauri-plugin-fs 2.7.1 — Apache-2.0 OR MIT — [text 8](#text-8), [text 3](#text-3), [text 6](#text-6)
 - tauri-plugin-http 2.8.3 — Apache-2.0 OR MIT — [text 8](#text-8), [text 3](#text-3), [text 6](#text-6)
 - tauri-plugin-log 2.10.1 — Apache-2.0 OR MIT — [text 8](#text-8), [text 3](#text-3), [text 6](#text-6)
-- tauri-plugin-oauth 2.1.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 165](#text-165)
+- tauri-plugin-oauth 2.1.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 168](#text-168)
 - tauri-plugin-opener 2.7.2 — Apache-2.0 OR MIT — [text 8](#text-8), [text 3](#text-3), [text 6](#text-6)
-- tauri-plugin-single-instance 2.5.4 — Apache-2.0 OR MIT — [text 8](#text-8), [text 3](#text-3), [text 166](#text-166)
+- tauri-plugin-single-instance 2.5.4 — Apache-2.0 OR MIT — [text 8](#text-8), [text 3](#text-3), [text 169](#text-169)
 - tauri-plugin-sql 2.6.0 — Apache-2.0 OR MIT — [text 8](#text-8), [text 3](#text-3), [text 6](#text-6)
 - tauri-plugin-store 2.5.0 — Apache-2.0 OR MIT — [text 8](#text-8), [text 3](#text-3), [text 6](#text-6)
+- tauri-plugin-updater 2.14.0 — Apache-2.0 OR MIT — [text 8](#text-8), [text 3](#text-3), [text 6](#text-6)
 - tauri-plugin-window-state 2.5.0 — Apache-2.0 OR MIT — [text 8](#text-8), [text 3](#text-3), [text 6](#text-6)
 - tauri-runtime 2.12.2 — Apache-2.0 OR MIT — [text 3](#text-3), [text 6](#text-6)
 - tauri-runtime-wry 2.12.3 — Apache-2.0 OR MIT — [text 3](#text-3), [text 6](#text-6)
 - tauri-utils 2.10.2 — Apache-2.0 OR MIT — [text 3](#text-3), [text 6](#text-6)
-- tendril 0.5.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 167](#text-167)
+- tempfile 3.27.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 170](#text-170)
+- tendril 0.5.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 171](#text-171)
 - thiserror 2.0.21 — MIT OR Apache-2.0 — [text 3](#text-3), [text 20](#text-20)
 - thiserror-impl 2.0.21 — MIT OR Apache-2.0 — [text 3](#text-3), [text 20](#text-20)
-- time 0.3.55 — MIT OR Apache-2.0 — [text 3](#text-3), [text 168](#text-168)
-- time-core 0.1.9 — MIT OR Apache-2.0 — [text 3](#text-3), [text 168](#text-168)
-- time-macros 0.2.32 — MIT OR Apache-2.0 — [text 3](#text-3), [text 168](#text-168)
+- time 0.3.55 — MIT OR Apache-2.0 — [text 3](#text-3), [text 172](#text-172)
+- time-core 0.1.9 — MIT OR Apache-2.0 — [text 3](#text-3), [text 172](#text-172)
+- time-macros 0.2.32 — MIT OR Apache-2.0 — [text 3](#text-3), [text 172](#text-172)
 - tinystr 0.8.4 — Unicode-3.0 — [text 95](#text-95)
-- tinyvec 1.13.3 — Zlib OR Apache-2.0 OR MIT — [text 3](#text-3), [text 20](#text-20), [text 169](#text-169)
-- tokio 1.54.1 — MIT — [text 170](#text-170)
-- tokio-macros 2.7.2 — MIT — [text 171](#text-171)
-- tokio-rustls 0.26.6 — MIT OR Apache-2.0 — [text 3](#text-3), [text 172](#text-172)
-- tokio-stream 0.1.19 — MIT — [text 170](#text-170)
-- tokio-util 0.7.20 — MIT — [text 170](#text-170)
-- toml 1.1.8+spec-1.1.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 147](#text-147)
-- toml_datetime 1.1.2+spec-1.1.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 147](#text-147)
-- toml_edit 0.25.17+spec-1.1.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 147](#text-147)
-- toml_parser 1.1.5+spec-1.1.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 147](#text-147)
-- toml_writer 1.1.3+spec-1.1.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 147](#text-147)
-- tower 0.5.3 — MIT — [text 173](#text-173)
-- tower-http 0.6.11 — MIT — [text 174](#text-174)
-- tower-layer 0.3.3 — MIT — [text 173](#text-173)
-- tower-service 0.3.3 — MIT — [text 173](#text-173)
-- tracing 0.1.44 — MIT — [text 175](#text-175)
-- tracing-attributes 0.1.31 — MIT — [text 175](#text-175)
-- tracing-core 0.1.36 — MIT — [text 175](#text-175)
-- tray-icon 0.25.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 113](#text-113), [text 176](#text-176)
-- try-lock 0.2.5 — MIT — [text 177](#text-177)
+- tinyvec 1.13.3 — Zlib OR Apache-2.0 OR MIT — [text 3](#text-3), [text 20](#text-20), [text 173](#text-173)
+- tokio 1.54.1 — MIT — [text 174](#text-174)
+- tokio-macros 2.7.2 — MIT — [text 175](#text-175)
+- tokio-rustls 0.26.6 — MIT OR Apache-2.0 — [text 3](#text-3), [text 176](#text-176)
+- tokio-stream 0.1.19 — MIT — [text 174](#text-174)
+- tokio-util 0.7.20 — MIT — [text 174](#text-174)
+- toml 1.1.8+spec-1.1.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 150](#text-150)
+- toml_datetime 1.1.2+spec-1.1.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 150](#text-150)
+- toml_edit 0.25.17+spec-1.1.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 150](#text-150)
+- toml_parser 1.1.5+spec-1.1.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 150](#text-150)
+- toml_writer 1.1.3+spec-1.1.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 150](#text-150)
+- tower 0.5.3 — MIT — [text 177](#text-177)
+- tower-http 0.6.11 — MIT — [text 178](#text-178)
+- tower-layer 0.3.3 — MIT — [text 177](#text-177)
+- tower-service 0.3.3 — MIT — [text 177](#text-177)
+- tracing 0.1.44 — MIT — [text 179](#text-179)
+- tracing-attributes 0.1.31 — MIT — [text 179](#text-179)
+- tracing-core 0.1.36 — MIT — [text 179](#text-179)
+- tray-icon 0.25.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 114](#text-114), [text 180](#text-180)
+- try-lock 0.2.5 — MIT — [text 181](#text-181)
 - typeid 1.0.3 — MIT OR Apache-2.0 — [text 3](#text-3), [text 20](#text-20)
-- typenum 1.20.1 — MIT OR Apache-2.0 — [text 178](#text-178), [text 3](#text-3), [text 179](#text-179)
+- typenum 1.20.1 — MIT OR Apache-2.0 — [text 182](#text-182), [text 3](#text-3), [text 183](#text-183)
 - unicode-bidi 0.3.18 — MIT OR Apache-2.0 — [text 3](#text-3), [text 83](#text-83)
-- unicode-ident 1.0.27 — (MIT OR Apache-2.0) AND Unicode-3.0 — [text 3](#text-3), [text 20](#text-20), [text 180](#text-180)
-- unicode-normalization 0.1.26 — (MIT OR Apache-2.0) AND Unicode-3.0 — [text 3](#text-3), [text 83](#text-83), [text 180](#text-180)
+- unicode-ident 1.0.27 — (MIT OR Apache-2.0) AND Unicode-3.0 — [text 3](#text-3), [text 20](#text-20), [text 184](#text-184)
+- unicode-normalization 0.1.26 — (MIT OR Apache-2.0) AND Unicode-3.0 — [text 3](#text-3), [text 83](#text-83), [text 184](#text-184)
 - unicode-properties 0.1.4 — MIT/Apache-2.0 — [text 3](#text-3), [text 83](#text-83)
 - unicode-segmentation 1.13.3 — MIT OR Apache-2.0 — [text 3](#text-3), [text 83](#text-83)
-- untrusted 0.9.0 — ISC — [text 181](#text-181)
+- untrusted 0.9.0 — ISC — [text 185](#text-185)
 - url 2.5.8 — MIT OR Apache-2.0 — [text 3](#text-3), [text 52](#text-52)
-- urlpattern 0.6.0 — MIT — [text 182](#text-182)
+- urlpattern 0.6.0 — MIT — [text 186](#text-186)
 - utf8_iter 1.0.4 — Apache-2.0 OR MIT — [text 3](#text-3), [text 65](#text-65)
-- uuid 1.28.0 — Apache-2.0 OR MIT — [text 3](#text-3), [text 183](#text-183)
+- uuid 1.28.0 — Apache-2.0 OR MIT — [text 3](#text-3), [text 187](#text-187)
 - walkdir 2.5.0 — Unlicense/MIT — [text 21](#text-21), [text 22](#text-22)
-- want 0.3.2 — MIT — [text 184](#text-184)
+- want 0.3.2 — MIT — [text 188](#text-188)
 - web_atoms 0.2.6 — MIT OR Apache-2.0 — [text 3](#text-3), [text 86](#text-86)
-- web-time 1.1.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 185](#text-185)
-- webpki-roots 1.0.10 — CDLA-Permissive-2.0 — [text 186](#text-186)
+- web-time 1.1.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 189](#text-189)
+- webpki-roots 1.0.10 — CDLA-Permissive-2.0 — [text 190](#text-190)
 - webview2-com 0.39.1 — MIT — licence text not shipped by the package
 - webview2-com-macros 0.8.1 — MIT — licence text not shipped by the package
 - webview2-com-sys 0.39.1 — MIT — licence text not shipped by the package
-- whoami 1.6.1 — Apache-2.0 OR BSL-1.0 OR MIT — [text 3](#text-3), [text 142](#text-142), [text 68](#text-68)
-- winapi-util 0.1.11 — Unlicense OR MIT — [text 21](#text-21), [text 143](#text-143)
-- window-vibrancy 0.8.1 — Apache-2.0 OR MIT — [text 3](#text-3), [text 187](#text-187), [text 188](#text-188)
-- windows 0.62.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 189](#text-189)
-- windows_x86_64_msvc 0.48.5 — MIT OR Apache-2.0 — [text 3](#text-3), [text 189](#text-189)
-- windows-collections 0.3.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 189](#text-189)
-- windows-core 0.62.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 189](#text-189)
-- windows-future 0.3.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 189](#text-189)
-- windows-implement 0.60.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 189](#text-189)
-- windows-interface 0.59.3 — MIT OR Apache-2.0 — [text 3](#text-3), [text 189](#text-189)
-- windows-link 0.2.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 189](#text-189)
-- windows-numerics 0.3.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 189](#text-189)
-- windows-registry 0.6.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 189](#text-189)
-- windows-result 0.4.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 189](#text-189)
-- windows-strings 0.5.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 189](#text-189)
-- windows-sys 0.48.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 189](#text-189)
-- windows-sys 0.61.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 189](#text-189)
-- windows-targets 0.48.5 — MIT OR Apache-2.0 — [text 3](#text-3), [text 189](#text-189)
-- windows-threading 0.2.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 189](#text-189)
-- windows-version 0.1.7 — MIT OR Apache-2.0 — [text 3](#text-3), [text 189](#text-189)
+- whoami 1.6.1 — Apache-2.0 OR BSL-1.0 OR MIT — [text 3](#text-3), [text 145](#text-145), [text 68](#text-68)
+- winapi-util 0.1.11 — Unlicense OR MIT — [text 21](#text-21), [text 146](#text-146)
+- window-vibrancy 0.8.1 — Apache-2.0 OR MIT — [text 3](#text-3), [text 191](#text-191), [text 192](#text-192)
+- windows 0.62.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 193](#text-193)
+- windows_x86_64_msvc 0.48.5 — MIT OR Apache-2.0 — [text 3](#text-3), [text 193](#text-193)
+- windows-collections 0.3.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 193](#text-193)
+- windows-core 0.62.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 193](#text-193)
+- windows-future 0.3.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 193](#text-193)
+- windows-implement 0.60.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 193](#text-193)
+- windows-interface 0.59.3 — MIT OR Apache-2.0 — [text 3](#text-3), [text 193](#text-193)
+- windows-link 0.2.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 193](#text-193)
+- windows-numerics 0.3.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 193](#text-193)
+- windows-registry 0.6.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 193](#text-193)
+- windows-result 0.4.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 193](#text-193)
+- windows-strings 0.5.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 193](#text-193)
+- windows-sys 0.48.0 — MIT OR Apache-2.0 — [text 3](#text-3), [text 193](#text-193)
+- windows-sys 0.61.2 — MIT OR Apache-2.0 — [text 3](#text-3), [text 193](#text-193)
+- windows-targets 0.48.5 — MIT OR Apache-2.0 — [text 3](#text-3), [text 193](#text-193)
+- windows-threading 0.2.1 — MIT OR Apache-2.0 — [text 3](#text-3), [text 193](#text-193)
+- windows-version 0.1.7 — MIT OR Apache-2.0 — [text 3](#text-3), [text 193](#text-193)
 - winnow 1.0.4 — MIT — [text 20](#text-20)
 - writeable 0.6.4 — Unicode-3.0 — [text 95](#text-95)
-- wry 0.57.0 — Apache-2.0 OR MIT — [text 3](#text-3), [text 190](#text-190), [text 191](#text-191)
+- wry 0.57.0 — Apache-2.0 OR MIT — [text 3](#text-3), [text 194](#text-194), [text 195](#text-195)
 - yoke 0.8.3 — Unicode-3.0 — [text 95](#text-95)
 - yoke-derive 0.8.4 — Unicode-3.0 — [text 95](#text-95)
-- zerocopy 0.8.63 — BSD-2-Clause OR Apache-2.0 OR MIT — [text 3](#text-3), [text 192](#text-192), [text 193](#text-193)
+- zerocopy 0.8.63 — BSD-2-Clause OR Apache-2.0 OR MIT — [text 3](#text-3), [text 196](#text-196), [text 197](#text-197)
 - zerofrom 0.1.8 — Unicode-3.0 — [text 95](#text-95)
 - zerofrom-derive 0.1.8 — Unicode-3.0 — [text 95](#text-95)
-- zeroize 1.9.1 — Apache-2.0 OR MIT — [text 3](#text-3), [text 194](#text-194)
+- zeroize 1.9.1 — Apache-2.0 OR MIT — [text 3](#text-3), [text 198](#text-198)
 - zerotrie 0.2.5 — Unicode-3.0 — [text 95](#text-95)
 - zerovec 0.11.8 — Unicode-3.0 — [text 95](#text-95)
 - zerovec-derive 0.11.6 — Unicode-3.0 — [text 95](#text-95)
-- zlib-rs 0.6.8 — Zlib — [text 195](#text-195)
+- zip 4.6.1 — MIT — [text 199](#text-199)
+- zlib-rs 0.6.8 — Zlib — [text 200](#text-200)
 - zmij 1.0.23 — MIT — [text 20](#text-20)
 
 ## Licence and notice texts
@@ -5101,6 +5108,72 @@ THE SOFTWARE.
 <a id="text-110"></a>
 
 ```text
+Copyright (c) 2019-2025 Frank Denis
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+--
+
+Code in the src/crypto folder is derived from the rust-crypto project:
+https://github.com/DaGenix/rust-crypto
+
+Original ISC license follows:
+
+Copyright (c) 2006-2009 Graydon Hoare
+Copyright (c) 2009-2013 Mozilla Foundation
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+### Text 111
+
+<a id="text-111"></a>
+
+```text
 MIT License
 
 Copyright 2013-2014 RAD Game Tools and Valve Software
@@ -5128,9 +5201,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 111
+### Text 112
 
-<a id="text-111"></a>
+<a id="text-112"></a>
 
 ```text
 Copyright 2013-2014 RAD Game Tools and Valve Software
@@ -5149,9 +5222,9 @@ Permission is granted to anyone to use this software for any purpose, including 
 3. This notice may not be removed or altered from any source distribution.
 ```
 
-### Text 112
+### Text 113
 
-<a id="text-112"></a>
+<a id="text-113"></a>
 
 ```text
 Copyright (c) 2014 Carl Lerche and other MIO contributors
@@ -5175,9 +5248,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### Text 113
+### Text 114
 
-<a id="text-113"></a>
+<a id="text-114"></a>
 
 ```text
 MIT License
@@ -5203,9 +5276,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 114
+### Text 115
 
-<a id="text-114"></a>
+<a id="text-115"></a>
 
 ```text
 SPDXVersion: SPDX-2.1
@@ -5229,9 +5302,9 @@ PackageDownloadLocation: git+ssh://github.com/tauri-apps/muda.git
 Creator: Person: Daniel Thompson-Yvetot
 ```
 
-### Text 115
+### Text 116
 
-<a id="text-115"></a>
+<a id="text-116"></a>
 
 ```text
 Copyright (c) 2015 Jonathan Reem
@@ -5261,9 +5334,9 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 116
+### Text 117
 
-<a id="text-116"></a>
+<a id="text-117"></a>
 
 ```text
 Copyright (c) Jacob Pratt
@@ -5287,9 +5360,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 117
+### Text 118
 
-<a id="text-117"></a>
+<a id="text-118"></a>
 
 ```text
 The MIT License (MIT)
@@ -5319,9 +5392,9 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 118
+### Text 119
 
-<a id="text-118"></a>
+<a id="text-119"></a>
 
 ```text
 Mozilla Public License Version 2.0
@@ -5699,9 +5772,9 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
   defined by the Mozilla Public License, v. 2.0.
 ```
 
-### Text 119
+### Text 120
 
-<a id="text-119"></a>
+<a id="text-120"></a>
 
 ```text
 ===============================================================================
@@ -5715,9 +5788,9 @@ option. All files in the project carrying such notice may not be
 copied, modified, or distributed except according to those terms.
 ```
 
-### Text 120
+### Text 121
 
-<a id="text-120"></a>
+<a id="text-121"></a>
 
 ```text
 Copyright (c) 2021 The RustCrypto Project Developers
@@ -5747,9 +5820,9 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 121
+### Text 122
 
-<a id="text-121"></a>
+<a id="text-122"></a>
 
 ```text
 The MIT License (MIT)
@@ -5774,9 +5847,9 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 122
+### Text 123
 
-<a id="text-122"></a>
+<a id="text-123"></a>
 
 ```text
 Copyright (c) 2021-2023 The RustCrypto Project Developers
@@ -5806,9 +5879,9 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 123
+### Text 124
 
-<a id="text-123"></a>
+<a id="text-124"></a>
 
 ```text
 Copyright (c) 2015 Edward Barnard
@@ -5832,9 +5905,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 124
+### Text 125
 
-<a id="text-124"></a>
+<a id="text-125"></a>
 
 ```text
 Copyright (c) 2015 nwin
@@ -5864,9 +5937,9 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 125
+### Text 126
 
-<a id="text-125"></a>
+<a id="text-126"></a>
 
 ```text
 Copyright (c) 2023 Jacob Pratt et al.
@@ -5890,9 +5963,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 126
+### Text 127
 
-<a id="text-126"></a>
+<a id="text-127"></a>
 
 ```text
 Copyright (c) 2019 The CryptoCorrosion Contributors
@@ -5922,9 +5995,9 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 127
+### Text 128
 
-<a id="text-127"></a>
+<a id="text-128"></a>
 
 ```text
 MIT License
@@ -5950,9 +6023,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 128
+### Text 129
 
-<a id="text-128"></a>
+<a id="text-129"></a>
 
 ```text
 The MIT License (MIT)
@@ -5980,9 +6053,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### Text 129
+### Text 130
 
-<a id="text-129"></a>
+<a id="text-130"></a>
 
 ```text
 Copyright (c) 2018 The quinn Developers
@@ -5994,45 +6067,13 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 130
-
-<a id="text-130"></a>
-
-```text
-Copyright 2018 Developers of the Rand project
-Copyright (c) 2014 The Rust Project Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
-
 ### Text 131
 
 <a id="text-131"></a>
 
 ```text
-Copyright (c) 2018-2026 The Rand Project Developers
+Copyright 2018 Developers of the Rand project
+Copyright (c) 2014 The Rust Project Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -6064,8 +6105,7 @@ DEALINGS IN THE SOFTWARE.
 <a id="text-132"></a>
 
 ```text
-Copyright (c) 2014-2017 Melissa O'Neill and PCG Project contributors
-Copyright 2018 Developers of the Rand project
+Copyright (c) 2018-2026 The Rand Project Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -6097,6 +6137,39 @@ DEALINGS IN THE SOFTWARE.
 <a id="text-133"></a>
 
 ```text
+Copyright (c) 2014-2017 Melissa O'Neill and PCG Project contributors
+Copyright 2018 Developers of the Rand project
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+### Text 134
+
+<a id="text-134"></a>
+
+```text
 MIT License
 
 Copyright (c) 2019 Osspial
@@ -6120,9 +6193,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 134
+### Text 135
 
-<a id="text-134"></a>
+<a id="text-135"></a>
 
 ```text
 Copyright (c) 2020 Osspial
@@ -6138,9 +6211,9 @@ Permission is granted to anyone to use this software for any purpose, including 
 3. This notice may not be removed or altered from any source distribution.
 ```
 
-### Text 135
+### Text 136
 
-<a id="text-135"></a>
+<a id="text-136"></a>
 
 ```text
 Copyright (c) 2016-2025 Sean McArthur
@@ -6164,9 +6237,35 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### Text 136
+### Text 137
 
-<a id="text-136"></a>
+<a id="text-137"></a>
+
+```text
+Copyright (c) 2016-2026 Sean McArthur
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+### Text 138
+
+<a id="text-138"></a>
 
 ```text
 *ring* uses an "ISC" license, like BoringSSL used to use, for new code
@@ -6180,9 +6279,9 @@ See src/polyfill/once_cell/LICENSE-APACHE and src/polyfill/once_cell/LICENSE-MIT
 for the license to code that was sourced from the once_cell project.
 ```
 
-### Text 137
+### Text 139
 
-<a id="text-137"></a>
+<a id="text-139"></a>
 
 ```text
 Copyright 2015-2025 Brian Smith.
@@ -6200,9 +6299,9 @@ OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
 CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
-### Text 138
+### Text 140
 
-<a id="text-138"></a>
+<a id="text-140"></a>
 
 ```text
 MIT License
@@ -6228,9 +6327,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 139
+### Text 141
 
-<a id="text-139"></a>
+<a id="text-141"></a>
 
 ```text
 Rustls is distributed under the following three licenses:
@@ -6244,9 +6343,9 @@ respectively.  You may use this software under the terms of any
 of these licenses, at your option.
 ```
 
-### Text 140
+### Text 142
 
-<a id="text-140"></a>
+<a id="text-142"></a>
 
 ```text
 Copyright (c) 2023 Dirkjan Ochtman <dirkjan@ochtman.nl>
@@ -6276,9 +6375,37 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 141
+### Text 143
 
-<a id="text-141"></a>
+<a id="text-143"></a>
+
+```text
+MIT License
+
+Copyright (c) 2022 1Password
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### Text 144
+
+<a id="text-144"></a>
 
 ```text
 Except as otherwise noted, this project is licensed under the following
@@ -6302,9 +6429,9 @@ The files under third-party/chromium are licensed as described in
 third-party/chromium/LICENSE.
 ```
 
-### Text 142
+### Text 145
 
-<a id="text-142"></a>
+<a id="text-145"></a>
 
 ```text
 Boost Software License - Version 1.0 - August 17th, 2003
@@ -6332,9 +6459,9 @@ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 143
+### Text 146
 
-<a id="text-143"></a>
+<a id="text-146"></a>
 
 ```text
 The MIT License (MIT)
@@ -6360,9 +6487,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### Text 144
+### Text 147
 
-<a id="text-144"></a>
+<a id="text-147"></a>
 
 ```text
 Copyright (c) 2015 steffengy
@@ -6374,9 +6501,9 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 145
+### Text 148
 
-<a id="text-145"></a>
+<a id="text-148"></a>
 
 ```text
 MIT License
@@ -6402,9 +6529,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 146
+### Text 149
 
-<a id="text-146"></a>
+<a id="text-149"></a>
 
 ```text
 Copyright (c) 2016-2019 Ulrik Sverdrup "bluss" and scopeguard developers
@@ -6434,9 +6561,9 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 147
+### Text 150
 
-<a id="text-147"></a>
+<a id="text-150"></a>
 
 ```text
 Copyright (c) Individual contributors
@@ -6460,9 +6587,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 148
+### Text 151
 
-<a id="text-148"></a>
+<a id="text-151"></a>
 
 ```text
 Copyright (c) 2016 Anthony Ramine
@@ -6492,9 +6619,9 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 149
+### Text 152
 
-<a id="text-149"></a>
+<a id="text-152"></a>
 
 ```text
 MIT License
@@ -6520,86 +6647,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 150
-
-<a id="text-150"></a>
-
-```text
-Copyright (c) 2018-2023 RustCrypto Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
-
-### Text 151
-
-<a id="text-151"></a>
-
-```text
-MIT License
-
-Copyright (c) [2021] [Marvin Countryman]
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
-### Text 152
-
-<a id="text-152"></a>
-
-```text
-Copyright 2012-2016 The Rust Project Developers.
-Copyright 2016-2026 Frank Denis.
-
-Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-<LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-option.
-```
-
 ### Text 153
 
 <a id="text-153"></a>
 
 ```text
-Copyright (c) 2019 Carl Lerche
+Copyright (c) 2018-2023 RustCrypto Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -6631,7 +6684,49 @@ DEALINGS IN THE SOFTWARE.
 <a id="text-154"></a>
 
 ```text
-Copyright (c) 2018 The Servo Project Developers
+MIT License
+
+Copyright (c) [2021] [Marvin Countryman]
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### Text 155
+
+<a id="text-155"></a>
+
+```text
+Copyright 2012-2016 The Rust Project Developers.
+Copyright 2016-2026 Frank Denis.
+
+Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+<LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+option.
+```
+
+### Text 156
+
+<a id="text-156"></a>
+
+```text
+Copyright (c) 2019 Carl Lerche
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -6658,66 +6753,12 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 155
-
-<a id="text-155"></a>
-
-```text
-Copyright 2022 Kirill Chibisov
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
-### Text 156
-
-<a id="text-156"></a>
-
-```text
-The MIT License (MIT)
-
-Copyright (c) 2014 Mathijs van de Nes
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
 ### Text 157
 
 <a id="text-157"></a>
 
 ```text
-Copyright (c) 2020 LaunchBadge, LLC
+Copyright (c) 2018 The Servo Project Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -6749,6 +6790,92 @@ DEALINGS IN THE SOFTWARE.
 <a id="text-158"></a>
 
 ```text
+Copyright 2022 Kirill Chibisov
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### Text 159
+
+<a id="text-159"></a>
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2014 Mathijs van de Nes
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### Text 160
+
+<a id="text-160"></a>
+
+```text
+Copyright (c) 2020 LaunchBadge, LLC
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+### Text 161
+
+<a id="text-161"></a>
+
+```text
 Copyright (c) 2017 Robert Grosse
 
 Permission is hereby granted, free of charge, to any
@@ -6776,9 +6903,9 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 159
+### Text 162
 
-<a id="text-159"></a>
+<a id="text-162"></a>
 
 ```text
 Copyright (c) 2012-2013 Mozilla Foundation
@@ -6808,9 +6935,9 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 160
+### Text 163
 
-<a id="text-160"></a>
+<a id="text-163"></a>
 
 ```text
 Copyright (c) 2017 The rust-stringprep Developers
@@ -6834,9 +6961,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 161
+### Text 164
 
-<a id="text-161"></a>
+<a id="text-164"></a>
 
 ```text
 The MIT License (MIT)
@@ -6864,9 +6991,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 162
+### Text 165
 
-<a id="text-162"></a>
+<a id="text-165"></a>
 
 ```text
 Copyright (c) 2016-2017 Isis Agora Lovecruft, Henry de Valence. All rights reserved.
@@ -6900,9 +7027,9 @@ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### Text 163
+### Text 166
 
-<a id="text-163"></a>
+<a id="text-166"></a>
 
 ```text
 Copyright 2016 Nika Layzell
@@ -6914,9 +7041,9 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 164
+### Text 167
 
-<a id="text-164"></a>
+<a id="text-167"></a>
 
 ```text
 SPDXVersion: SPDX-2.1
@@ -6939,9 +7066,9 @@ PackageDownloadLocation: git+ssh://github.com/tauri-apps/tao.git
 Creator: Person: Daniel Thompson-Yvetot
 ```
 
-### Text 165
+### Text 168
 
-<a id="text-165"></a>
+<a id="text-168"></a>
 
 ```text
 MIT License
@@ -6967,9 +7094,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 166
+### Text 169
 
-<a id="text-166"></a>
+<a id="text-169"></a>
 
 ```text
 MIT License
@@ -6995,9 +7122,41 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 167
+### Text 170
 
-<a id="text-167"></a>
+<a id="text-170"></a>
+
+```text
+Copyright (c) 2015 Steven Allen
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+### Text 171
+
+<a id="text-171"></a>
 
 ```text
 Copyright (c) 2015 Keegan McAllister
@@ -7027,9 +7186,9 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 168
+### Text 172
 
-<a id="text-168"></a>
+<a id="text-172"></a>
 
 ```text
 Copyright (c) Jacob Pratt et al.
@@ -7053,9 +7212,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 169
+### Text 173
 
-<a id="text-169"></a>
+<a id="text-173"></a>
 
 ```text
 Copyright (c) 2019 Daniel "Lokathor" Gee.
@@ -7071,9 +7230,9 @@ Permission is granted to anyone to use this software for any purpose, including 
 3. This notice may not be removed or altered from any source distribution.
 ```
 
-### Text 170
+### Text 174
 
-<a id="text-170"></a>
+<a id="text-174"></a>
 
 ```text
 MIT License
@@ -7099,9 +7258,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 171
+### Text 175
 
-<a id="text-171"></a>
+<a id="text-175"></a>
 
 ```text
 MIT License
@@ -7128,9 +7287,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 172
+### Text 176
 
-<a id="text-172"></a>
+<a id="text-176"></a>
 
 ```text
 Copyright (c) 2017 quininer kel
@@ -7160,9 +7319,9 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 173
+### Text 177
 
-<a id="text-173"></a>
+<a id="text-177"></a>
 
 ```text
 Copyright (c) 2019 Tower Contributors
@@ -7192,9 +7351,9 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 174
+### Text 178
 
-<a id="text-174"></a>
+<a id="text-178"></a>
 
 ```text
 Copyright (c) 2019-2021 Tower Contributors
@@ -7224,9 +7383,9 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 175
+### Text 179
 
-<a id="text-175"></a>
+<a id="text-179"></a>
 
 ```text
 Copyright (c) 2019 Tokio Contributors
@@ -7256,9 +7415,9 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 176
+### Text 180
 
-<a id="text-176"></a>
+<a id="text-180"></a>
 
 ```text
 SPDXVersion: SPDX-2.1
@@ -7282,9 +7441,9 @@ PackageDownloadLocation: git+ssh://github.com/tauri-apps/tray-icon.git
 Creator: Person: Daniel Thompson-Yvetot
 ```
 
-### Text 177
+### Text 181
 
-<a id="text-177"></a>
+<a id="text-181"></a>
 
 ```text
 Copyright (c) 2018-2023 Sean McArthur
@@ -7309,17 +7468,17 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### Text 178
+### Text 182
 
-<a id="text-178"></a>
+<a id="text-182"></a>
 
 ```text
 MIT OR Apache-2.0
 ```
 
-### Text 179
+### Text 183
 
-<a id="text-179"></a>
+<a id="text-183"></a>
 
 ```text
 The MIT License (MIT)
@@ -7345,9 +7504,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 180
+### Text 184
 
-<a id="text-180"></a>
+<a id="text-184"></a>
 
 ```text
 UNICODE LICENSE V3
@@ -7391,9 +7550,9 @@ dealings in these Data Files or Software without prior written
 authorization of the copyright holder.
 ```
 
-### Text 181
+### Text 185
 
-<a id="text-181"></a>
+<a id="text-185"></a>
 
 ```text
 // Copyright 2015-2016 Brian Smith.
@@ -7411,9 +7570,9 @@ authorization of the copyright holder.
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
-### Text 182
+### Text 186
 
-<a id="text-182"></a>
+<a id="text-186"></a>
 
 ```text
 MIT License
@@ -7439,9 +7598,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 183
+### Text 187
 
-<a id="text-183"></a>
+<a id="text-187"></a>
 
 ```text
 Copyright (c) 2014 The Rust Project Developers
@@ -7472,9 +7631,9 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 184
+### Text 188
 
-<a id="text-184"></a>
+<a id="text-188"></a>
 
 ```text
 Copyright (c) 2018-2019 Sean McArthur
@@ -7498,9 +7657,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### Text 185
+### Text 189
 
-<a id="text-185"></a>
+<a id="text-189"></a>
 
 ```text
 MIT License
@@ -7526,9 +7685,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 186
+### Text 190
 
-<a id="text-186"></a>
+<a id="text-190"></a>
 
 ```text
 # Community Data License Agreement - Permissive - Version 2.0
@@ -7594,9 +7753,9 @@ of Data, including for example machine learning models and models'
 insights.
 ```
 
-### Text 187
+### Text 191
 
-<a id="text-187"></a>
+<a id="text-191"></a>
 
 ```text
 MIT License
@@ -7622,9 +7781,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 188
+### Text 192
 
-<a id="text-188"></a>
+<a id="text-192"></a>
 
 ```text
 SPDXVersion: SPDX-2.1
@@ -7648,9 +7807,9 @@ PackageDownloadLocation: git+ssh://github.com/tauri-apps/window-vibrancy.git
 Creator: Person: Daniel Thompson-Yvetot
 ```
 
-### Text 189
+### Text 193
 
-<a id="text-189"></a>
+<a id="text-193"></a>
 
 ```text
 MIT License
@@ -7676,9 +7835,9 @@ MIT License
     SOFTWARE
 ```
 
-### Text 190
+### Text 194
 
-<a id="text-190"></a>
+<a id="text-194"></a>
 
 ```text
 MIT License
@@ -7704,9 +7863,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 191
+### Text 195
 
-<a id="text-191"></a>
+<a id="text-195"></a>
 
 ```text
 SPDXVersion: SPDX-2.1
@@ -7731,9 +7890,9 @@ PackageDownloadLocation: git+ssh://github.com/tauri-apps/wry.git
 Creator: Person: Daniel Thompson-Yvetot
 ```
 
-### Text 192
+### Text 196
 
-<a id="text-192"></a>
+<a id="text-196"></a>
 
 ```text
 Copyright 2019 The Fuchsia Authors.
@@ -7762,9 +7921,9 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### Text 193
+### Text 197
 
-<a id="text-193"></a>
+<a id="text-197"></a>
 
 ```text
 Copyright 2023 The Fuchsia Authors
@@ -7794,9 +7953,9 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 194
+### Text 198
 
-<a id="text-194"></a>
+<a id="text-198"></a>
 
 ```text
 Copyright (c) 2018-2026 The RustCrypto Project Developers
@@ -7826,9 +7985,40 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 195
+### Text 199
 
-<a id="text-195"></a>
+<a id="text-199"></a>
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2014 Mathijs van de Nes
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Some files in the "tests/data" subdirectory of this repository are under other
+licences; see files named LICENSE.*.txt for details.
+```
+
+### Text 200
+
+<a id="text-200"></a>
 
 ```text
 (C) 2024 Trifecta Tech Foundation 

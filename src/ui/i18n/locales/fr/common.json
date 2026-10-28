@@ -504,7 +504,12 @@
       "licence": "Logiciel libre sous licence MIT.",
       "credit": "Les données des parties viennent de deadlock-api.com.",
       "valve": "TheLibrary n'est ni affilié à Valve ni approuvé par Valve.",
-      "privacy": "Tes données restent sur ce PC. L'application ne contacte que deadlock-api (données et images des parties) et Steam, pour lier ton compte."
+      "privacy": "Tes données restent sur ce PC. L'application ne contacte que deadlock-api (données et images des parties), Steam (pour lier ton compte) et GitHub (pour chercher une nouvelle version au démarrage).",
+      "checkUpdates": "Vérifier les mises à jour",
+      "checking": "Recherche d'une mise à jour…",
+      "upToDate": "Tu as la dernière version.",
+      "checkFailed": "Impossible de vérifier les mises à jour. Vérifie ta connexion et réessaie.",
+      "notices": "Les licences des logiciels inclus dans TheLibrary sont listées dans THIRD_PARTY_NOTICES.md, dans le dépôt et avec chaque version."
     }
   },
   "account": {
@@ -567,5 +572,18 @@
       "storage": "Impossible de lire ou d'enregistrer les données locales.",
       "unexpected": "Une erreur inattendue est survenue."
     }
+  },
+  "update": {
+    "title": "Mise à jour disponible",
+    "versions": "La version {{version}} est sortie — tu as la {{current}}.",
+    "published": "Publiée le {{date}}",
+    "notesMissing": "Pas de résumé pour cette version.",
+    "viewOnGitHub": "Voir sur GitHub",
+    "install": "Installer maintenant",
+    "later": "Plus tard",
+    "downloading": "Téléchargement de la mise à jour… {{percent}} %",
+    "downloadingUnknown": "Téléchargement de la mise à jour…",
+    "installing": "Installation… TheLibrary va redémarrer.",
+    "failed": "La mise à jour n'a pas pu être installée. TheLibrary continue avec sa version actuelle ; les détails sont dans le journal."
   }
 }

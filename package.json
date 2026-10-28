@@ -23,7 +23,9 @@
     "canary": "vitest run --config vitest.canary.config.ts",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test",
     "dev:desktop": "tauri dev --config src-tauri/tauri.dev.conf.json",
-    "check:dev-code": "node scripts/check-dev-code.ts"
+    "check:dev-code": "node scripts/check-dev-code.ts",
+    "release:prepare": "node scripts/release/prepare-release.ts",
+    "notices": "node scripts/release/third-party-notices.ts"
   },
   "dependencies": {
     "@fabianlars/tauri-plugin-oauth": "2.1.0",
@@ -38,6 +40,7 @@
     "@tauri-apps/plugin-opener": "2.7.2",
     "@tauri-apps/plugin-sql": "2.6.0",
     "@tauri-apps/plugin-store": "2.5.0",
+    "@tauri-apps/plugin-updater": "2.14.0",
     "i18next": "26.5.6",
     "lucide-react": "1.61.0",
     "react": "19.3.1",

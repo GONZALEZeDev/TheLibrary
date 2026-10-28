@@ -504,7 +504,12 @@
       "licence": "Free software under the MIT licence.",
       "credit": "Match data comes from deadlock-api.com.",
       "valve": "TheLibrary is not affiliated with or endorsed by Valve.",
-      "privacy": "Your data stays on this PC. The app only contacts deadlock-api (match data and images) and Steam, to link your account."
+      "privacy": "Your data stays on this PC. The app only contacts deadlock-api (match data and images), Steam (to link your account) and GitHub (to look for a new version at startup).",
+      "checkUpdates": "Check for updates",
+      "checking": "Checking for updates…",
+      "upToDate": "You have the latest version.",
+      "checkFailed": "Could not check for updates. Check your connection and try again.",
+      "notices": "The licences of the software TheLibrary includes are listed in THIRD_PARTY_NOTICES.md, in the repository and with every release."
     }
   },
   "account": {
@@ -567,5 +572,18 @@
       "storage": "Local data could not be read or saved.",
       "unexpected": "An unexpected error occurred."
     }
+  },
+  "update": {
+    "title": "Update available",
+    "versions": "Version {{version}} is out — you have {{current}}.",
+    "published": "Published on {{date}}",
+    "notesMissing": "No summary for this version.",
+    "viewOnGitHub": "View on GitHub",
+    "install": "Install now",
+    "later": "Later",
+    "downloading": "Downloading the update… {{percent}} %",
+    "downloadingUnknown": "Downloading the update…",
+    "installing": "Installing… TheLibrary will restart.",
+    "failed": "The update could not be installed. TheLibrary keeps running on its current version; the details are in the log."
   }
 }

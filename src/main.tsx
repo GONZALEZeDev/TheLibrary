@@ -28,6 +28,7 @@ import { TauriHttpClient } from './adapters/tauri/tauri-http-client.adapter';
 import { TauriLogger } from './adapters/tauri/tauri-logger.adapter';
 import { TauriSettingsStore } from './adapters/tauri/tauri-settings-store.adapter';
 import { TauriSignInGateway } from './adapters/tauri/tauri-sign-in-gateway.adapter';
+import { TauriUpdateGateway } from './adapters/tauri/tauri-update-gateway.adapter';
 import { errorLogContext, toAppError } from './core/errors/app-error';
 import { resolveInitialLanguage } from './core/settings/language';
 import { DEFAULT_SETTINGS, type Settings } from './core/settings/settings.schema';
@@ -74,12 +75,16 @@ async function createAdapters(desktop: boolean): Promise<AppAdapters> {
       // The listener and the browser of the Steam sign-in. There is no adapter for the account: it
       // is the link stored in the database, which the services read themselves.
       signInGateway: new TauriSignInGateway(),
+      // The Tauri updater, except under `pnpm dev:desktop`: the development app must never offer
+      // the public releases as updates of itself. A `tauri build --debug` build is a release
+      // build (production frontend, release identifier), so it checks them like an installed app.
+      updateGateway: import.meta.env.DEV ? null : new TauriUpdateGateway(),
     };
   }
   if (import.meta.env.DEV) {
     // The in-memory archive store comes with the browser dev adapters, never from a static import.
     return {
-      ...(await import('./adapters/dev/dev-environment')).createBrowserDevAdapters(),
+      ...(await import('./adapters/dev/dev-environment')).createBrowserDevAdapters(APP_VERSION),
       compressor,
     };
   }

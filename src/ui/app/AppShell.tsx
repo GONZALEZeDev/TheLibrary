@@ -8,6 +8,7 @@ import { Link, Outlet } from '@tanstack/react-router';
 import { BookOpen, ClipboardList, History, LayoutDashboard, Settings } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { SidebarAccount } from '../features/account/SidebarAccount';
+import { UpdateHost } from '../features/update/UpdateHost';
 import { MAIN_SCROLL_ATTRIBUTES } from './history-return';
 
 /**
@@ -73,6 +74,8 @@ export function AppShell() {
       <main {...MAIN_SCROLL_ATTRIBUTES} className="relative flex-1 overflow-y-auto px-10 py-8">
         <Outlet />
       </main>
+      {/* The one update dialog, beside the pages: a change of page never checks or offers again. */}
+      <UpdateHost />
     </div>
   );
 }

@@ -20,6 +20,7 @@ import type { ReviewService } from './review.service';
 import type { SettingsService } from './settings.service';
 import type { StorageService } from './storage.service';
 import type { SyncService } from './sync.service';
+import type { UpdateService } from './update.service';
 
 /** Services available to the UI. */
 export interface AppServices {
@@ -52,4 +53,6 @@ export interface AppServices {
   readonly storage: StorageService;
   /** The detailed log switch and the log folder, for the diagnostics of the settings page. */
   readonly diagnostics: Diagnostics;
+  /** Updates of the app: the check at startup, the check of the settings, the installation. */
+  readonly updates: UpdateService;
 }

@@ -11,6 +11,7 @@ import type { ArchiveStore } from '../ports/archive-store.port';
 import type { Compressor } from '../ports/compressor.port';
 import type { Database } from '../ports/database.port';
 import type { Diagnostics } from '../ports/diagnostics.port';
+import type { UpdateGateway } from '../ports/update-gateway.port';
 import type { HttpClient } from '../ports/http-client.port';
 import type { Logger } from '../ports/logger.port';
 import type { SettingsStore } from '../ports/settings-store.port';
@@ -44,6 +45,7 @@ import { SteamSignInService } from './steam-sign-in.service';
 import { StorageService } from './storage.service';
 import { SyncStateRepository } from './sync-state.repository';
 import { SyncService } from './sync.service';
+import { UpdateService } from './update.service';
 
 /** The adapters of an environment: one implementation of each port. */
 export interface AppAdapters {
@@ -62,6 +64,11 @@ export interface AppAdapters {
   readonly compressor: Compressor;
   /** The detailed log switch and the log folder. */
   readonly diagnostics: Diagnostics;
+  /**
+   * Checks for a newer version and installs it; `null` where updates do not exist (a development
+   * build of the desktop app, which must never offer the public releases as updates of itself).
+   */
+  readonly updateGateway: UpdateGateway | null;
 }
 
 /** Options of {@link createAppServices}. */
@@ -94,6 +101,7 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     archiveStore,
     compressor,
     diagnostics,
+    updateGateway,
   } = adapters;
   const now = options.now ?? Date.now;
   // The account the app works for is the link stored in the database, not an adapter: this one
@@ -311,5 +319,6 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     // Given to the interface as it is: the detailed log and the log folder need no service. The
     // settings page saves the switch through `settings` and applies it through `diagnostics`.
     diagnostics,
+    updates: new UpdateService(updateGateway, logger),
   };
 }

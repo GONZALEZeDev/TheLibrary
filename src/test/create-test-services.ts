@@ -6,6 +6,7 @@
  */
 import type { QueryClient } from '@tanstack/react-query';
 import { DevDiagnostics } from '../adapters/dev/dev-diagnostics.adapter';
+import { FakeUpdateGateway } from '../adapters/dev/fake-update-gateway.adapter';
 import {
   createFixtureApi,
   FixtureHttpClient,
@@ -21,6 +22,7 @@ import type { Compressor } from '../ports/compressor.port';
 import type { Database } from '../ports/database.port';
 import type { Logger } from '../ports/logger.port';
 import type { SettingsStore } from '../ports/settings-store.port';
+import type { UpdateGateway } from '../ports/update-gateway.port';
 import type { AppServices } from '../services/app-services';
 import { ArchiveReaderService } from '../services/archive-reader.service';
 import { createAppServices } from '../services/create-app-services';
@@ -76,6 +78,11 @@ export interface TestServicesOptions {
    * fixes it sees the time only move forward when the services wait.
    */
   readonly now?: () => number;
+  /**
+   * Checks for a newer version; by default a synthetic gateway that never offers one. Pass `null`
+   * for a build without updates.
+   */
+  readonly updateGateway?: UpdateGateway | null;
 }
 
 /** Services for a test, plus direct access to the adapters to inspect what happened. */
@@ -181,6 +188,15 @@ export function createTestServices(options: TestServicesOptions = {}): TestServi
       archiveStore,
       compressor,
       diagnostics: new DevDiagnostics(),
+      updateGateway:
+        options.updateGateway === undefined
+          ? new FakeUpdateGateway({
+              enabled: () => false,
+              currentVersion: '0.0.0-test',
+              logger,
+              sleep: () => Promise.resolve(),
+            })
+          : options.updateGateway,
     },
     { appVersion: '0.0.0-test', now, sleep },
   );

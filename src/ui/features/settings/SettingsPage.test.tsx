@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LocalStorageSettingsStore } from '../../../adapters/dev/local-storage-settings-store.adapter';
 import { AppError } from '../../../core/errors/app-error';
 import type { AppServices } from '../../../services/app-services';
+import type { AvailableUpdate } from '../../../services/update.service';
 import {
   createTestQueryClient,
   createTestServices,
@@ -17,6 +18,7 @@ import {
 import { AppProviders } from '../../app/AppProviders';
 import { APP_VERSION } from '../../app/app-info';
 import { createI18n } from '../../i18n/i18n';
+import { UpdateHost } from '../update/UpdateHost';
 import { SettingsPage } from './SettingsPage';
 
 /** The diagnostics of the services: the detailed log switch and the log folder. */
@@ -69,8 +71,9 @@ function createHeldStore() {
  * Render the settings screen on a first launch.
  *
  * @param options - `language` of the interface (English by default), `diagnostics` to give the
- *   page instead of the ones of the development mode, which have no log folder, and
- *   `settingsStore` to save the settings in instead of Web Storage.
+ *   page instead of the ones of the development mode, which have no log folder,
+ *   `settingsStore` to save the settings in instead of Web Storage, and `updateGateway` to check
+ *   for updates with instead of the synthetic one that never finds any.
  * @returns The services, to inspect what was saved.
  */
 async function renderSettingsPage(
@@ -78,15 +81,21 @@ async function renderSettingsPage(
     language?: 'en' | 'fr';
     diagnostics?: Diagnostics;
     settingsStore?: TestServicesOptions['settingsStore'];
+    updateGateway?: TestServicesOptions['updateGateway'];
   } = {},
 ) {
-  const { language = 'en', diagnostics, settingsStore } = options;
-  const test = createTestServices(settingsStore === undefined ? {} : { settingsStore });
+  const { language = 'en', diagnostics, settingsStore, updateGateway } = options;
+  const test = createTestServices({
+    ...(settingsStore === undefined ? {} : { settingsStore }),
+    ...(updateGateway === undefined ? {} : { updateGateway }),
+  });
   const services = diagnostics === undefined ? test.services : { ...test.services, diagnostics };
   const i18n = await createI18n(language);
   render(
     <AppProviders services={services} queryClient={createTestQueryClient()} i18n={i18n}>
       <SettingsPage />
+      {/* The update dialog of the app, which the check of the about section opens. */}
+      <UpdateHost />
     </AppProviders>,
   );
   return { services };
@@ -330,11 +339,91 @@ describe('SettingsPage', () => {
       ).toBeInTheDocument();
       expect(
         within(section).getByText(
-          'Your data stays on this PC. The app only contacts deadlock-api (match data and images) and Steam, to link your account.',
+          'Your data stays on this PC. The app only contacts deadlock-api (match data and images), Steam (to link your account) and GitHub (to look for a new version at startup).',
         ),
       ).toBeInTheDocument();
-      // Plain text: nothing to click.
+      expect(within(section).getByText(/THIRD_PARTY_NOTICES\.md/)).toBeInTheDocument();
+      // Plain text: nothing to click but the check for updates.
       expect(within(section).queryByRole('link')).not.toBeInTheDocument();
+    });
+
+    it('says when the installed version is the latest', async () => {
+      const user = userEvent.setup();
+      await renderSettingsPage();
+
+      const section = await screen.findByRole('region', { name: 'About' });
+      await user.click(within(section).getByRole('button', { name: 'Check for updates' }));
+      expect(await within(section).findByText('You have the latest version.')).toBeInTheDocument();
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('opens the update dialog when a newer version exists', async () => {
+      const user = userEvent.setup();
+      await renderSettingsPage({
+        updateGateway: {
+          // Nothing at startup, then a newer version when the player asks.
+          check: vi
+            .fn<() => Promise<AvailableUpdate | null>>()
+            .mockResolvedValueOnce(null)
+            .mockResolvedValue({
+              version: '0.2.0',
+              currentVersion: '0.1.0',
+              date: null,
+              rawNotes: null,
+            }),
+          install: () => Promise.resolve(),
+          openReleasePage: () => Promise.resolve(),
+        },
+      });
+
+      const section = await screen.findByRole('region', { name: 'About' });
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      await user.click(within(section).getByRole('button', { name: 'Check for updates' }));
+      expect(await screen.findByRole('dialog', { name: 'Update available' })).toHaveTextContent(
+        'Version 0.2.0 is out — you have 0.1.0.',
+      );
+      await user.click(screen.getByRole('button', { name: 'Later' }));
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      });
+    });
+
+    it('says when the check fails, and ignores a press while it runs', async () => {
+      const user = userEvent.setup();
+      let fail: () => void = () => undefined;
+      // Nothing at startup; the check the player asks for waits until the test fails it.
+      const check = vi
+        .fn<() => Promise<AvailableUpdate | null>>()
+        .mockResolvedValueOnce(null)
+        .mockImplementation(
+          () =>
+            new Promise<null>((_resolve, reject) => {
+              fail = () => {
+                reject(new AppError('network', 'offline'));
+              };
+            }),
+        );
+      await renderSettingsPage({
+        updateGateway: {
+          check,
+          install: () => Promise.resolve(),
+          openReleasePage: () => Promise.resolve(),
+        },
+      });
+
+      const section = await screen.findByRole('region', { name: 'About' });
+      const button = within(section).getByRole('button', { name: 'Check for updates' });
+      await user.click(button);
+      expect(within(section).getByText('Checking for updates…')).toBeInTheDocument();
+      await user.click(button);
+      // The startup check, then the one of the first press only.
+      expect(check).toHaveBeenCalledTimes(2);
+      expect(button).toBeEnabled();
+
+      fail();
+      expect(await within(section).findByRole('alert')).toHaveTextContent(
+        'Could not check for updates. Check your connection and try again.',
+      );
     });
 
     it('speaks French', async () => {

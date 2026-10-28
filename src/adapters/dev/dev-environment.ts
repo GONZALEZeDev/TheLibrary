@@ -4,7 +4,8 @@
  * `src/main.tsx` reaches this module only through a dynamic `import()` guarded by
  * `import.meta.env.DEV`, which Vite replaces with `false` in production builds: the module, the
  * synthetic fixtures and sql.js are then left out of the bundle. `scripts/check-dev-code.ts`
- * proves it in CI by looking for {@link DEV_ONLY_MARKER} in the production build.
+ * proves it in CI by looking for {@link DEV_ONLY_MARKER} and other development-only texts in the
+ * production build.
  *
  * @packageDocumentation
  */
@@ -17,7 +18,9 @@ import type { HttpClient } from '../../ports/http-client.port';
 import type { Logger } from '../../ports/logger.port';
 import type { SettingsStore } from '../../ports/settings-store.port';
 import type { SignInGateway } from '../../ports/sign-in-gateway.port';
+import type { UpdateGateway } from '../../ports/update-gateway.port';
 import { DevDiagnostics } from './dev-diagnostics.adapter';
+import { FAKE_UPDATE_FLAG, FakeUpdateGateway } from './fake-update-gateway.adapter';
 import { createFixtureApi, FixtureHttpClient } from './fixture-http-client.adapter';
 import { FixtureSignInGateway } from './fixture-sign-in-gateway.adapter';
 import { LocalStorageSettingsStore } from './local-storage-settings-store.adapter';
@@ -49,6 +52,8 @@ export interface BrowserDevAdapters {
   readonly archiveStore: ArchiveStore;
   /** No log file and no log folder: the logger keeps every line and mirrors it to the console. */
   readonly diagnostics: Diagnostics;
+  /** A synthetic update, offered only when the developer turns it on (see the adapter). */
+  readonly updateGateway: UpdateGateway;
 }
 
 /**
@@ -60,9 +65,10 @@ export interface BrowserDevAdapters {
  * so the "waiting for Steam" state shows. It links nothing by itself: the sign-in flow does, once it
  * accepts the answer.
  *
+ * @param appVersion - Version of the app, shown as the installed one by the synthetic update.
  * @returns The adapters.
  */
-export function createBrowserDevAdapters(): BrowserDevAdapters {
+export function createBrowserDevAdapters(appVersion = '0.0.0-dev'): BrowserDevAdapters {
   const logger = new MemoryLogger({ mirrorToConsole: true });
   logger.log('info', 'dev', `${DEV_ONLY_MARKER}: browser adapters loaded (synthetic data)`);
   return {
@@ -75,5 +81,24 @@ export function createBrowserDevAdapters(): BrowserDevAdapters {
     // Like the database, it is empty at every reload of the page.
     archiveStore: new MemoryArchiveStore(),
     diagnostics: new DevDiagnostics(),
+    updateGateway: new FakeUpdateGateway({
+      enabled: isFakeUpdateOn,
+      currentVersion: appVersion,
+      logger,
+    }),
   };
+}
+
+/**
+ * Tell whether the developer turned the synthetic update on. `localStorage` can throw (blocked
+ * storage): the update is then simply off.
+ *
+ * @returns `true` when the flag of the synthetic update is `'1'`.
+ */
+function isFakeUpdateOn(): boolean {
+  try {
+    return window.localStorage.getItem(FAKE_UPDATE_FLAG) === '1';
+  } catch {
+    return false;
+  }
 }

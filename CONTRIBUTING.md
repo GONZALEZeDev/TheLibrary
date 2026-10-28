@@ -82,7 +82,7 @@ Releases are built by GitHub Actions only, never on a developer's PC ([ADR 0007]
 2. Run `pnpm release:prepare X.Y.Z`. It writes the version into `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock`, checks the changelogs, regenerates `THIRD_PARTY_NOTICES.md` and prints the commands that commit, tag and push the release. The first release keeps the version the repository already holds.
 3. Review the changes, then run those commands. The tag starts the release workflow, which runs every check again, builds the installer, signs it for the updater and creates a **draft** release with the installer, its signature, `latest.json` and the notices.
 4. Download the installer from the draft and try it.
-5. Publish the draft. **Never tick "Set as a pre-release"**: the installed apps only look at the latest full release, so they would never see it. From then on, every installed app offers the version at its next start.
+5. Publish the draft. **Never tick "Set as a pre-release"**: the installed apps only look at the latest full release, so they would never see it. From then on, every installed app offers the version at its next start. For a few minutes after publishing, GitHub's "latest release" link may still serve the previous `latest.json`: an app that checks during that time says it is up to date, so wait a little before trying the update yourself.
 
 The updater's private key and its password live only in the repository secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` and in the owner's backup. If it were lost, the installed apps could never be updated again: they trust only its public key, pinned in `tauri.conf.json`.
 

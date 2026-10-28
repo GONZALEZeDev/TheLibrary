@@ -365,6 +365,28 @@ describe('StorageSection', () => {
       await expect(test.services.settings.get()).resolves.toMatchObject({ storageCapMb: 100 });
     });
 
+    it('says it is checking while it reads what a lower limit would remove', async () => {
+      const user = userEvent.setup();
+      const { test } = await renderSection();
+      const limit = await screen.findByLabelText('Limit');
+      let answer: (preview: null) => void = () => undefined;
+      vi.spyOn(test.services.storage, 'previewEviction').mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            answer = resolve;
+          }),
+      );
+
+      await user.selectOptions(limit, '100');
+
+      expect(await screen.findByText('Checking…')).toBeInTheDocument();
+      expect(screen.queryByText('Saving…')).not.toBeInTheDocument();
+      answer(null);
+      await waitFor(() => {
+        expect(screen.queryByText('Checking…')).not.toBeInTheDocument();
+      });
+    });
+
     it('asks first when the lowering removes archives, with their count and size', async () => {
       const user = userEvent.setup();
       const { test } = await renderSection({ oldArchives: 45 });

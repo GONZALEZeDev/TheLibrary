@@ -195,6 +195,10 @@ export function StorageSection() {
             </option>
           ))}
         </select>
+        {/* A lower limit is first checked (what would it remove?), then saved: each step says so. */}
+        {previewEviction.isPending && (
+          <span className="text-sm text-fg-muted">{t('settings.storage.checking')}</span>
+        )}
         {changeCap.isPending && (
           <span className="text-sm text-fg-muted">{t('settings.storage.saving')}</span>
         )}

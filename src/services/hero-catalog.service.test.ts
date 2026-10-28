@@ -60,7 +60,7 @@ function setUp() {
 }
 
 /** Cache key of the catalogue (the service's own, which is not exported). */
-const CACHE_KEY = 'heroes.english';
+const CACHE_KEY = 'heroes.english.v2';
 
 /** Paige as the fixture catalogue describes her: her portrait and her real loadout. */
 const PAIGE_ASSET = {

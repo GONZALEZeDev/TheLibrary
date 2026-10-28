@@ -316,8 +316,10 @@ describe('DeadlockApiService.fetchHeroes', () => {
     const heroes = await api.fetchHeroes();
 
     expect(heroes.map((hero) => hero.name)).toContain('Paige');
-    // Baba is still in development in the fixture catalogue: no hero a player cannot pick.
-    expect(heroes.map((hero) => hero.name)).not.toContain('Baba');
+    // Baba is still flagged in development in the fixture catalogue, but players can pick him: he is
+    // kept. The retired hero cannot be picked: no such hero.
+    expect(heroes.map((hero) => hero.name)).toContain('Baba');
+    expect(heroes.map((hero) => hero.name)).not.toContain('Retired Hero');
   });
 
   it('fetches the heroes with their images and loadout', async () => {

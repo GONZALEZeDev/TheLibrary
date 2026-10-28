@@ -3,8 +3,10 @@
  * `GET /v1/assets/heroes` (reduced to a few of its many fields).
  *
  * Ids, names and class names of the heroes are those of the game (public game data, 2026-10-14),
- * except the invented "Retired Hero". The last two entries are not playable, like some entries of
- * the real response (Baba was still in development), so that the filter is exercised.
+ * except the invented "Retired Hero". The last two entries exercise the filter of the catalogue:
+ * Baba is still flagged in development, as in the real response, yet players can pick him, so he is
+ * kept; the retired hero is disabled and cannot be picked, so he is left out. The synthetic matches
+ * leave both out of the heroes they hand out.
  *
  * Every hero carries what the app reads besides its name: a small portrait on the asset bucket
  * (`images`) and its loadout (`items`: the weapon, the melee attack and the four signature

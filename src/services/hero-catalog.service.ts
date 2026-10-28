@@ -82,7 +82,9 @@ export class HeroCatalogService {
     this.#readHeroes = cachedCatalogue(
       { accountSource, cache, logger, now },
       {
-        cacheKey: 'heroes.english',
+        // `v2`: the catalogue cached under `heroes.english` left out the heroes still flagged in
+        // development, though players could pick them; a new key downloads it again at once.
+        cacheKey: 'heroes.english.v2',
         label: 'hero catalogue',
         logScope: 'heroes',
         schema: cachedHeroesSchema,

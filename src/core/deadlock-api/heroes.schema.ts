@@ -26,7 +26,6 @@ const catalogueHeroSchema = z.object({
   // Flags of the game data; an absent flag never hides a hero.
   player_selectable: z.boolean().optional(),
   disabled: z.boolean().optional(),
-  in_development: z.boolean().optional(),
   // Portraits by name (`icon_image_small_webp`, `icon_image_small`…).
   images: looseMapSchema,
   // The hero's fixed items by slot name (`weapon_primary`, `signature1`…), as class names.
@@ -38,13 +37,17 @@ type CatalogueHero = z.infer<typeof catalogueHeroSchema>;
 
 /**
  * Tell whether players can pick a hero. `only_active=true` already leaves out most other heroes,
- * but not all of them: on 2026-10-14 the response still contained a hero `in_development`.
+ * and these two flags leave out the rest.
+ *
+ * The `in_development` flag is not one of them: a new hero keeps it for weeks after players can pick
+ * it (on 2026-10-28, Violet and Baba were both `in_development`, selectable and played), and a hero
+ * left out of the catalogue would show by its id in every match it was played in.
  *
  * @param hero - A validated hero of the catalogue.
  * @returns `true` for a playable hero.
  */
 function isPlayable(hero: CatalogueHero): boolean {
-  return hero.player_selectable !== false && hero.disabled !== true && hero.in_development !== true;
+  return hero.player_selectable !== false && hero.disabled !== true;
 }
 
 /** The slots of the four signature abilities in the hero's `items`, in order (the ultimate last). */

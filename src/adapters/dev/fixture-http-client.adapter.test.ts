@@ -120,7 +120,9 @@ describe('createFixtureApi', () => {
     const heroes = parseHeroAssets(JSON.parse(response.body)).map(({ id, name }) => ({ id, name }));
 
     expect(heroes).toContainEqual({ id: PAIGE_HERO_ID, name: 'Paige' });
-    expect(heroes.map((hero) => hero.name)).not.toContain('Baba');
+    // A hero flagged in development that players can pick is kept; a retired one is not.
+    expect(heroes.map((hero) => hero.name)).toContain('Baba');
+    expect(heroes.map((hero) => hero.name)).not.toContain('Retired Hero');
   });
 
   it('answers 404 to anything else', async () => {

@@ -86,8 +86,9 @@ describe('parseHeroAssets', () => {
   it('applies the rules of the playable heroes, sorted by id', () => {
     const heroes = parseHeroAssets([
       rawPaige(),
-      // Heroes players cannot pick.
+      // A hero players can pick while it is still flagged in development: kept.
       rawHero(88, 'Baba', { in_development: true }),
+      // Heroes players cannot pick.
       rawHero(90, 'Old', { disabled: true }),
       rawHero(91, 'Hidden', { player_selectable: false }),
       // Malformed heroes, skipped instead of failing the catalogue.
@@ -97,7 +98,7 @@ describe('parseHeroAssets', () => {
       { id: 2, name: 'Infernus' },
     ]);
 
-    expect(heroes.map((hero) => hero.name)).toEqual(['Infernus', 'Paige']);
+    expect(heroes.map((hero) => hero.name)).toEqual(['Infernus', 'Paige', 'Baba']);
   });
 
   it('leaves the image and the loadout null when the entry has neither', () => {

@@ -73,8 +73,14 @@ tauri-plugin-window-state = "2.5.0"
 # Updates of the app: downloads `latest.json` from the latest GitHub release, and on the player's
 # request the installer, whose signature it checks against the public key of `tauri.conf.json`
 # before running it. 2.14.0 matches `@tauri-apps/plugin-updater` (the Tauri CLI compares both):
-# keep `Cargo.lock` on it.
-tauri-plugin-updater = "2.14.0"
+# keep `Cargo.lock` on it. Default features minus `zip`: that one only unpacks updates shipped as
+# zip archives, while the releases ship the NSIS installer itself, which the plugin runs as it is.
+# Left out, the `zip` crate (and its extraction advisories RUSTSEC-2026-0367/0368/0369, fixed only in
+# zip 9) is neither compiled nor listed in Cargo.lock.
+tauri-plugin-updater = { version = "2.14.0", default-features = false, features = [
+  "rustls-tls",
+  "system-proxy",
+] }
 
 # The message box that tells the player the app could not start (`report_startup_failure` in
 # lib.rs). Already compiled for Tauri itself: this only turns on the one Windows API it needs.

@@ -66,8 +66,11 @@ export function AppShell() {
         <SidebarAccount />
       </aside>
       {/* `<main>` is the element that scrolls every page: the attribute lets the router save and
-          restore its scroll (see `createAppRouter`). */}
-      <main {...MAIN_SCROLL_ATTRIBUTES} className="flex-1 overflow-y-auto px-10 py-8">
+          restore its scroll (see `createAppRouter`). `relative` makes it the box of the hidden texts
+          of the pages (`sr-only`, absolutely positioned): without it they are placed against the
+          window, and one below the bottom of a short window made the window itself scroll, under
+          the page that already scrolls. */}
+      <main {...MAIN_SCROLL_ATTRIBUTES} className="relative flex-1 overflow-y-auto px-10 py-8">
         <Outlet />
       </main>
     </div>

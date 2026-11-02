@@ -10,6 +10,8 @@ Fixed and Removed.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-02
+
 ### Added
 
 - A Paige page: her artwork, her keywords, all her stats with what each level adds, her weapon, and her four abilities. Click an ability to see its details and switch its upgrade tiers (1, 2 and 5 points) on and off to see what they change, including the timings the game does not show.

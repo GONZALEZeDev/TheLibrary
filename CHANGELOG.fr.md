@@ -10,6 +10,8 @@ Ajouts, Modifications, Corrections et Suppressions.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-02
+
 ### Ajouts
 
 - Une page Paige : son illustration, ses mots-clés, toutes ses statistiques avec ce que chaque niveau ajoute, son arme et ses quatre compétences. Clique sur une compétence pour voir son détail et activer ou désactiver ses paliers d'amélioration (1, 2 et 5 points) pour voir ce qu'ils changent, y compris les délais que le jeu n'affiche pas.

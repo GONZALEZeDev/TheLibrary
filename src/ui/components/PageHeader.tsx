@@ -28,7 +28,7 @@ export interface PageHeaderProps {
 export function PageHeader({ title, description, children }: PageHeaderProps) {
   return (
     <header className="mb-8">
-      <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+      <h1 className="font-title text-2xl font-extrabold">{title}</h1>
       {description !== undefined && <p className="mt-1 text-sm text-fg-muted">{description}</p>}
       {/* A falsy child (`cond && <Facts />`) must not leave an empty, margin-only wrapper. */}
       {children ? <div className="mt-2">{children}</div> : null}

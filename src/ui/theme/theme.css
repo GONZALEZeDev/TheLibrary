@@ -9,11 +9,22 @@
  * accent-bright ≈ 8:1, secondary ≈ 11:1, loss ≈ 6:1.
  */
 @import 'tailwindcss';
-/* Inter is bundled with the app (no font CDN at runtime). */
-@import '@fontsource-variable/inter';
+/* The fonts are bundled with the app (no font CDN at runtime): Alegreya Sans for the text and
+   Alegreya SC for the titles, open-licensed (OFL) fonts close to the game's own typefaces. */
+@import '@fontsource/alegreya-sans/500.css';
+@import '@fontsource/alegreya-sans/700.css';
+@import '@fontsource/alegreya-sc/800.css';
 
 @theme {
-  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Alegreya Sans', ui-sans-serif, system-ui, sans-serif;
+  /* Titles: page titles, dialog titles, panel titles (`font-title`). */
+  --font-title: 'Alegreya SC', ui-serif, serif;
+
+  /* Only two weights of Alegreya Sans are bundled: the regular text uses the 500 (the 400 reads too
+     thin on the dark backgrounds) and every heavier weight resolves to the 700. */
+  --font-weight-normal: 500;
+  --font-weight-medium: 700;
+  --font-weight-semibold: 700;
 
   /* Backgrounds, from the deepest to the most raised: green-tinted near-blacks. */
   --color-bg: #0b1210;
@@ -37,6 +48,12 @@
   /* Match results. Always paired with a W/L label: never conveyed by colour alone. */
   --color-win: #3fbf86;
   --color-loss: #e0707a;
+
+  /* The game's colours of the three stat categories: weapon, vitality, spirit. They tint icons and
+     the bars of the stat panels; text in them is large or bold and also carried by a label. */
+  --color-stat-weapon: #e8a33d;
+  --color-stat-vitality: #7ed35a;
+  --color-stat-spirit: #c18cf0;
 }
 
 @layer base {

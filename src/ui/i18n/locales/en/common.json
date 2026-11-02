@@ -8,7 +8,8 @@
     "matches": "Matches",
     "review": "Review",
     "settings": "Settings",
-    "account": "Steam account: {{name}}"
+    "account": "Steam account: {{name}}",
+    "paige": "Paige"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -32,6 +33,67 @@
     "links": {
       "review": "See the full review",
       "matches": "All my matches"
+    }
+  },
+  "paige": {
+    "title": "Paige",
+    "loading": "Loading Paige…",
+    "error": "Could not load Paige's data.",
+    "retry": "Retry",
+    "panels": {
+      "weapon": "Weapon",
+      "vitality": "Vitality",
+      "spirit": "Spirit"
+    },
+    "stats": {
+      "dps": "DPS",
+      "bulletDamage": "Bullet damage",
+      "ammo": "Ammo",
+      "bulletsPerSecond": "Bullets per second",
+      "reloadTime": "Reload time",
+      "bulletVelocity": "Bullet velocity",
+      "lightMelee": "Light melee",
+      "heavyMelee": "Heavy melee",
+      "health": "Health",
+      "healthRegen": "Health regen",
+      "moveSpeed": "Move speed",
+      "sprintSpeed": "Sprint speed",
+      "dashSpeed": "Dash speed",
+      "stamina": "Stamina",
+      "staminaCooldown": "Stamina cooldown",
+      "spiritPower": "Spirit power"
+    },
+    "perLevel": "+{{value}} per level",
+    "spiritScaling": "Spirit power scaling ×{{factor}}",
+    "units": {
+      "seconds": "{{value}}s",
+      "metres": "{{value}}m",
+      "metresPerSecond": "{{value}}m/s"
+    },
+    "ability": {
+      "charges_one": "{{count}} charge",
+      "charges_other": "{{count}} charges",
+      "chargeDelay": "{{value}} between charges",
+      "cooldown": "Cooldown",
+      "castRange": "Cast range",
+      "radius": "Radius",
+      "duration": "Duration",
+      "spiritDamage": "Spirit damage",
+      "spiritDps": "Spirit damage per second",
+      "weaponDamage": "Weapon damage",
+      "weaponDps": "Weapon damage per second",
+      "upgrades": "Upgrades",
+      "tier": "Tier {{points}}",
+      "hidden": "Details (wiki)",
+      "close": "Close",
+      "chips": "Timings and sizes",
+      "chargesTitle": "Charges",
+      "chargeDelayTitle": "Charge delay",
+      "channelTime": "Channel time"
+    },
+    "hidden": {
+      "AbilityCastDelay": "Cast delay",
+      "DetonationDelay": "Detonation delay"
     }
   },
   "result": {

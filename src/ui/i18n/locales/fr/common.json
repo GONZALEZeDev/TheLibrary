@@ -8,7 +8,8 @@
     "matches": "Parties",
     "review": "Bilan",
     "settings": "Réglages",
-    "account": "Compte Steam : {{name}}"
+    "account": "Compte Steam : {{name}}",
+    "paige": "Paige"
   },
   "dashboard": {
     "title": "Tableau de bord",
@@ -32,6 +33,67 @@
     "links": {
       "review": "Voir le Bilan complet",
       "matches": "Toutes mes parties"
+    }
+  },
+  "paige": {
+    "title": "Paige",
+    "loading": "Chargement de Paige…",
+    "error": "Impossible de charger les données de Paige.",
+    "retry": "Réessayer",
+    "panels": {
+      "weapon": "Arme",
+      "vitality": "Vitalité",
+      "spirit": "Esprit"
+    },
+    "stats": {
+      "dps": "DPS",
+      "bulletDamage": "Dégâts par balle",
+      "ammo": "Munitions",
+      "bulletsPerSecond": "Balles par seconde",
+      "reloadTime": "Rechargement",
+      "bulletVelocity": "Vitesse des balles",
+      "lightMelee": "Mêlée légère",
+      "heavyMelee": "Mêlée lourde",
+      "health": "Vie",
+      "healthRegen": "Régén. de vie",
+      "moveSpeed": "Vitesse",
+      "sprintSpeed": "Vitesse de sprint",
+      "dashSpeed": "Vitesse de dash",
+      "stamina": "Endurance",
+      "staminaCooldown": "Récup. d'endurance",
+      "spiritPower": "Puissance spirituelle"
+    },
+    "perLevel": "+{{value}} par niveau",
+    "spiritScaling": "Puissance spirituelle ×{{factor}}",
+    "units": {
+      "seconds": "{{value}} s",
+      "metres": "{{value}} m",
+      "metresPerSecond": "{{value}} m/s"
+    },
+    "ability": {
+      "charges_one": "{{count}} charge",
+      "charges_other": "{{count}} charges",
+      "chargeDelay": "{{value}} entre les charges",
+      "cooldown": "Temps de récupération",
+      "castRange": "Portée",
+      "radius": "Rayon",
+      "duration": "Durée",
+      "spiritDamage": "Dégâts spirituels",
+      "spiritDps": "Dégâts spirituels par seconde",
+      "weaponDamage": "Dégâts d'arme",
+      "weaponDps": "Dégâts d'arme par seconde",
+      "upgrades": "Améliorations",
+      "tier": "Palier {{points}}",
+      "hidden": "Détails (wiki)",
+      "close": "Fermer",
+      "chips": "Délais et tailles",
+      "chargesTitle": "Charges",
+      "chargeDelayTitle": "Délai entre les charges",
+      "channelTime": "Durée de canalisation"
+    },
+    "hidden": {
+      "AbilityCastDelay": "Délai d'incantation",
+      "DetonationDelay": "Délai de détonation"
     }
   },
   "result": {

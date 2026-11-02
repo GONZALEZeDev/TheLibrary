@@ -33,14 +33,22 @@ export interface DialogProps {
   readonly onClose: () => void;
   /** Content shown under the title. It is mounted only while the dialog is open. */
   readonly children: ReactNode;
+  /**
+   * Width of the dialog: `default` for a message or a confirmation, `wide` for a dialog that lays
+   * out values side by side (the window of an ability).
+   */
+  readonly size?: 'default' | 'wide';
 }
+
+/** The largest width of each size of dialog. */
+const MAX_WIDTH_CLASSES = { default: 'max-w-md', wide: 'max-w-lg' } as const;
 
 /**
  * Modal dialog with a title and free content.
  *
  * @returns The `<dialog>` element, which is hidden by the browser while `open` is false.
  */
-export function Dialog({ open, title, onClose, children }: DialogProps) {
+export function Dialog({ open, title, onClose, children, size = 'default' }: DialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
 
@@ -89,13 +97,13 @@ export function Dialog({ open, title, onClose, children }: DialogProps) {
       onCancel={handleCancel}
       // The look of a panel with room around the content. `m-auto` centres the modal: Tailwind's
       // preflight resets the margin that the browser's default stylesheet uses for that.
-      className={`${PANEL_CLASSES.base} ${PANEL_CLASSES.padding.roomy} m-auto w-[calc(100%-2rem)] max-w-md text-fg backdrop:bg-bg/70`}
+      className={`${PANEL_CLASSES.base} ${PANEL_CLASSES.padding.roomy} m-auto w-[calc(100%-2rem)] ${MAX_WIDTH_CLASSES[size]} text-fg backdrop:bg-bg/70`}
     >
       {open && (
         <>
           {/* `break-words`: a title that names a long persona name with no space must wrap, not
               overflow the dialog. */}
-          <h2 id={titleId} className="text-lg font-medium break-words">
+          <h2 id={titleId} className="font-title text-xl font-extrabold break-words">
             {title}
           </h2>
           <div className="mt-4">{children}</div>

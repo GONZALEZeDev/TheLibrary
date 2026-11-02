@@ -8,14 +8,18 @@ import { describe, expect, it } from 'vitest';
 import { avatarUrl } from '../../core/account/linked-account';
 import {
   DEADLOCK_API_BASE_URL,
+  heroDetailRequest,
   heroesRequest,
+  itemDetailRequest,
   matchHistoryRequest,
   matchMetadataRequest,
   MAX_RESPONSE_BYTES,
   REQUEST_TIMEOUT_MS,
   steamProfileRequest,
 } from '../../core/deadlock-api/endpoints';
+import { parseHeroDetail } from '../../core/deadlock-api/hero-detail.schema';
 import { parseHeroAssets } from '../../core/deadlock-api/heroes.schema';
+import { parseAbilityDetail } from '../../core/deadlock-api/item-detail.schema';
 import { parseMatchHistory } from '../../core/deadlock-api/match-history.schema';
 import { parseMatchMetadata } from '../../core/deadlock-api/match-metadata.schema';
 import { parseSteamProfiles } from '../../core/deadlock-api/steam-profile.schema';
@@ -123,6 +127,25 @@ describe('createFixtureApi', () => {
     // A hero flagged in development that players can pick is kept; a retired one is not.
     expect(heroes.map((hero) => hero.name)).toContain('Baba');
     expect(heroes.map((hero) => hero.name)).not.toContain('Retired Hero');
+  });
+
+  it("serves Paige's hero entry in English and in French", async () => {
+    const english = await client.get(get(heroDetailRequest(PAIGE_HERO_ID, 'english').url));
+    const french = await client.get(get(heroDetailRequest(PAIGE_HERO_ID, 'french').url));
+
+    expect(parseHeroDetail(JSON.parse(english.body)).tags[0]).toBe('Helpful');
+    expect(parseHeroDetail(JSON.parse(french.body)).tags[0]).toBe('Utile');
+  });
+
+  it("serves Paige's abilities by class name and language, and 404 for another item", async () => {
+    const french = await client.get(
+      get(itemDetailRequest('ability_bookworm_dragonfire', 'french').url),
+    );
+    const unknown = await client.get(get(itemDetailRequest('unknown', 'english').url));
+
+    expect(french.status).toBe(200);
+    expect(parseAbilityDetail(JSON.parse(french.body)).properties.Damage?.label).toBe('Dégâts');
+    expect(unknown.status).toBe(404);
   });
 
   it('answers 404 to anything else', async () => {

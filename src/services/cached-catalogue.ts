@@ -5,9 +5,10 @@
  * the database. When it cannot be refreshed (offline, deadlock-api unavailable or asked to pause,
  * asset budget spent), the last catalogue downloaded is used, however old.
  *
- * Until an account is linked, the app contacts nobody: a catalogue is then only read from the
- * cache, whatever its age. The reader enforces it itself, so no caller can break it by forgetting
- * to check the account first.
+ * Until an account is linked, a catalogue is only read from the cache, whatever its age: the app
+ * downloads nothing for a player who has not linked one. The reader enforces it itself, so no
+ * caller can break it by forgetting to check the account first. A catalogue that depends on no
+ * account (see `CatalogueSource.requiresAccount`) is downloaded whether one is linked or not.
  *
  * Callers that ask for the same catalogue at the same moment share one run, so that it is
  * downloaded once: the asset budget of deadlock-api is two requests a second for all the catalogues
@@ -65,6 +66,13 @@ export interface CatalogueSource<Entry> {
   readonly schema: z.ZodType<Entry[]>;
   /** Downloads the catalogue, already validated and reduced to what the cache keeps. */
   readonly download: () => Promise<Entry[]>;
+  /**
+   * Whether the catalogue waits for a linked account before it is downloaded; `true` by default.
+   * The catalogues that name what a player's matches show wait for one, like everything the app
+   * downloads for an account. A page that shows the game itself (the Paige page) depends on no
+   * account, and is downloaded whether one is linked or not.
+   */
+  readonly requiresAccount?: boolean;
 }
 
 /** The cached catalogue, with the times of its download and of the end of its freshness. */
@@ -81,7 +89,8 @@ interface CachedEntries<Entry> {
  * @param source - The catalogue: where it is kept, how it is called and downloaded.
  * @returns A function that gives the catalogue: the cached one when fresh, the downloaded one
  *   otherwise (and cached), the stale cached one when the download fails. Without a linked account,
- *   nothing is downloaded: the cached one whatever its age, or an empty list. It throws AppError
+ *   nothing is downloaded (unless the catalogue does not require one): the cached one whatever its
+ *   age, or an empty list. It throws AppError
  *   when the linked account cannot be read (an unreadable link is not "no account"), or when the
  *   download fails (a pause or a spent budget included) and nothing valid is cached. A call made
  *   while another one is running gets the answer of that run: the account, the cache and the
@@ -135,9 +144,8 @@ async function readCatalogue<Entry>(
   source: CatalogueSource<Entry>,
 ): Promise<readonly Entry[]> {
   const { accountSource, cache, logger } = dependencies;
-  const accountId = await accountSource.currentAccountId();
   const cached = await readCache(cache, source);
-  if (accountId === null) {
+  if (source.requiresAccount !== false && (await accountSource.currentAccountId()) === null) {
     return cached?.entries ?? [];
   }
   const now = dependencies.now();

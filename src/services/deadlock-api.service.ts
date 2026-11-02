@@ -36,8 +36,10 @@ import {
   RANK_RATE_LIMIT,
 } from '../core/deadlock-api/budgets';
 import {
+  heroDetailRequest,
   heroesRequest,
   heroSampleRequest,
+  itemDetailRequest,
   itemsRequest,
   itemStatsRequest,
   matchHistoryRequest,
@@ -51,11 +53,19 @@ import {
   REQUEST_TIMEOUT_MS,
   steamProfileRequest,
   userAgent,
+  type ApiLanguage,
   type ApiRequest,
   type CohortQuery,
 } from '../core/deadlock-api/endpoints';
 import { parseHeroSample } from '../core/deadlock-api/hero-sample.schema';
+import { parseHeroDetail, type HeroDetail } from '../core/deadlock-api/hero-detail.schema';
 import { parseHeroAssets } from '../core/deadlock-api/heroes.schema';
+import {
+  parseAbilityDetail,
+  parseWeaponDetail,
+  type AbilityDetail,
+  type WeaponDetail,
+} from '../core/deadlock-api/item-detail.schema';
 import { parseItemStats, type ItemStatsRow } from '../core/deadlock-api/item-stats.schema';
 import { parseMatchHistory } from '../core/deadlock-api/match-history.schema';
 import {
@@ -69,13 +79,19 @@ import {
 import { parsePlayerRank } from '../core/deadlock-api/player-rank.schema';
 import { parseSteamProfiles, type SteamProfile } from '../core/deadlock-api/steam-profile.schema';
 import type { AccountId } from '../core/domain/account';
-import type { HeroAsset } from '../core/domain/hero';
+import type { HeroAsset, HeroId } from '../core/domain/hero';
 import type { MatchId, MatchSummary } from '../core/domain/match';
 import { AppError, errorLogContext, toAppError } from '../core/errors/app-error';
 import { checkRateLimit } from '../core/rate-limit/sliding-window';
 import type { HttpClient, HttpResponse } from '../ports/http-client.port';
 import type { Logger } from '../ports/logger.port';
 import type { SyncStateRepository } from './sync-state.repository';
+
+/**
+ * How many times a request of the hero page waits for the asset budget before it is refused: a
+ * page needs up to ten entries, two a second, and the catalogues may be downloading too.
+ */
+export const MAX_ASSET_BUDGET_WAITS = 10;
 
 /** Options of {@link DeadlockApiService}. */
 export interface DeadlockApiServiceOptions {
@@ -362,41 +378,132 @@ export class DeadlockApiService {
   }
 
   /**
-   * Send a request for static game data and validate the answer: what the three catalogues share.
+   * Download and validate one hero entry, for the hero page.
+   *
+   * The hero page downloads several entries in a row (the hero, its weapon, its four abilities, in
+   * one or two languages), more than the asset budget lets through in a second: unlike the
+   * catalogues, these requests wait for the budget instead of being refused (see
+   * `#fetchAssetWhenAllowed`).
+   *
+   * @param heroId - The hero.
+   * @param language - The language of the texts.
+   * @returns The hero.
+   * @throws AppError of kind `rate_limited` when deadlock-api asked to pause, `invalid_payload` when
+   *   the answer is not a hero with its loadout, or any kind of a failed request.
+   */
+  fetchHeroDetail(heroId: HeroId, language: ApiLanguage): Promise<HeroDetail> {
+    return this.#fetchAssetWhenAllowed(heroDetailRequest(heroId, language), parseHeroDetail);
+  }
+
+  /**
+   * Download and validate one ability entry, with its full tooltip, for the hero page.
+   *
+   * Same rules as {@link DeadlockApiService.fetchHeroDetail}.
+   *
+   * @param className - The class name of the ability.
+   * @param language - The language of the texts.
+   * @returns The ability.
+   * @throws AppError, as {@link DeadlockApiService.fetchHeroDetail}.
+   */
+  fetchAbilityDetail(className: string, language: ApiLanguage): Promise<AbilityDetail> {
+    return this.#fetchAssetWhenAllowed(itemDetailRequest(className, language), parseAbilityDetail);
+  }
+
+  /**
+   * Download and validate one weapon entry, in English, for the stat panels of the hero page.
+   *
+   * Same rules as {@link DeadlockApiService.fetchHeroDetail}.
+   *
+   * @param className - The class name of the weapon.
+   * @returns The weapon.
+   * @throws AppError, as {@link DeadlockApiService.fetchHeroDetail}.
+   */
+  fetchWeaponDetail(className: string): Promise<WeaponDetail> {
+    return this.#fetchAssetWhenAllowed(itemDetailRequest(className, 'english'), parseWeaponDetail);
+  }
+
+  /**
+   * Send a request for static game data once the asset budget allows it.
+   *
+   * It is `#fetchAsset`, except that a spent budget is waited for, up to
+   * {@link MAX_ASSET_BUDGET_WAITS} times, instead of refused (see `#admitAssetRequest`). A pause
+   * asked by deadlock-api is still an error at once: the app does not wait minutes for a page.
+   *
+   * @param request - The request.
+   * @param parse - Validates the JSON of the answer.
+   * @returns The validated data.
+   * @throws AppError, as `#fetchAsset`; `rate_limited` too when the budget is still spent after the
+   *   waits (other catalogues downloading at the same moment).
+   */
+  #fetchAssetWhenAllowed<T>(request: ApiRequest, parse: (json: unknown) => T): Promise<T> {
+    return this.#fetchAsset(request, parse, MAX_ASSET_BUDGET_WAITS);
+  }
+
+  /**
+   * Send a request for static game data and validate the answer: what every asset request shares.
    *
    * Unlike the community requests, a refusal is an error and not a result: the callers are caches,
    * which treat any failure as a download that did not happen and keep what they hold. The pause
    * comes first: while deadlock-api asked to wait, nothing is sent and nothing is counted. Then
-   * {@link ASSETS_RATE_LIMIT} applies, one window for every asset request.
+   * {@link ASSETS_RATE_LIMIT} applies, one window for every asset request (see
+   * `#admitAssetRequest`).
    *
    * @param request - The request.
    * @param parse - Validates the JSON of the answer.
+   * @param budgetWaits - How many times a spent budget is waited for before the request is refused:
+   *   none for the catalogues, which keep what they hold.
    * @returns The validated data.
    * @throws AppError of kind `rate_limited` when deadlock-api asked to pause (also when it asks for
    *   it in this very answer) or the budget is exhausted, any kind of a failed request, or the one
    *   `parse` throws for an answer it refuses.
    */
-  async #fetchAsset<T>(request: ApiRequest, parse: (json: unknown) => T): Promise<T> {
-    const now = this.#now();
-    const pausedUntil = await this.#activePause(now);
-    if (pausedUntil !== null) {
-      throw new AppError('rate_limited', 'deadlock-api asked to pause', {
-        context: { pausedUntil },
-      });
-    }
-    const budget = checkRateLimit(this.#assetRequests, now, ASSETS_RATE_LIMIT);
-    // Kept even when refused, like the times of the history requests (see #admitHistoryRequest).
-    this.#assetRequests = budget.allowed ? [...budget.recent, now] : budget.recent;
-    if (!budget.allowed) {
-      throw new AppError('rate_limited', 'The budget of asset requests is exhausted', {
-        context: { nextAllowedAt: budget.nextAllowedAt },
-      });
-    }
+  async #fetchAsset<T>(
+    request: ApiRequest,
+    parse: (json: unknown) => T,
+    budgetWaits = 0,
+  ): Promise<T> {
+    await this.#admitAssetRequest(budgetWaits);
     const outcome = await this.#send(request);
     if (outcome.kind === 'pause') {
       throw outcome.error;
     }
     return parse(outcome.json);
+  }
+
+  /**
+   * Take a place in the asset budget, waiting for one when allowed to.
+   *
+   * The budget is looked at and the request recorded in the same turn, with no wait in between:
+   * two requests that compete for the last place of the window cannot both take it, and the one
+   * that loses waits (or is refused) instead of being sent. A pause asked by deadlock-api is looked
+   * at again after each wait.
+   *
+   * @param budgetWaits - How many times a spent budget is waited for before the request is refused.
+   * @throws AppError of kind `rate_limited` when deadlock-api asked to pause, or when the budget is
+   *   still spent after the waits.
+   */
+  async #admitAssetRequest(budgetWaits: number): Promise<void> {
+    for (let wait = 0; ; wait += 1) {
+      const pausedUntil = await this.#activePause(this.#now());
+      if (pausedUntil !== null) {
+        throw new AppError('rate_limited', 'deadlock-api asked to pause', {
+          context: { pausedUntil },
+        });
+      }
+      const now = this.#now();
+      const budget = checkRateLimit(this.#assetRequests, now, ASSETS_RATE_LIMIT);
+      // Kept even when refused, like the times of the history requests (see #admitHistoryRequest).
+      this.#assetRequests = budget.allowed ? [...budget.recent, now] : budget.recent;
+      if (budget.allowed) {
+        return;
+      }
+      if (wait === budgetWaits) {
+        throw new AppError('rate_limited', 'The budget of asset requests is exhausted', {
+          context: { nextAllowedAt: budget.nextAllowedAt },
+        });
+      }
+      await this.#sleep(Math.max(budget.nextAllowedAt - now, 0));
+    }
   }
 
   /**

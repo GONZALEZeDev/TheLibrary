@@ -12,13 +12,17 @@
 import { avatarUrl } from '../../core/account/linked-account';
 import { AppError } from '../../core/errors/app-error';
 import {
+  heroDetailRequest,
   heroesRequest,
+  itemDetailRequest,
   itemsRequest,
   matchHistoryRequest,
   ranksRequest,
   DEADLOCK_API_BASE_URL,
+  type ApiLanguage,
 } from '../../core/deadlock-api/endpoints';
 import { parseAccountId, type AccountId } from '../../core/domain/account';
+import { PAIGE_HERO_ID } from '../../core/domain/hero';
 import { parseMatchId } from '../../core/domain/match';
 import { OPENID_NS, STEAM_OPENID_ENDPOINT } from '../../core/steam/steam-openid';
 import type {
@@ -38,6 +42,11 @@ import {
 } from './fixtures/analytics.fixture';
 import { FIXTURE_ITEM_CATALOGUE, FIXTURE_RANK_CATALOGUE } from './fixtures/assets.fixture';
 import { FIXTURE_HERO_CATALOGUE } from './fixtures/heroes.fixture';
+import {
+  FIXTURE_PAIGE_ABILITIES,
+  FIXTURE_PAIGE_HERO,
+  FIXTURE_PAIGE_WEAPON,
+} from './fixtures/paige.fixture';
 import {
   createMatchHistoryFixture,
   FIXTURE_ACCOUNT_ID,
@@ -218,6 +227,12 @@ export interface FixtureApiOptions {
   readonly matchCount?: number;
 }
 
+/** The languages of the entries of the hero page. */
+const API_LANGUAGES: readonly ApiLanguage[] = ['english', 'french'];
+
+/** The class name of Paige's weapon, the one weapon entry of the fixtures. */
+const PAIGE_WEAPON_CLASS = 'citadel_weapon_bookworm_set2';
+
 /**
  * The path of the match detail endpoint, once the base URL is cut off: the match id, then the
  * query when there is one. The path is `/v1/matches/{match_id}/metadata`, as in
@@ -379,6 +394,30 @@ function answerCheckAuthentication(form: string, confirmed: Set<string>): Fixtur
 }
 
 /**
+ * Answer a request of the hero page: Paige's hero entry, her four abilities and her weapon, in
+ * English and in French (the weapon in English only), from the real answers of
+ * `paige.fixture.ts`.
+ *
+ * @param url - The URL of a GET request.
+ * @returns The entry, or `null` when the URL is no entry of the hero page the fixtures hold.
+ */
+function answerHeroPageEntry(url: string): FixtureResponse | null {
+  for (const language of API_LANGUAGES) {
+    if (url === heroDetailRequest(PAIGE_HERO_ID, language).url) {
+      return jsonResponse(FIXTURE_PAIGE_HERO[language]);
+    }
+    for (const [className, ability] of Object.entries(FIXTURE_PAIGE_ABILITIES[language])) {
+      if (url === itemDetailRequest(className, language).url) {
+        return jsonResponse(ability);
+      }
+    }
+  }
+  return url === itemDetailRequest(PAIGE_WEAPON_CLASS, 'english').url
+    ? jsonResponse(FIXTURE_PAIGE_WEAPON)
+    : null;
+}
+
+/**
  * Imitate deadlock-api and the two Steam servers the sign-in reaches, with the synthetic fixtures:
  *
  * - deadlock-api: the match history of one account (refreshed "from Steam"), an empty history for
@@ -432,6 +471,10 @@ export function createFixtureApi(options: FixtureApiOptions): FixtureHandler {
     }
     if (request.url === heroesRequest().url) {
       return jsonResponse(FIXTURE_HERO_CATALOGUE);
+    }
+    const pageEntry = request.method === 'GET' ? answerHeroPageEntry(request.url) : null;
+    if (pageEntry !== null) {
+      return pageEntry;
     }
     if (request.url === itemsRequest().url) {
       return jsonResponse(FIXTURE_ITEM_CATALOGUE);

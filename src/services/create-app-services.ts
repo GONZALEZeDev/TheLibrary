@@ -36,6 +36,7 @@ import { MatchTimelineService } from './match-timeline.service';
 import { MatchesRepository } from './matches.repository';
 import { MatchesService } from './matches.service';
 import { MetricsRepository } from './metrics.repository';
+import { PaigePageService } from './paige-page.service';
 import { PlayerRankService } from './player-rank.service';
 import { ProjectionService } from './projection.service';
 import { ReviewService } from './review.service';
@@ -218,6 +219,14 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     logger,
     now,
   });
+  // The Paige page shares the cache table and the asset budget with the catalogues.
+  const paige = new PaigePageService({
+    accountSource: linkedAccounts,
+    api,
+    cache: apiCache,
+    logger,
+    now,
+  });
   const assets = new GameAssetService({
     accountSource: linkedAccounts,
     api,
@@ -308,6 +317,7 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     settings,
     matches: new MatchesService(linkedAccounts, matches, now),
     heroes,
+    paige,
     details,
     sync,
     account,

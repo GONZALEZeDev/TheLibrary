@@ -309,6 +309,58 @@ describe('DeadlockApiService.fetchMatchHistory', () => {
   });
 });
 
+describe('DeadlockApiService hero page entries', () => {
+  it("downloads Paige's hero entry, her abilities and her weapon", async () => {
+    const { api, http } = setUp();
+
+    const hero = await api.fetchHeroDetail(PAIGE_HERO_ID, 'french');
+    const ability = await api.fetchAbilityDetail('ability_bookworm_aoemagic', 'english');
+
+    expect(hero.tags[0]).toBe('Utile');
+    expect(ability.name).toBe('Captivating Read');
+    expect(http.requests.map((request) => request.url)).toEqual([
+      'https://api.deadlock-api.com/v1/assets/heroes/67?language=french',
+      'https://api.deadlock-api.com/v1/assets/items/ability_bookworm_aoemagic?language=english',
+    ]);
+  });
+
+  it('waits for the asset budget instead of failing, as the page needs several entries', async () => {
+    const { api, sleeper } = setUp();
+
+    await api.fetchHeroDetail(PAIGE_HERO_ID, 'english');
+    await api.fetchAbilityDetail('ability_bookworm_dragonfire', 'english');
+    const weapon = await api.fetchWeaponDetail('citadel_weapon_bookworm_set2');
+
+    // The third request of the second waits for the window to move instead of being refused.
+    expect(weapon.bulletDamage).toBe(32);
+    expect(sleeper.calls).toHaveLength(1);
+    expect(sleeper.calls[0]).toBeGreaterThan(0);
+    expect(sleeper.calls[0]).toBeLessThanOrEqual(1_000);
+  });
+
+  it('waits for the budget when two requests compete for its last slot', async () => {
+    const { api } = setUp();
+    await api.fetchHeroDetail(PAIGE_HERO_ID, 'english');
+
+    // One slot is left in this second; both requests pass the first look at the budget.
+    const [first, second] = await Promise.all([
+      api.fetchAbilityDetail('ability_bookworm_dragonfire', 'english'),
+      api.fetchAbilityDetail('ability_bookworm_aoemagic', 'english'),
+    ]);
+
+    expect(first.name).toBe('Bookwyrm');
+    expect(second.name).toBe('Captivating Read');
+  });
+
+  it('refuses an answer that is not an ability', async () => {
+    const { api } = setUp(() => jsonResponse({ class_name: 'x' }));
+
+    await expect(api.fetchAbilityDetail('x', 'english')).rejects.toMatchObject({
+      kind: 'invalid_payload',
+    });
+  });
+});
+
 describe('DeadlockApiService.fetchHeroes', () => {
   it('downloads the playable heroes', async () => {
     const { api } = setUp();

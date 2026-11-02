@@ -16,6 +16,7 @@ import type { MatchBreakdownService } from './match-breakdown.service';
 import type { MatchDetailService } from './match-detail.service';
 import type { MatchTimelineService } from './match-timeline.service';
 import type { MatchesService } from './matches.service';
+import type { PaigePageService } from './paige-page.service';
 import type { ReviewService } from './review.service';
 import type { SettingsService } from './settings.service';
 import type { StorageService } from './storage.service';
@@ -32,6 +33,8 @@ export interface AppServices {
   readonly matches: MatchesService;
   /** Hero names. */
   readonly heroes: HeroCatalogService;
+  /** The Paige page: her stats, weapon and abilities, in the UI language. */
+  readonly paige: PaigePageService;
   /** Detail of the Paige matches: download, archive, and what the match page shows of it. */
   readonly details: MatchDetailService;
   /** Synchronisation of the match history with deadlock-api. */

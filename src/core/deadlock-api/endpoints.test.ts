@@ -9,8 +9,11 @@ import { ANY_LENGTH_WINDOW } from '../analysis/cohort';
 import { parseAccountId } from '../domain/account';
 import { PAIGE_HERO_ID } from '../domain/hero';
 import {
+  apiLanguage,
+  heroDetailRequest,
   heroSampleRequest,
   heroesRequest,
+  itemDetailRequest,
   itemStatsRequest,
   itemsRequest,
   matchHistoryRequest,
@@ -72,6 +75,37 @@ describe('heroesRequest', () => {
     );
     expect(request.endpoint).toBe('/v1/assets/heroes');
     expect(request.family).toBe('assets');
+  });
+});
+
+describe('apiLanguage', () => {
+  it('names the UI languages the way deadlock-api does', () => {
+    expect(apiLanguage('en')).toBe('english');
+    expect(apiLanguage('fr')).toBe('french');
+  });
+});
+
+describe('heroDetailRequest and itemDetailRequest', () => {
+  it('requests one hero in the given language', () => {
+    expect(heroDetailRequest(PAIGE_HERO_ID, 'french')).toEqual({
+      url: 'https://api.deadlock-api.com/v1/assets/heroes/67?language=french',
+      endpoint: '/v1/assets/heroes/{hero_id}',
+      family: 'assets',
+    });
+  });
+
+  it('requests one item by its class name in the given language', () => {
+    expect(itemDetailRequest('ability_bookworm_dragonfire', 'english')).toEqual({
+      url: 'https://api.deadlock-api.com/v1/assets/items/ability_bookworm_dragonfire?language=english',
+      endpoint: '/v1/assets/items/{class_name}',
+      family: 'assets',
+    });
+  });
+
+  it('escapes a class name that is not a plain identifier', () => {
+    expect(itemDetailRequest('a/b?c', 'english').url).toBe(
+      'https://api.deadlock-api.com/v1/assets/items/a%2Fb%3Fc?language=english',
+    );
   });
 });
 

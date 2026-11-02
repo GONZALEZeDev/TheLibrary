@@ -10,6 +10,7 @@
 import type { AccountId } from '../domain/account';
 import type { HeroId } from '../domain/hero';
 import type { MatchId } from '../domain/match';
+import type { Language } from '../settings/language';
 
 /**
  * Base URL of deadlock-api. The desktop app may reach no other host: its HTTP permission
@@ -83,6 +84,53 @@ export function heroesRequest(): ApiRequest {
   return {
     url: `${DEADLOCK_API_BASE_URL}/v1/assets/heroes?language=english&only_active=true`,
     endpoint: '/v1/assets/heroes',
+    family: 'assets',
+  };
+}
+
+/** A language of the asset endpoints, as deadlock-api names it in the `language` parameter. */
+export type ApiLanguage = 'english' | 'french';
+
+/**
+ * The language of the asset endpoints that matches a UI language.
+ *
+ * @param language - A language the UI is displayed in.
+ * @returns Its name in the `language` parameter of deadlock-api.
+ */
+export function apiLanguage(language: Language): ApiLanguage {
+  return language === 'fr' ? 'french' : 'english';
+}
+
+/**
+ * One hero, in depth: its keywords, colours, pictures, base stats, gains per level and loadout,
+ * with the texts in the given language. The hero page reads it; the hero catalogue keeps a few
+ * fields of every hero instead (see {@link heroesRequest}).
+ *
+ * @param heroId - The hero.
+ * @param language - The language of the texts (the keywords, among others).
+ * @returns The request. Its endpoint is a template: the log never holds the id.
+ */
+export function heroDetailRequest(heroId: HeroId, language: ApiLanguage): ApiRequest {
+  return {
+    url: `${DEADLOCK_API_BASE_URL}/v1/assets/heroes/${String(heroId)}?language=${language}`,
+    endpoint: '/v1/assets/heroes/{hero_id}',
+    family: 'assets',
+  };
+}
+
+/**
+ * One item (an ability, a weapon or a shop item) by its class name, with its full tooltip in the
+ * given language: a few kilobytes instead of the whole catalogue (see {@link itemsRequest}).
+ *
+ * @param className - The class name of the item, e.g. `ability_bookworm_dragonfire`. It is escaped:
+ *   the class names come from a download, and none may change the path of the request.
+ * @param language - The language of the texts (descriptions, labels).
+ * @returns The request.
+ */
+export function itemDetailRequest(className: string, language: ApiLanguage): ApiRequest {
+  return {
+    url: `${DEADLOCK_API_BASE_URL}/v1/assets/items/${encodeURIComponent(className)}?language=${language}`,
+    endpoint: '/v1/assets/items/{class_name}',
     family: 'assets',
   };
 }

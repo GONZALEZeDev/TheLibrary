@@ -344,6 +344,7 @@ describe('ReviewPage', () => {
       const links = within(nav).getAllByRole('link');
       expect(links.map((link) => link.textContent)).toEqual([
         'Dashboard',
+        'Paige',
         'Matches',
         'Review',
         'Settings',

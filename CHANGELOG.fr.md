@@ -10,6 +10,14 @@ Ajouts, Modifications, Corrections et Suppressions.
 
 ## [Unreleased]
 
+### Ajouts
+
+- Une page Paige : son illustration, ses mots-clés, toutes ses statistiques avec ce que chaque niveau ajoute, son arme et ses quatre compétences. Clique sur une compétence pour voir son détail et activer ou désactiver ses paliers d'amélioration (1, 2 et 5 points) pour voir ce qu'ils changent, y compris les délais que le jeu n'affiche pas.
+
+### Modifications
+
+- L'interface utilise les polices Alegreya, plus proches de l'aspect du jeu.
+
 ## [0.1.1] - 2026-10-28
 
 ### Modifications

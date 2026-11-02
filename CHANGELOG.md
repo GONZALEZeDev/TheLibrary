@@ -10,6 +10,14 @@ Fixed and Removed.
 
 ## [Unreleased]
 
+### Added
+
+- A Paige page: her artwork, her keywords, all her stats with what each level adds, her weapon, and her four abilities. Click an ability to see its details and switch its upgrade tiers (1, 2 and 5 points) on and off to see what they change, including the timings the game does not show.
+
+### Changed
+
+- The interface uses the Alegreya fonts, closer to the game's look.
+
 ## [0.1.1] - 2026-10-28
 
 ### Changed

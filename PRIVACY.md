@@ -21,6 +21,7 @@ Unlinking your account in the settings deletes its matches, archives and history
 | ----------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | `api.deadlock-api.com`                          | Your public match history and match details, the game catalogues and the community statistics.  |
 | `assets-bucket.deadlock-api.com`                | Images of heroes, items and abilities.                                                          |
+| `cdn.deadlock.wiki`                             | Paige's artwork, on the Paige page.                                                             |
 | `steamcommunity.com`, `avatars.steamstatic.com` | Linking your Steam account (in your browser), confirming the sign-in, and your avatar.          |
 | `github.com` and its download hosts             | At each start, the update file of the latest release; when you choose to update, the installer. |
 

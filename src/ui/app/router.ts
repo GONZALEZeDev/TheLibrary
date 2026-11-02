@@ -22,6 +22,7 @@ import { parseMatchId } from '../../core/domain/match';
 import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { MatchDetailPage } from '../features/match-detail/MatchDetailPage';
 import { MatchesPage } from '../features/matches/MatchesPage';
+import { PaigePage } from '../features/paige/PaigePage';
 import { ReviewPage } from '../features/review/ReviewPage';
 import { SettingsPage } from '../features/settings/SettingsPage';
 import { AppShell } from './AppShell';
@@ -92,6 +93,13 @@ const dashboardRoute = createRoute({
   component: DashboardPage,
 });
 
+// Paige's own page: her stats, weapon and abilities.
+const paigeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/paige',
+  component: PaigePage,
+});
+
 const matchesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/matches',
@@ -136,6 +144,7 @@ const settingsRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   dashboardRoute,
+  paigeRoute,
   matchesRoute,
   matchDetailRoute,
   reviewRoute,

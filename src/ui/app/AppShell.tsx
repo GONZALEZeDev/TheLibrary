@@ -5,7 +5,14 @@
  * @packageDocumentation
  */
 import { Link, Outlet } from '@tanstack/react-router';
-import { BookOpen, ClipboardList, History, LayoutDashboard, Settings } from 'lucide-react';
+import {
+  BookHeart,
+  BookOpen,
+  ClipboardList,
+  History,
+  LayoutDashboard,
+  Settings,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { SidebarAccount } from '../features/account/SidebarAccount';
 import { UpdateHost } from '../features/update/UpdateHost';
@@ -36,7 +43,7 @@ export function AppShell() {
   return (
     <div className="flex h-screen">
       <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface p-4">
-        <div className="mb-8 flex items-center gap-2 px-3 text-lg font-semibold">
+        <div className="mb-8 flex items-center gap-2 px-3 font-title text-xl font-extrabold">
           <BookOpen aria-hidden="true" className="size-5 text-accent-bright" />
           {t('app.name')}
         </div>
@@ -44,6 +51,10 @@ export function AppShell() {
           <Link to="/dashboard" {...NAV_LINK_PROPS}>
             <LayoutDashboard aria-hidden="true" className="size-4" />
             {t('nav.dashboard')}
+          </Link>
+          <Link to="/paige" {...NAV_LINK_PROPS}>
+            <BookHeart aria-hidden="true" className="size-4" />
+            {t('nav.paige')}
           </Link>
           <Link to="/matches" {...NAV_LINK_PROPS}>
             <History aria-hidden="true" className="size-4" />

@@ -945,7 +945,7 @@ mod tests {
             serde_json::json!({
                 "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; \
                         worker-src 'self'; style-src 'self'; \
-                        img-src 'self' data: https://assets-bucket.deadlock-api.com; \
+                        img-src 'self' data: https://assets-bucket.deadlock-api.com https://cdn.deadlock.wiki; \
                         font-src 'self'; connect-src 'self' ipc: http://ipc.localhost; \
                         object-src 'none'; base-uri 'none'; form-action 'none'; \
                         frame-ancestors 'none'"

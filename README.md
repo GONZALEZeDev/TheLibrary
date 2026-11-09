@@ -70,6 +70,63 @@ pnpm check          # type-check + lint + format check + tests
 
 The architecture, conventions and workflow are described in [CONTRIBUTING.md](CONTRIBUTING.md); the reasons behind the main technical choices are recorded in [docs/adr](docs/adr).
 
+## Project structure
+
+TheLibrary is a [Tauri](https://tauri.app/) app: a small Rust shell opens a window, and everything you see and everything the app does is written in TypeScript and React and runs inside that window ([en français](docs/project-structure.fr.md)). The main folders:
+
+```text
+TheLibrary/
+├── src/                    The app itself, in TypeScript
+│   ├── main.tsx            Starting point: picks the adapters, builds the services, shows the window
+│   ├── core/               Pure logic: game data, the rules of the API, the match analysis
+│   ├── ports/              Interfaces for everything that touches the outside world
+│   ├── adapters/           Implementations of those interfaces
+│   │   ├── tauri/          …in the desktop app (HTTP, database, files, logs, Steam sign-in, updates)
+│   │   ├── browser/        …with browser APIs, in every build (the compression worker)
+│   │   └── dev/            …for tests and `pnpm dev` (synthetic data, in-memory storage)
+│   ├── services/           What the app does: sync, archive, analysis, review, account, updates
+│   ├── workers/            Heavy work off the main thread (zstd compression)
+│   ├── ui/                 The screens, in React
+│   │   ├── app/            Window frame, navigation, error screens
+│   │   ├── features/       One folder per screen (dashboard, matches, match detail, review, Paige, settings…)
+│   │   ├── components/     Shared building blocks (buttons, panels, tabs…)
+│   │   ├── i18n/           English and French texts
+│   │   └── theme/          Colours, spacing and fonts
+│   └── test/               Shared test helpers and the weekly check of the real API
+├── src-tauri/              The Rust desktop shell
+│   ├── src/                Native plugins, window hardening, the list of database migrations
+│   ├── capabilities/       What the window is allowed to do, kept to the minimum
+│   ├── tauri.conf.json     Window, security policy, installer and updater settings
+│   └── icons/              App icons in every size Windows and the installer use
+├── migrations/             The SQLite database schema, one numbered file per change
+├── scripts/                check-dev-code.ts (no development code in a release) and release/ (release tooling)
+├── .github/                CI, release and API canary workflows, Renovate settings
+├── docs/adr/               Architecture decision records: why each main choice was made
+├── assets/                 The source drawing of the app icon
+└── types/                  Type declarations for a tool that ships none
+```
+
+At the root you also find the build and tooling configuration (`package.json`, `vite.config.ts`, `tsconfig*.json`, `eslint.config.js`…) and the documents for players and contributors: the changelogs in English and French, [CONTRIBUTING.md](CONTRIBUTING.md), [PRIVACY.md](PRIVACY.md), [SECURITY.md](SECURITY.md), the [code signing policy](CODE_SIGNING_POLICY.md) and the [third-party notices](THIRD_PARTY_NOTICES.md).
+
+### How the pieces fit together
+
+The code under `src/` is split into layers, and each layer only talks to the ones below it (ESLint enforces it):
+
+- **`core/`** knows the game and the rules, and nothing else: it takes data and returns data, with no network, disk or clock.
+- **`ports/`** describe what the app needs from the outside world (download a page, run a SQL query, write a file…) without saying how.
+- **`adapters/`** do it: with the Tauri plugins in the desktop app, with memory and synthetic data in the tests and in `pnpm dev`. That is why the whole app runs in a plain browser on fake data.
+- **`services/`** are the actions of the app (synchronise, archive a match, analyse it, build the review…). They use `core/` for the rules and the ports for the side effects.
+- **`ui/`** shows the results and only calls services.
+
+The journey of one match, from deadlock-api to the screen:
+
+1. **Download the history.** At startup, every 13 minutes and on demand, the synchronisation asks [deadlock-api](https://deadlock-api.com) for your recent matches. `core/deadlock-api/` checks and translates the answer, and the matches are saved in the local SQLite database.
+2. **Archive the detail.** For each Paige match of the last 90 days, the app downloads the full detail, keeps only what concerns you, compresses it with zstd in a Web Worker so the window never freezes, and saves it as one file per match on your PC ([ADR 0003](docs/adr/0003-user-centric-archive-zstd.md)).
+3. **Analyse it.** Right after, the metrics of `core/analysis/` run on each new archive. Their values are stored in the database, so the pages compare matches without reopening the archives.
+4. **Show it.** When you open a match, its screen in `ui/features/match-detail/` asks the analysis service for it. The service compares your figures with your own habits and with players of your rank ([ADR 0004](docs/adr/0004-analysis-references.md)), and the screen draws the result.
+
+Each layer has a README that lists its folders and its rules: [core](src/core/README.md), [ports](src/ports/README.md), [adapters](src/adapters/README.md), [services](src/services/README.md), [workers](src/workers/README.md), [ui](src/ui/README.md) and [migrations](migrations/README.md). [CONTRIBUTING.md](CONTRIBUTING.md) explains the conventions and how to release a version.
+
 ## License
 
 [MIT](LICENSE). Code signing policy: [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md).

@@ -20,7 +20,10 @@
  *   `boss_damage`, `shots_hit`, `shots_missed`, `teammate_healing` and `teammate_barriering`;
  * - `match_paths`: one path per player with a position and a health every second, on the grid of the
  *   real paths; a dead player is at `(0, 0)` with no health until they respawn;
- * - `damage_matrix`: one dealer per player, plus the non-player dealer (slot 0).
+ * - `damage_matrix`: one dealer per player, plus the non-player dealer (slot 0);
+ * - what the map replay shows: `objectives` (the losing team loses its core on the last second, the
+ *   winner keeps its own), `mid_boss` kills, and on every death the `death_duration_s` the path
+ *   already shows (a player is dead for exactly that wait after a death).
  *
  * The deaths form one ledger (who killed whom, when, how fast) from which the deaths, the kills, the
  * `death_details` and the dead seconds of the paths of all the players are read, so the numbers of
@@ -171,6 +174,13 @@ const DAMAGE_SEED = 0x7a3c91d5;
 
 /** Mixed into the match id to seed the badge of the tracked player (see `fixtureTrackedBadge`). */
 const TRACKED_BADGE_SEED = 0x5bd1e995;
+
+/**
+ * Mixed into the match id to seed the generator of the objectives and of the mid boss kills (see
+ * {@link createObjectives} and {@link createMidBossKills}), so that they never share a sequence with
+ * the others and every other figure stays as it was.
+ */
+const MAP_EVENTS_SEED = 0x1b873593;
 
 /** The first `stats` snapshots, in seconds; the following ones are every `LATE_SNAPSHOT_STEP_S`. */
 const EARLY_SNAPSHOTS_S = [180, 360, 540, 720, 900];
@@ -323,6 +333,8 @@ export function createMatchMetadataFixture(row: RawMatchHistoryRow, accountId: A
   // What the deaths add to the paths (the times to kill, the health, the placing of the players at
   // the tracked player's deaths) has its own generator too.
   const deathsRandom = createRandom(row.match_id ^ DEATHS_SEED);
+  // The objectives and the mid boss kills have their own generator, like the others above.
+  const mapEventsRandom = createRandom(row.match_id ^ MAP_EVENTS_SEED);
   const durationS = row.match_duration_s;
   const seats = seatPlayers(random, analysisRandom, row, accountId);
   const deaths = createDeaths(random, deathsRandom, row, seats);
@@ -366,11 +378,116 @@ export function createMatchMetadataFixture(row: RawMatchHistoryRow, accountId: A
         ),
       },
       damage_matrix: damage.matrix,
+      // What the map replay shows: the objectives that were damaged, and the mid boss kills.
+      objectives: createObjectives(mapEventsRandom, row.match_result, durationS),
+      mid_boss: createMidBossKills(mapEventsRandom, durationS),
     },
     hero_build_ids: [],
     pregame_hero_ids: seats.map((seat) => seat.heroId),
     banned_hero_ids: [],
   };
+}
+
+/** The objective ids of the guardians (one in each lane). */
+const GUARDIAN_IDS = [1, 3, 4];
+
+/** The objective ids of the walkers (one in each lane). */
+const WALKER_IDS = [5, 7, 8];
+
+/** The objective ids of the base: the titan, the two shrines and the three base guardians. */
+const BASE_IDS = [9, 10, 11, 12, 14, 15];
+
+/**
+ * When the objectives of each tier fall, as a share of the match: the guardians first, then the
+ * walkers, then the base. The windows do not overlap, so the tiers always fall in that order.
+ */
+const TIER_WINDOWS: readonly (readonly [number, number])[] = [
+  [0.2, 0.4],
+  [0.42, 0.6],
+  [0.62, 0.9],
+];
+
+/**
+ * Invent the objectives of a match, in the shape of `match_info.objectives`: the ones that were
+ * damaged (the API leaves out the others).
+ *
+ * The result agrees with the winner. The losing team loses its core on the last second of the match,
+ * and most of its other objectives, tier by tier (guardians, walkers, then the base). The winning
+ * team keeps its core, and loses only some guardians and walkers. An objective that was damaged but
+ * stands has `destroyed_time_s: 0`, as in the real payloads.
+ *
+ * @param random - The generator of the map events.
+ * @param winningTeam - The team that won (0 or 1).
+ * @param durationS - Length of the match, in seconds.
+ * @returns The objectives of both teams, ordered by team then by id.
+ */
+function createObjectives(random: Random, winningTeam: number, durationS: number) {
+  return [0, 1].flatMap((team) => {
+    const lost = team !== winningTeam;
+    // How many objectives of each tier fall: the loser loses more, and the winner's base is safe.
+    const fallenCounts = lost
+      ? [between(random, 2, 3), between(random, 1, 3), between(random, 0, BASE_IDS.length)]
+      : [between(random, 1, 3), between(random, 0, 1), 0];
+    const tiers = [GUARDIAN_IDS, WALKER_IDS, BASE_IDS];
+    const entries = tiers.flatMap((ids, tier) => {
+      const [windowStart = 0, windowEnd = 1] = TIER_WINDOWS[tier] ?? [];
+      const fallen = new Set(shuffled(random, ids).slice(0, fallenCounts[tier] ?? 0));
+      return ids.map((id) => {
+        const firstDamageS = Math.floor(durationS * (windowStart - 0.1 * random()));
+        if (!fallen.has(id)) {
+          // Only some of the survivors were damaged, so only some are listed.
+          return between(random, 0, 1) === 1
+            ? {
+                team,
+                team_objective_id: id,
+                destroyed_time_s: 0,
+                first_damage_time_s: firstDamageS,
+              }
+            : null;
+        }
+        const destroyedS = Math.floor(
+          durationS * (windowStart + random() * (windowEnd - windowStart)),
+        );
+        return {
+          team,
+          team_objective_id: id,
+          destroyed_time_s: Math.max(1, destroyedS),
+          first_damage_time_s: Math.min(firstDamageS, destroyedS),
+        };
+      });
+    });
+    // The core: lost on the last second by the loser, damaged but standing for the winner.
+    const core = {
+      team,
+      team_objective_id: 0,
+      destroyed_time_s: lost ? durationS : 0,
+      first_damage_time_s: Math.floor(durationS * 0.85),
+    };
+    return [core, ...entries.filter((entry) => entry !== null)];
+  });
+}
+
+/**
+ * Invent the kills of the mid boss, in the shape of `match_info.mid_boss`: one to three, spread over
+ * the match and always before its end. The team that killed it claims the reward.
+ *
+ * @param random - The generator of the map events.
+ * @param durationS - Length of the match, in seconds.
+ * @returns The kills, in the order they happened.
+ */
+function createMidBossKills(random: Random, durationS: number) {
+  const count = between(random, 1, 3);
+  // The kills fall in equal slices of the middle of the match, one in each, so they never collide.
+  const startS = durationS * 0.15;
+  const sliceS = (durationS * 0.75) / count;
+  return Array.from({ length: count }, (_, index) => {
+    const team = between(random, 0, 1);
+    return {
+      team_killed: team,
+      team_claimed: team,
+      destroyed_time_s: Math.max(1, Math.floor(startS + (index + random() * 0.9) * sliceS)),
+    };
+  });
 }
 
 /**

@@ -11,6 +11,7 @@ import {
   heroDetailRequest,
   heroesRequest,
   itemDetailRequest,
+  mapRequest,
   matchHistoryRequest,
   matchMetadataRequest,
   MAX_RESPONSE_BYTES,
@@ -19,6 +20,7 @@ import {
 } from '../../core/deadlock-api/endpoints';
 import { parseHeroDetail } from '../../core/deadlock-api/hero-detail.schema';
 import { parseHeroAssets } from '../../core/deadlock-api/heroes.schema';
+import { parseMapLayout } from '../../core/deadlock-api/map.schema';
 import { parseAbilityDetail } from '../../core/deadlock-api/item-detail.schema';
 import { parseMatchHistory } from '../../core/deadlock-api/match-history.schema';
 import { parseMatchMetadata } from '../../core/deadlock-api/match-metadata.schema';
@@ -127,6 +129,31 @@ describe('createFixtureApi', () => {
     // A hero flagged in development that players can pick is kept; a retired one is not.
     expect(heroes.map((hero) => hero.name)).toContain('Baba');
     expect(heroes.map((hero) => hero.name)).not.toContain('Retired Hero');
+  });
+
+  it('gives every fixture hero a minimap icon on the asset bucket', async () => {
+    const response = await client.get(get(heroesRequest().url));
+    const heroes = parseHeroAssets(JSON.parse(response.body));
+
+    expect(heroes.length).toBeGreaterThan(0);
+    for (const hero of heroes) {
+      expect(hero.minimapImageUrl?.startsWith('https://assets-bucket.deadlock-api.com/')).toBe(
+        true,
+      );
+    }
+  });
+
+  it('serves the map layout, readable by the validation of the real API', async () => {
+    const response = await client.get(get(mapRequest().url));
+    const layout = parseMapLayout(JSON.parse(response.body));
+
+    expect(layout.radius).toBe(10_752);
+    expect(layout.imageUrl).toContain('minimap_midtown_mid.png');
+    expect(Object.keys(layout.objectivePositions)).toHaveLength(16);
+    expect(layout.lanes).toHaveLength(3);
+    for (const lane of layout.lanes) {
+      expect(lane.points.length).toBeGreaterThan(2);
+    }
   });
 
   it("serves Paige's hero entry in English and in French", async () => {

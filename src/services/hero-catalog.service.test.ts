@@ -62,13 +62,12 @@ function setUp() {
 /** Cache key of the catalogue (the service's own, which is not exported). */
 const CACHE_KEY = 'heroes.english.v2';
 
-/** Paige as the fixture catalogue describes her: her portrait and her real loadout. */
+/** Paige as the fixture catalogue describes her: her portrait, her minimap icon and her real loadout. */
 const PAIGE_ASSET = {
   id: PAIGE_HERO_ID,
   name: 'Paige',
   imageUrl: `${ASSET_IMAGE_ORIGIN}assets-api-res/images/heroes/bookworm_sm.webp`,
-  // The fixture catalogue gives no minimap icon yet.
-  minimapImageUrl: null,
+  minimapImageUrl: `${ASSET_IMAGE_ORIGIN}assets-api-res/images/heroes/bookworm_mm.webp`,
   loadout: {
     weapon: 'citadel_weapon_bookworm_set2',
     melee: 'ability_melee_bookworm',

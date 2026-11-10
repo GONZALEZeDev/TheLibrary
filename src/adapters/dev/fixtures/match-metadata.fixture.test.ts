@@ -22,6 +22,7 @@ import { createArchiveEnvelope } from '../../../core/match-detail/archive-envelo
 import type { ArchiveEnvelope } from '../../../core/match-detail/archive-envelope';
 import { positionAt, readPlayerPaths } from '../../../core/match-detail/player-paths';
 import { findTrackedPlayer, pruneForPlayer } from '../../../core/match-detail/pruning';
+import { readMatchReplay } from '../../../core/match-map/match-replay';
 import { testAccountId, testMatchId } from '../../../test/test-data';
 import {
   FIXTURE_EXPRESS_SHOT_ID,
@@ -1222,6 +1223,109 @@ describe('the damage and the items of a fixture match, read by the core', () => 
       // Every shop item the player had is a value: the damage they dealt while they owned it.
       for (const item of read.items.filter((entry) => entry.isShopItem)) {
         expect(values.get(itemOwnedDamageKey(item.itemId))).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
+});
+
+/** The objective ids of the current map (ids 2, 6 and 13 belong to the missing lane). */
+const MAP_OBJECTIVE_IDS = [0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 14, 15];
+
+/**
+ * The replay of a fixture match, read the way the app reads an archive.
+ *
+ * @param row - The history row of the match.
+ * @returns The replay, and the winning team of the detail.
+ */
+function replayOf(row: RawMatchHistoryRow) {
+  const payload = parseMatchMetadata(createMatchMetadataFixture(row, FIXTURE_ACCOUNT_ID));
+  const envelope = createArchiveEnvelope(payload, FIXTURE_ACCOUNT_ID, 0);
+  return { replay: readMatchReplay(envelope), winningTeam: payload.match_info.winning_team };
+}
+
+describe('the map replay data of createMatchMetadataFixture', () => {
+  const rows = PAIGE_ROWS.slice(0, 30);
+
+  it('gives objectives that read through the replay and agree with the winner', () => {
+    for (const row of rows) {
+      const { replay, winningTeam } = replayOf(row);
+
+      expect(replay.objectives.length).toBeGreaterThan(4);
+      for (const objective of replay.objectives) {
+        expect(MAP_OBJECTIVE_IDS).toContain(objective.teamObjectiveId);
+        expect([0, 1]).toContain(objective.team);
+      }
+      const coreOf = (team: number) =>
+        replay.objectives.find((entry) => entry.team === team && entry.teamObjectiveId === 0);
+      // The loser's core falls on the last second; the winner's core stands.
+      expect(coreOf(1 - Number(winningTeam))?.destroyedAtS).toBe(replay.durationS);
+      expect(coreOf(Number(winningTeam))?.destroyedAtS ?? null).toBeNull();
+      // Both teams lose something earlier, and something is left standing.
+      for (const team of [0, 1]) {
+        const fallen = replay.objectives.filter(
+          (entry) =>
+            entry.team === team && entry.destroyedAtS !== null && entry.teamObjectiveId !== 0,
+        );
+        expect(fallen.length).toBeGreaterThan(0);
+        for (const entry of fallen) {
+          expect(entry.destroyedAtS).toBeLessThan(replay.durationS);
+        }
+      }
+      expect(replay.objectives.some((entry) => entry.destroyedAtS === null)).toBe(true);
+    }
+  });
+
+  it('destroys the objectives in tiers: guardians, then walkers, then the base', () => {
+    for (const row of rows) {
+      const { replay } = replayOf(row);
+      const lastOf = (ids: readonly number[]) =>
+        Math.max(
+          0,
+          ...replay.objectives
+            .filter((entry) => ids.includes(entry.teamObjectiveId))
+            .map((entry) => entry.destroyedAtS ?? 0),
+        );
+      const firstOf = (ids: readonly number[]) =>
+        Math.min(
+          Infinity,
+          ...replay.objectives
+            .filter((entry) => ids.includes(entry.teamObjectiveId) && entry.destroyedAtS !== null)
+            .map((entry) => entry.destroyedAtS ?? Infinity),
+        );
+
+      expect(lastOf([1, 3, 4])).toBeLessThanOrEqual(firstOf([5, 7, 8]));
+      expect(lastOf([5, 7, 8])).toBeLessThanOrEqual(firstOf([9, 10, 11, 12, 14, 15]));
+    }
+  });
+
+  it('gives one to three mid boss kills inside the match, by a known team', () => {
+    for (const row of rows) {
+      const { replay } = replayOf(row);
+
+      expect(replay.midBossKills.length).toBeGreaterThanOrEqual(1);
+      expect(replay.midBossKills.length).toBeLessThanOrEqual(3);
+      for (const kill of replay.midBossKills) {
+        expect(kill.timeS).toBeGreaterThan(0);
+        expect(kill.timeS).toBeLessThan(replay.durationS);
+        expect([0, 1]).toContain(kill.teamKilled);
+        expect([0, 1]).toContain(kill.teamClaimed);
+      }
+    }
+  });
+
+  it('knows the respawn of every death, and the path stays dead for that whole wait', () => {
+    for (const row of rows) {
+      const { replay } = replayOf(row);
+
+      for (const track of replay.players) {
+        for (const death of track.deaths) {
+          expect(death.respawnS).not.toBeNull();
+          const respawnS = death.respawnS ?? 0;
+          const lastDeadS = Math.min(replay.durationS, respawnS);
+          for (let second = death.timeS + 1; second <= lastDeadS; second += 1) {
+            expect(track.positions[second]).toBeNull();
+          }
+        }
       }
     }
   });

@@ -20,6 +20,8 @@
  * the real API serves from its own host (the release Content Security Policy does not allow them,
  * and the parser leaves them out).
  *
+ * The map asset (`GET /v1/assets/map`) is exported as {@link FIXTURE_MAP_LAYOUT}.
+ *
  * The ids that the fixture matches (`match-metadata.fixture.ts`) buy, unlock and damage with are
  * exported below, so that a match and its catalogue always agree.
  *
@@ -477,3 +479,122 @@ export const FIXTURE_RANK_CATALOGUE: readonly RawCatalogueRank[] = RANK_NAMES.ma
     images: rankImages(tier),
   }),
 );
+
+/** Folder of the map pictures on the asset bucket. */
+const MAP_IMAGES = `${ASSET_IMAGE_ORIGIN}assets-api-res/images/maps`;
+
+/**
+ * The map asset of the fixtures, in the raw shape of deadlock-api's `GET /v1/assets/map` (only the
+ * fields the app reads).
+ *
+ * The radius, the minimap picture and the 16 objective positions are the real ones (public game
+ * data, 2026-11-10). The three zip lines keep their real origin and colour, but only about every
+ * tenth point of their paths is kept (plus the first and the last), so that the preview lanes follow
+ * the real ones while the fixture stays small; the three point arrays of a line have the same
+ * length, like the real ones.
+ */
+export const FIXTURE_MAP_LAYOUT = {
+  radius: 10_752,
+  images: { minimap: `${MAP_IMAGES}/minimap_midtown_mid.png` },
+  objective_positions: {
+    team0_core: { left_relative: 0.2905, top_relative: 0.92 },
+    team1_core: { left_relative: 0.4095, top_relative: 0.0 },
+    team0_titan: { left_relative: 0.3905, top_relative: 0.8236 },
+    team1_titan: { left_relative: 0.5095, top_relative: 0.0757 },
+    team0_tier2_1: { left_relative: 0.1583, top_relative: 0.6702 },
+    team0_tier2_3: { left_relative: 0.3901, top_relative: 0.6115 },
+    team0_tier2_4: { left_relative: 0.7117, top_relative: 0.6853 },
+    team1_tier2_1: { left_relative: 0.1981, top_relative: 0.2164 },
+    team1_tier2_3: { left_relative: 0.5099, top_relative: 0.2885 },
+    team1_tier2_4: { left_relative: 0.7497, top_relative: 0.2279 },
+    team0_tier1_1: { left_relative: 0.069, top_relative: 0.5363 },
+    team0_tier1_3: { left_relative: 0.45, top_relative: 0.5333 },
+    team0_tier1_4: { left_relative: 0.7774, top_relative: 0.5423 },
+    team1_tier1_1: { left_relative: 0.1226, top_relative: 0.3577 },
+    team1_tier1_3: { left_relative: 0.45, top_relative: 0.3667 },
+    team1_tier1_4: { left_relative: 0.828, top_relative: 0.3637 },
+  },
+  zipline_paths: [
+    {
+      origin: [-1280.0, -10774.0, 1472.0],
+      color: '#29b1cc',
+      P0_points: [
+        [0.0, 0.0, 0.0],
+        [96.0, 7326.0, -288.0],
+        [1152.0, 11510.0, -576.0],
+        [2560.0, 16694.0, 80.0],
+        [2560.0, 21558.0, 52.0],
+      ],
+      P1_points: [
+        [0.0, 0.0, 0.0],
+        [-52.874886, -133.65596, 35.249924],
+        [9.119808, -118.5575, -9.119808],
+        [0.0, -203.68408, -42.88086],
+        [0.0, -152.0, 32.0],
+      ],
+      P2_points: [
+        [16.0, 606.0, 26.0],
+        [45.7017, 115.52374, -30.467798],
+        [-12.343787, 160.46924, 12.343787],
+        [0.0, 304.53662, 64.11304],
+        [0.0, 0.0, 0.0],
+      ],
+    },
+    {
+      origin: [-1088.0, -10790.0, 1472.0],
+      color: '#59b247',
+      P0_points: [
+        [0.0, 0.0, 0.0],
+        [5840.0, 5686.0, -536.0],
+        [8535.75, 10402.5, -726.25],
+        [7856.766, 14502.0, -512.0],
+        [2864.0, 18278.0, 48.0],
+        [2422.0, 21590.0, 48.0],
+      ],
+      P1_points: [
+        [0.0, 0.0, 0.0],
+        [-225.2485, -3.1551905, 11.979028],
+        [-73.18491, -249.75029, 7.4269137],
+        [9.830356, -176.9464, 0.0],
+        [48.0, -320.0, -13.9696045],
+        [0.0, -204.0, 28.0],
+      ],
+      P2_points: [
+        [-4.0, 549.0, 14.0],
+        [126.06049, 1.7658046, -6.704072],
+        [39.989014, 136.46622, -4.0581446],
+        [-11.923948, 214.63107, 0.0],
+        [0.0, 260.72656, 14.169922],
+        [0.0, 0.0, 0.0],
+      ],
+    },
+    {
+      origin: [1218.0, 10784.0, 1524.0],
+      color: '#F1CC30',
+      P0_points: [
+        [0.0, 0.0, 0.0],
+        [-5469.2886, -5072.9316, -404.0],
+        [-8496.0, -9632.0, -756.0],
+        [-8130.0, -13984.0, -564.0],
+        [-3810.0, -17632.0, -4.0],
+        [-2690.0, -21574.0, -52.0],
+      ],
+      P1_points: [
+        [0.0, 0.0, 0.0],
+        [356.83005, 235.81018, 69.72136],
+        [44.69339, 254.70247, 6.6043205],
+        [-63.624508, 107.21908, -4.712927],
+        [-196.5932, 118.82005, -12.962189],
+        [-12.0, 721.0, -23.0],
+      ],
+      P2_points: [
+        [-16.0, -234.0, 88.0],
+        [-162.24757, -107.22088, -31.70171],
+        [-45.01767, -256.5505, -6.65224],
+        [89.71106, -151.17975, 6.645264],
+        [295.3736, -178.52249, 19.475182],
+        [0.0, 0.0, 0.0],
+      ],
+    },
+  ],
+};

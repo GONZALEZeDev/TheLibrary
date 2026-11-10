@@ -14,6 +14,7 @@ import type { AnalysisService } from './analysis.service';
 import type { HeroCatalogService } from './hero-catalog.service';
 import type { MatchBreakdownService } from './match-breakdown.service';
 import type { MatchDetailService } from './match-detail.service';
+import type { MatchReplayService } from './match-replay.service';
 import type { MatchTimelineService } from './match-timeline.service';
 import type { MatchesService } from './matches.service';
 import type { PaigePageService } from './paige-page.service';
@@ -50,6 +51,8 @@ export interface AppServices {
    * and the deaths with who was near, read from the archive.
    */
   readonly timeline: MatchTimelineService;
+  /** Replay of the Paige matches on the minimap: the players, the objectives and the mid boss. */
+  readonly replay: MatchReplayService;
   /** Review of the last Paige matches: the comparison with the tier above and with the matches before. */
   readonly review: ReviewService;
   /** Size of the archive folder: what the archives take, and the limit the player chose. */

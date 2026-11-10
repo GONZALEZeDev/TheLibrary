@@ -386,7 +386,7 @@ describe('DeadlockApiService.fetchHeroes', () => {
       id: PAIGE_HERO_ID,
       name: 'Paige',
       imageUrl: `${ASSET_IMAGE_ORIGIN}assets-api-res/images/heroes/bookworm_sm.webp`,
-      minimapImageUrl: null,
+      minimapImageUrl: `${ASSET_IMAGE_ORIGIN}assets-api-res/images/heroes/bookworm_mm.webp`,
       loadout: {
         weapon: 'citadel_weapon_bookworm_set2',
         melee: 'ability_melee_bookworm',

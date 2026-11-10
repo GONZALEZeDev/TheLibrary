@@ -32,6 +32,7 @@ import { LinkedAccountRepository } from './linked-account.repository';
 import { MatchBreakdownService } from './match-breakdown.service';
 import { MatchDetailRepository } from './match-detail.repository';
 import { MatchDetailService } from './match-detail.service';
+import { MatchReplayService } from './match-replay.service';
 import { MatchTimelineService } from './match-timeline.service';
 import { MatchesRepository } from './matches.repository';
 import { MatchesService } from './matches.service';
@@ -257,6 +258,16 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     logger,
     now,
   });
+  // Tells the replay of a match on the map from its archive (through the very `reader` above) and
+  // the map and hero catalogues of the very `assets` and `heroes` above.
+  const replay = new MatchReplayService({
+    accountSource: linkedAccounts,
+    details: detailRepository,
+    reader,
+    heroes,
+    assets,
+    logger,
+  });
   // Sums up the last matches against the tier above and the matches before them, from the stored
   // projections, the community data of the very `benchmarks` above and the catalogues. The item
   // statistics of the tier above are only read and downloaded by the review, so `itemBenchmarks` is
@@ -324,6 +335,7 @@ export function createAppServices(adapters: AppAdapters, options: AppServicesOpt
     analysis,
     breakdown,
     timeline,
+    replay,
     review,
     storage,
     // Given to the interface as it is: the detailed log and the log folder need no service. The

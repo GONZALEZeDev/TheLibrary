@@ -17,6 +17,7 @@ import {
   itemDetailRequest,
   itemsRequest,
   matchHistoryRequest,
+  mapRequest,
   ranksRequest,
   DEADLOCK_API_BASE_URL,
   type ApiLanguage,
@@ -40,7 +41,11 @@ import {
   createPlayerRankFixture,
   createUnrankedPlayerRankFixture,
 } from './fixtures/analytics.fixture';
-import { FIXTURE_ITEM_CATALOGUE, FIXTURE_RANK_CATALOGUE } from './fixtures/assets.fixture';
+import {
+  FIXTURE_ITEM_CATALOGUE,
+  FIXTURE_MAP_LAYOUT,
+  FIXTURE_RANK_CATALOGUE,
+} from './fixtures/assets.fixture';
 import { FIXTURE_HERO_CATALOGUE } from './fixtures/heroes.fixture';
 import {
   FIXTURE_PAIGE_ABILITIES,
@@ -481,6 +486,9 @@ export function createFixtureApi(options: FixtureApiOptions): FixtureHandler {
     }
     if (request.url === ranksRequest().url) {
       return jsonResponse(FIXTURE_RANK_CATALOGUE);
+    }
+    if (request.url === mapRequest().url) {
+      return jsonResponse(FIXTURE_MAP_LAYOUT);
     }
     // Only the API's own host is imitated: the path is read once the base URL is cut off.
     const path = request.url.startsWith(DEADLOCK_API_BASE_URL)

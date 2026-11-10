@@ -8,7 +8,7 @@
  * kept; the retired hero is disabled and cannot be picked, so he is left out. The synthetic matches
  * leave both out of the heroes they hand out.
  *
- * Every hero carries what the app reads besides its name: a small portrait on the asset bucket
+ * Every hero carries what the app reads besides its name: a small portrait and a minimap icon on the asset bucket
  * (`images`) and its loadout (`items`: the weapon, the melee attack and the four signature
  * abilities). Paige's loadout is the real one (hero asset 67, see `FIXTURE_PAIGE_ITEMS`); the other
  * heroes' class names are invented by {@link fixtureHeroItems}, so that no real ability is
@@ -32,10 +32,13 @@ export interface RawHeroItems {
   readonly signature4: string;
 }
 
-/** The portraits of a hero, by name (the part of `images` the app reads). */
+/** The portraits and minimap icons of a hero, by name (the part of `images` the app reads). */
 export interface RawHeroImages {
   readonly icon_image_small: string;
   readonly icon_image_small_webp: string;
+  /** The icon of the hero on the minimap (the `_mm` file). */
+  readonly minimap_image: string;
+  readonly minimap_image_webp: string;
 }
 
 /** A hero in the raw shape of the API (subset of the fields). */
@@ -121,6 +124,8 @@ function playable(
     images: {
       icon_image_small: `${HERO_IMAGES}/${slug}_sm.png`,
       icon_image_small_webp: `${HERO_IMAGES}/${slug}_sm.webp`,
+      minimap_image: `${HERO_IMAGES}/${slug}_mm.png`,
+      minimap_image_webp: `${HERO_IMAGES}/${slug}_mm.webp`,
     },
     items,
   };

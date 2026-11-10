@@ -406,6 +406,66 @@ function TimelineWithDeaths({ view }: TimelineWithDeathsProps) {
   );
 }
 
+describe('TimelineChart cursor', () => {
+  it('draws the cursor and reports a click time', async () => {
+    const picks: number[] = [];
+    await renderIn(
+      'en',
+      <TimelineChart
+        view={testView()}
+        selectedDeath={null}
+        onSelectDeath={noop}
+        cursorS={967}
+        onPickTime={(timeS) => picks.push(timeS)}
+      />,
+    );
+    const svg = chart('en');
+    // Half of the match, so half way between the start and the end of the time axis.
+    const line = svg.querySelector('[data-testid="chart-cursor"]');
+    const { left, right } = CHART_FRAME;
+    expect(Number(line?.getAttribute('x1'))).toBeCloseTo((left + right) / 2, 0);
+
+    // jsdom has no layout: give the picture a box of the same size as its frame.
+    svg.getBoundingClientRect = () => new DOMRect(100, 0, CHART_FRAME.width, CHART_FRAME.height);
+    const user = userEvent.setup();
+    await user.pointer({
+      keys: '[MouseLeft]',
+      target: svg,
+      coords: { clientX: 100 + left + 1, clientY: 50 },
+    });
+    await user.pointer({
+      keys: '[MouseLeft]',
+      target: svg,
+      coords: { clientX: 100 + (left + right) / 2, clientY: 50 },
+    });
+    // A click left of the axis is kept inside the match.
+    await user.pointer({ keys: '[MouseLeft]', target: svg, coords: { clientX: 100, clientY: 50 } });
+    expect(picks).toHaveLength(3);
+    expect(picks[0]).toBeCloseTo(3, 0);
+    expect(picks[1]).toBeCloseTo(967, 0);
+    expect(picks[2]).toBe(0);
+  });
+
+  it('keeps a cursor past the end of the match on the right edge', async () => {
+    await renderIn(
+      'en',
+      <TimelineChart
+        view={testView()}
+        selectedDeath={null}
+        onSelectDeath={noop}
+        cursorS={99_999}
+      />,
+    );
+    const line = chart('en').querySelector('[data-testid="chart-cursor"]');
+    expect(Number(line?.getAttribute('x1'))).toBe(CHART_FRAME.right);
+  });
+
+  it('draws no cursor when none is given', async () => {
+    await renderChart('en');
+    expect(chart('en').querySelector('[data-testid="chart-cursor"]')).toBeNull();
+  });
+});
+
 describe('TimelineChart with DeathList', () => {
   it.each(LANGUAGES)('selects a death from the list and from its marker (%s)', async (language) => {
     const strings = STRINGS[language];

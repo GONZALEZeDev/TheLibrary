@@ -16,7 +16,7 @@
  * @packageDocumentation
  */
 import type { TFunction } from 'i18next';
-import { useId, type ReactNode } from 'react';
+import { useId, type MouseEvent, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TimelineTabView } from '../../../services/match-timeline-view';
 import { Panel } from '../../components/Panel';
@@ -50,6 +50,17 @@ export interface TimelineChartProps {
    * @param index - The index of the death in `view.deaths`, or `null` for none.
    */
   readonly onSelectDeath: (index: number | null) => void;
+  /**
+   * The moment of the shared replay cursor, in seconds since the start of the match: a vertical
+   * line is drawn there. `null` or absent draws no line.
+   */
+  readonly cursorS?: number | null;
+  /**
+   * Pick a moment: the plot was clicked. Absent, the plot is not clickable.
+   *
+   * @param timeS - The moment under the pointer, in whole seconds, kept inside the match.
+   */
+  readonly onPickTime?: (timeS: number) => void;
 }
 
 /** The kinds of marker of the chart, which the legend names as well. */
@@ -267,7 +278,13 @@ function renderLegend(view: Timeline, t: TFunction) {
  * @returns The section of the chart: its title, the picture, the legend and, when the kills are not
  *   known, the sentence that says so.
  */
-export function TimelineChart({ view, selectedDeath, onSelectDeath }: TimelineChartProps) {
+export function TimelineChart({
+  view,
+  selectedDeath,
+  onSelectDeath,
+  cursorS = null,
+  onPickTime,
+}: TimelineChartProps) {
   const { t } = useTranslation();
   const titleId = useId();
   const { you, opponents } = view.souls;
@@ -284,6 +301,27 @@ export function TimelineChart({ view, selectedDeath, onSelectDeath }: TimelineCh
     detail: victim.name ?? t('timeline.deaths.unknownHero'),
   }));
 
+  // The cursor stays inside the match: the scale keeps a time outside it at its nearer end.
+  const cursorX =
+    cursorS === null ? null : scales.x(Math.min(Math.max(cursorS, 0), view.durationS));
+
+  /**
+   * Turn a click on the picture into the moment it points at, through the scale of the chart.
+   *
+   * @param event - The click on the picture.
+   */
+  const pickTime = (event: MouseEvent<SVGSVGElement>) => {
+    const box = event.currentTarget.getBoundingClientRect();
+    if (onPickTime === undefined || box.width === 0) return;
+    // The picture is scaled to its box: bring the click back into the units of the frame.
+    const frameX = ((event.clientX - box.left) / box.width) * width;
+    // The scale only goes from a time to a place, so invert it between the two ends of the match.
+    const startX = scales.x(0);
+    const endX = scales.x(view.durationS);
+    const ratio = Math.min(1, Math.max(0, (frameX - startX) / (endX - startX)));
+    onPickTime(Math.round(ratio * view.durationS));
+  };
+
   return (
     <section aria-labelledby={titleId} className="space-y-2">
       <h2 id={titleId} className="text-base font-semibold">
@@ -295,6 +333,8 @@ export function TimelineChart({ view, selectedDeath, onSelectDeath }: TimelineCh
           aria-label={title}
           viewBox={`0 0 ${String(width)} ${String(height)}`}
           width="100%"
+          className={onPickTime === undefined ? undefined : 'cursor-pointer'}
+          onClick={pickTime}
         >
           {renderPhaseBands(view.phases, scales, t)}
           {/* No souls: the bottom of the lines. */}
@@ -319,6 +359,18 @@ export function TimelineChart({ view, selectedDeath, onSelectDeath }: TimelineCh
           {renderMarks('purchase', purchases, scales, t)}
           {kills !== undefined && renderMarks('kill', kills, scales, t)}
           {renderDeaths(view.deaths, selectedDeath, onSelectDeath, scales, t)}
+          {/* The shared replay cursor, over everything and out of reach of the pointer. */}
+          {cursorX !== null && (
+            <line
+              data-testid="chart-cursor"
+              x1={cursorX}
+              x2={cursorX}
+              y1={CHART_FRAME.soulsTop}
+              y2={CHART_FRAME.bandBottom}
+              className="pointer-events-none stroke-fg"
+              strokeWidth={1.5}
+            />
+          )}
           {/* The time axis: the start and the end of the match. */}
           <text x={left} y={axisY} fontSize={CHART_TEXT_SIZE} className="fill-fg-muted">
             {formatGameTime(0)}

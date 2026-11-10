@@ -15,6 +15,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { MatchId } from '../../../core/domain/match';
 import { AppError } from '../../../core/errors/app-error';
 import type { Language } from '../../../core/settings/language';
+import type { ReplayView } from '../../../services/match-replay-view';
 import type { TimelineDeath, TimelineTabView } from '../../../services/match-timeline-view';
 import { createTestQueryClient, createTestServices } from '../../../test/create-test-services';
 import {
@@ -28,13 +29,17 @@ import {
 import { testMatchId } from '../../../test/test-data';
 import { AppProviders } from '../../app/AppProviders';
 import { createI18n } from '../../i18n/i18n';
+import { CHART_FRAME } from './timeline-chart-geometry';
 import { TimelineTab } from './TimelineTab';
 
 /** The match of the tests that render the tab on its own. */
 const MATCH_ID = testMatchId(100_000_001);
 
-/** The name of the button of a death of the list, in either language: it starts with the time. */
-const DEATH_ROW = /\d+:\d{2}/;
+/** The list of the deaths, a region named by its title in either language (the bar has buttons too). */
+const DEATH_LIST = { name: /^(Your deaths|Tes morts)/ };
+
+/** The rows of the list of the deaths: the buttons of its region. */
+const deathButtons = () => within(screen.getByRole('region', DEATH_LIST)).getAllByRole('button');
 
 /** The view of a timeline. */
 type Timeline = Extract<TimelineTabView, { kind: 'timeline' }>;
@@ -109,18 +114,51 @@ function timelineView(): Timeline {
   };
 }
 
+/** A replay of the match of {@link timelineView}: a map and one player, still at the middle of it. */
+function replayView(): ReplayView {
+  return {
+    kind: 'replay',
+    durationS: 1_934,
+    coverage: 'all',
+    map: {
+      imageUrl: 'https://assets-bucket.deadlock-api.com/map.png',
+      lanes: [],
+      midBoss: { left: 0.5, top: 0.5 },
+    },
+    players: [
+      {
+        slot: 1,
+        side: 'ally',
+        isTracked: true,
+        heroId: 1,
+        heroName: 'Paige',
+        iconUrl: null,
+        hasPath: true,
+        positions: Array.from({ length: 1_935 }, () => ({ left: 0.5, top: 0.5 })),
+        deaths: [],
+      },
+    ],
+    objectives: [],
+    midBossKills: [],
+    midBossReturnsS: [],
+  };
+}
+
 /**
  * Render the tab for a match whose timeline view is the one given, and wait until it has been read.
  *
  * @param view - The view the service gives, or the error it fails with.
  * @param language - The language of the interface; English by default.
+ * @param replay - The replay the service gives; none (not archived) by default.
  * @returns The root of the render.
  */
 async function renderTimelineTab(
   view: TimelineTabView | AppError,
   language: Language = 'en',
+  replay: ReplayView = { kind: 'not_archived' },
 ): Promise<HTMLElement> {
   const { services } = createTestServices();
+  vi.spyOn(services.replay, 'getReplay').mockResolvedValue(replay);
   const read = vi.spyOn(services.timeline, 'getTimelineTab');
   if (view instanceof AppError) {
     read.mockRejectedValue(view);
@@ -212,6 +250,101 @@ describe('TimelineTab', () => {
   });
 });
 
+describe('TimelineTab replay', () => {
+  /** The slider of the playback bar, once the replay has been read. */
+  const slider = () => screen.findByRole('slider', { name: 'Time in the match' });
+
+  it('picking a death moves the cursor 5 s before it', async () => {
+    const user = userEvent.setup();
+    await renderTimelineTab(timelineView(), 'en', replayView());
+    expect(await slider()).toHaveValue('0');
+
+    const [first, second] = deathButtons();
+    if (first === undefined || second === undefined) {
+      throw new Error('The list has a row per death');
+    }
+    // The first death is at 341 s, the second at 482 s.
+    await user.click(first);
+    expect(await slider()).toHaveValue('336');
+    await user.click(second);
+    expect(await slider()).toHaveValue('477');
+  });
+
+  it('hovering a death marker on the chart highlights its row and does not move the cursor', async () => {
+    const user = userEvent.setup();
+    await renderTimelineTab(timelineView(), 'en', replayView());
+    expect(await slider()).toHaveValue('0');
+    const chart = screen.getByRole('img', { name: STRINGS.en.chartTitle });
+    const marker = [...chart.querySelectorAll('[data-selected]')].find(
+      (node) => node.querySelector('title')?.textContent === 'Avoidable death · 5:41 · Haze',
+    );
+    if (marker === undefined) throw new Error('The chart has a marker for the first death');
+
+    await user.hover(marker);
+    const [first] = deathButtons();
+    expect(first).toHaveAttribute('aria-pressed', 'true');
+    expect(await slider()).toHaveValue('0');
+  });
+
+  it('letting a death go does not move the cursor', async () => {
+    const user = userEvent.setup();
+    await renderTimelineTab(timelineView(), 'en', replayView());
+    await slider();
+    const [first] = deathButtons();
+    if (first === undefined) throw new Error('The list has a row per death');
+    await user.click(first);
+    expect(await slider()).toHaveValue('336');
+
+    // The second click on the same row lets the death go: the cursor stays where it is.
+    await user.click(first);
+    expect(first).toHaveAttribute('aria-pressed', 'false');
+    expect(await slider()).toHaveValue('336');
+  });
+
+  it('clicking the chart seeks the map', async () => {
+    const user = userEvent.setup();
+    await renderTimelineTab(timelineView(), 'en', replayView());
+    await slider();
+    const chart = screen.getByRole('img', { name: STRINGS.en.chartTitle });
+    // jsdom has no layout: give the picture a box of the same size as its frame.
+    chart.getBoundingClientRect = () => new DOMRect(0, 0, CHART_FRAME.width, CHART_FRAME.height);
+    const { left, right } = CHART_FRAME;
+    await user.pointer({
+      keys: '[MouseLeft]',
+      target: chart,
+      coords: { clientX: (left + right) / 2, clientY: 50 },
+    });
+
+    // Half of the match of 1934 s.
+    await waitFor(() => {
+      expect(Number(screen.getByRole<HTMLInputElement>('slider').value)).toBeCloseTo(967, -1);
+    });
+  });
+
+  it('moves the cursor with the arrow keys only when the replay section is focused', async () => {
+    const user = userEvent.setup();
+    await renderTimelineTab(timelineView(), 'en', replayView());
+    expect(await slider()).toHaveValue('0');
+
+    await user.keyboard('{ArrowRight}');
+    expect(await slider()).toHaveValue('0');
+
+    screen.getByRole('region', { name: 'Match replay' }).focus();
+    await user.keyboard('{ArrowRight}{ArrowRight}');
+    expect(await slider()).toHaveValue('2');
+    await user.keyboard('{Shift>}{ArrowRight}{/Shift}');
+    expect(await slider()).toHaveValue('12');
+  });
+
+  it('shows no replay for a match that is not archived, and keeps the death list', async () => {
+    await renderTimelineTab(timelineView());
+
+    expect(screen.queryByRole('region', { name: 'Match replay' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('slider')).not.toBeInTheDocument();
+    expect(deathButtons()).toHaveLength(DEATHS.length);
+  });
+});
+
 describe('the timeline tab in the match page', () => {
   it('opens the timeline tab from the address', async () => {
     const testServices = await synchronised();
@@ -284,7 +417,10 @@ describe('the timeline tab in the match page', () => {
         expect(router.state.location.pathname).toBe(`/matches/${String(matchId)}`);
       });
     };
-    const deathRows = async () => screen.findAllByRole('button', { name: DEATH_ROW });
+    const deathRows = async () => {
+      await screen.findByRole('region', DEATH_LIST);
+      return deathButtons();
+    };
     const selectedMarkers = async () =>
       (await screen.findByRole('img', { name: STRINGS.en.chartTitle })).querySelectorAll(
         '[data-selected="true"]',

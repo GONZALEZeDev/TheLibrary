@@ -1,0 +1,253 @@
+/**
+ * The pure model of the map replay: everything the map, the playback bar and the "At 14:05" panel
+ * compute from a {@link ReplayView} and the shared cursor, with no React in it.
+ *
+ * Times are in seconds since the start of the match, positions are relative to the minimap picture
+ * (0 to 1 on both axes), and the viewport of the map is told in the same relative units.
+ *
+ * @packageDocumentation
+ */
+import { scheduleOccurrences } from '../../../../core/match-map/game-schedule';
+import type { ScheduleOccurrence } from '../../../../core/match-map/game-schedule';
+import type { RelativePoint } from '../../../../core/match-map/map-geometry';
+import { isDeadAt } from '../../../../core/match-map/match-replay';
+import type {
+  ReplayView,
+  ReplayViewObjective,
+  ReplayViewPlayer,
+} from '../../../../services/match-replay-view';
+
+/** A replay view that holds a replay (the other kinds say why there is none). */
+export type ReplayData = ReplayView & { kind: 'replay' };
+
+/** A picked death moves the cursor this many seconds before it, to see what led to it. */
+export const DEATH_LEAD_S = 5;
+
+/** The lowest and highest zoom of the map; 1 shows the whole picture. */
+const MIN_SCALE = 1;
+const MAX_SCALE = 8;
+
+/**
+ * Where a player is at a moment, which may fall between two seconds while the replay plays.
+ *
+ * @param positions - The position at each second (the index is the second); `null` while dead or unknown.
+ * @param timeS - The moment, in seconds; fractional while playing.
+ * @returns The sample at an integer second; the linear interpolation between the two neighbouring
+ *   seconds otherwise; `null` when the player has no position at either of them or the moment is
+ *   outside the replay.
+ */
+export function positionBetween(
+  positions: readonly (RelativePoint | null)[],
+  timeS: number,
+): RelativePoint | null {
+  const before = positions[Math.floor(timeS)] ?? null;
+  if (Number.isInteger(timeS)) return before;
+  const after = positions[Math.ceil(timeS)] ?? null;
+  // A death (or a gap) on either side means there is nothing to draw in between.
+  if (before === null || after === null) return null;
+  const ratio = timeS - Math.floor(timeS);
+  return {
+    left: before.left + (after.left - before.left) * ratio,
+    top: before.top + (after.top - before.top) * ratio,
+  };
+}
+
+/**
+ * The trail a player leaves behind: their last positions, one per second.
+ *
+ * @param positions - The position at each second (the index is the second).
+ * @param timeS - The moment; only the seconds up to `floor(timeS)` count.
+ * @param seconds - How many seconds the trail covers at most.
+ * @returns The points in time order. The trail is cut at the last `null` of that stretch, so it
+ *   never links a death to the place the player respawned at.
+ */
+export function trailOf(
+  positions: readonly (RelativePoint | null)[],
+  timeS: number,
+  seconds: number,
+): readonly RelativePoint[] {
+  const last = Math.floor(timeS);
+  const first = Math.max(0, last - seconds + 1);
+  const trail: RelativePoint[] = [];
+  for (let second = first; second <= last; second += 1) {
+    const point = positions[second] ?? null;
+    if (point === null) {
+      // Whatever came before a hole does not belong to the current trail.
+      trail.length = 0;
+    } else {
+      trail.push(point);
+    }
+  }
+  return trail;
+}
+
+/**
+ * The visible window of the map, in relative map units: `scale` 1 shows the whole picture, and the
+ * window is `1 / scale` wide and high, its top-left corner at (`left`, `top`).
+ */
+export interface MapViewport {
+  /** The zoom, from 1 (whole map) to 8. */
+  readonly scale: number;
+  /** The left edge of the window, in map units. */
+  readonly left: number;
+  /** The top edge of the window, in map units. */
+  readonly top: number;
+}
+
+/** The viewport that shows the whole map. */
+export const FULL_MAP: MapViewport = { scale: 1, left: 0, top: 0 };
+
+/**
+ * Keep a window corner so that the window (of size `1 / scale`) stays inside the map.
+ *
+ * @param corner - The left or top edge of the window, in map units.
+ * @param scale - The zoom.
+ * @returns The edge, kept inside the map.
+ */
+function clampCorner(corner: number, scale: number): number {
+  return Math.min(Math.max(corner, 0), 1 - 1 / scale);
+}
+
+/**
+ * Zoom the map around a point, so that the point stays under the same place of the screen.
+ *
+ * @param view - The current viewport.
+ * @param at - The map point under the pointer.
+ * @param factor - How much to multiply the zoom by (above 1 zooms in).
+ * @returns The new viewport: the scale is clamped to [1, 8] and the window stays inside the map.
+ */
+export function zoomAt(view: MapViewport, at: RelativePoint, factor: number): MapViewport {
+  const scale = Math.min(Math.max(view.scale * factor, MIN_SCALE), MAX_SCALE);
+  // Where the point sits in the window (0 to 1) must not change with the zoom.
+  const fractionX = (at.left - view.left) * view.scale;
+  const fractionY = (at.top - view.top) * view.scale;
+  return {
+    scale,
+    left: clampCorner(at.left - fractionX / scale, scale),
+    top: clampCorner(at.top - fractionY / scale, scale),
+  };
+}
+
+/**
+ * Move the window of the map.
+ *
+ * @param view - The current viewport.
+ * @param dLeft - How far to move the window to the right, in map units.
+ * @param dTop - How far to move the window down, in map units.
+ * @returns The new viewport, kept inside the map.
+ */
+export function panBy(view: MapViewport, dLeft: number, dTop: number): MapViewport {
+  return {
+    scale: view.scale,
+    left: clampCorner(view.left + dLeft, view.scale),
+    top: clampCorner(view.top + dTop, view.scale),
+  };
+}
+
+/**
+ * The moments the "previous / next event" buttons jump between: the objectives that fell, the mid
+ * boss kills, the deaths of the tracked player and their kills. Other players' deaths are left out
+ * on purpose, they would make the steps too many to be useful.
+ *
+ * @param view - The replay.
+ * @param trackedKills - The seconds of the kills of the tracked player.
+ * @returns The times, sorted, without duplicates, within [0, `durationS`].
+ */
+export function stepEvents(view: ReplayData, trackedKills: readonly number[]): readonly number[] {
+  const times: number[] = [...trackedKills];
+  for (const objective of view.objectives) {
+    if (objective.destroyedAtS !== null) times.push(objective.destroyedAtS);
+  }
+  for (const kill of view.midBossKills) times.push(kill.timeS);
+  for (const player of view.players) {
+    if (player.isTracked) for (const death of player.deaths) times.push(death.timeS);
+  }
+  return [...new Set(times.filter((timeS) => timeS >= 0 && timeS <= view.durationS))].toSorted(
+    (first, second) => first - second,
+  );
+}
+
+/**
+ * The last event strictly before a moment.
+ *
+ * @param times - The event times, sorted.
+ * @param currentS - The moment.
+ * @returns The time, or `null` when there is none.
+ */
+export function previousEvent(times: readonly number[], currentS: number): number | null {
+  return times.findLast((timeS) => timeS < currentS) ?? null;
+}
+
+/**
+ * The first event strictly after a moment.
+ *
+ * @param times - The event times, sorted.
+ * @param currentS - The moment.
+ * @returns The time, or `null` when there is none.
+ */
+export function nextEvent(times: readonly number[], currentS: number): number | null {
+  return times.find((timeS) => timeS > currentS) ?? null;
+}
+
+/** What the "At 14:05" panel shows for one moment. */
+export interface InstantSummary {
+  /** The objectives fallen by then (`destroyedAtS` at or before the moment), the latest first. */
+  readonly destroyed: readonly ReplayViewObjective[];
+  /**
+   * The players dead at the moment, with or without a path: the tracked player first, then their
+   * allies, then the enemies. `respawnInS` is the wait left in whole seconds, `null` when unknown.
+   */
+  readonly dead: readonly {
+    readonly player: ReplayViewPlayer;
+    readonly respawnInS: number | null;
+  }[];
+  /** The next scheduled event after the moment; `null` when none is left. */
+  readonly next: ScheduleOccurrence | null;
+}
+
+/**
+ * Sort key of a player in the panel: the tracked player, then allies, then enemies.
+ *
+ * @param player - The player.
+ * @returns 0 for the tracked player, 1 for an ally, 2 for an enemy.
+ */
+function sideRank(player: ReplayViewPlayer): number {
+  if (player.isTracked) return 0;
+  return player.side === 'ally' ? 1 : 2;
+}
+
+/**
+ * Sum up what has happened at a moment of the match.
+ *
+ * @param view - The replay.
+ * @param timeS - The moment, in seconds; may be fractional.
+ * @returns The fallen objectives, the dead players and the next scheduled event.
+ */
+export function instantAt(view: ReplayData, timeS: number): InstantSummary {
+  const destroyed = view.objectives
+    .filter(
+      (objective): objective is ReplayViewObjective & { destroyedAtS: number } =>
+        objective.destroyedAtS !== null && objective.destroyedAtS <= timeS,
+    )
+    .toSorted((first, second) => second.destroyedAtS - first.destroyedAtS);
+
+  const dead = view.players
+    .filter((player) => isDeadAt(player.deaths, timeS))
+    .toSorted((first, second) => sideRank(first) - sideRank(second) || first.slot - second.slot)
+    .map((player) => {
+      // The death that covers the moment tells when the player is back.
+      const death = player.deaths.findLast((entry) => entry.timeS <= timeS);
+      return {
+        player,
+        respawnInS:
+          death?.respawnS === null || death === undefined
+            ? null
+            : Math.ceil(death.respawnS - timeS),
+      };
+    });
+
+  // A fractional moment still sits inside its second: the next event is after that second.
+  const second = Math.floor(timeS);
+  const next = scheduleOccurrences(view.durationS).find((entry) => entry.timeS > second) ?? null;
+  return { destroyed, dead, next };
+}

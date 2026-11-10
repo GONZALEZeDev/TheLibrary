@@ -229,6 +229,77 @@
       "unreadable": "This match cannot be read."
     }
   },
+  "replay": {
+    "title": "Match replay",
+    "map": {
+      "title": "Match map",
+      "resetZoom": "Reset zoom",
+      "trailsOn": "Trails: on",
+      "trailsOff": "Trails: off"
+    },
+    "side": {
+      "ally": "ally",
+      "enemy": "enemy"
+    },
+    "team": {
+      "ally": "your team",
+      "enemy": "the enemy team"
+    },
+    "notice": {
+      "mapUnavailable": "The map is not available right now, but the rest of the replay is.",
+      "trackedOnly": "Only your path is in this match's archive, so only you are drawn on the map.",
+      "noPositions": "The players' paths are not in this match's archive, so the map cannot be drawn."
+    },
+    "panel": {
+      "title": "At {{time}}",
+      "destroyed": "Objectives destroyed",
+      "noneDestroyed": "No objective destroyed yet.",
+      "dead": "Dead players",
+      "noneDead": "Nobody is dead.",
+      "respawnsIn": "respawns in {{s}} s",
+      "respawnUnknown": "respawn time unknown",
+      "next": "Next event",
+      "noNext": "No more scheduled events."
+    },
+    "controls": {
+      "play": "Play",
+      "pause": "Pause",
+      "previousEvent": "Previous event",
+      "nextEvent": "Next event",
+      "speed": "Speed ×{{n}}",
+      "slider": "Time in the match",
+      "time": "{{current}} / {{total}}"
+    },
+    "rows": {
+      "inMatch": "In this match",
+      "schedule": "Game schedule"
+    },
+    "schedule": {
+      "mid_boss": "Mid Boss",
+      "small_camps": "Small camps (T1)",
+      "medium_camps": "Medium camps (T2)",
+      "large_camps": "Large camps (T3)",
+      "crates": "Crates and breakables",
+      "bridge_powerups": "Bridge power-ups",
+      "sinners_sacrifice": "Sinner's Sacrifice",
+      "soul_urn": "Soul Urn",
+      "unstable_rift": "Unstable Rift",
+      "troopers": "Trooper waves every {{s}} s",
+      "respawn": "respawn {{time}}"
+    },
+    "midBoss": {
+      "kill": "Mid Boss killed by {{killer}}, claimed by {{claimer}}",
+      "returns": "Mid Boss is back"
+    },
+    "objective": {
+      "core": "Patron",
+      "guardian": "Guardian",
+      "walker": "Walker",
+      "titan": "Titan",
+      "shrine": "Shrine",
+      "base_guardian": "Base Guardian"
+    }
+  },
   "matchType": {
     "normal": "Normal",
     "ranked": "Ranked",

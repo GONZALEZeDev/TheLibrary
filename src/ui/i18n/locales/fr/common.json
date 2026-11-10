@@ -229,6 +229,77 @@
       "unreadable": "Impossible de lire cette partie."
     }
   },
+  "replay": {
+    "title": "Replay du match",
+    "map": {
+      "title": "Carte du match",
+      "resetZoom": "Réinitialiser le zoom",
+      "trailsOn": "Traînées : oui",
+      "trailsOff": "Traînées : non"
+    },
+    "side": {
+      "ally": "allié",
+      "enemy": "ennemi"
+    },
+    "team": {
+      "ally": "ton équipe",
+      "enemy": "l'équipe ennemie"
+    },
+    "notice": {
+      "mapUnavailable": "La carte n'est pas disponible pour le moment, mais le reste du replay l'est.",
+      "trackedOnly": "Seul ton trajet est dans l'archive de cette partie : tu es le seul dessiné sur la carte.",
+      "noPositions": "Les trajets des joueurs ne sont pas dans l'archive de cette partie : la carte ne peut pas être dessinée."
+    },
+    "panel": {
+      "title": "À {{time}}",
+      "destroyed": "Objectifs détruits",
+      "noneDestroyed": "Aucun objectif n'est encore détruit.",
+      "dead": "Joueurs morts",
+      "noneDead": "Personne n'est mort.",
+      "respawnsIn": "réapparaît dans {{s}} s",
+      "respawnUnknown": "délai de réapparition inconnu",
+      "next": "Prochain événement",
+      "noNext": "Plus aucun événement prévu."
+    },
+    "controls": {
+      "play": "Lecture",
+      "pause": "Pause",
+      "previousEvent": "Événement précédent",
+      "nextEvent": "Événement suivant",
+      "speed": "Vitesse ×{{n}}",
+      "slider": "Moment de la partie",
+      "time": "{{current}} / {{total}}"
+    },
+    "rows": {
+      "inMatch": "Dans cette partie",
+      "schedule": "Calendrier du jeu"
+    },
+    "schedule": {
+      "mid_boss": "Mid Boss",
+      "small_camps": "Petits camps (T1)",
+      "medium_camps": "Camps moyens (T2)",
+      "large_camps": "Grands camps (T3)",
+      "crates": "Caisses et objets destructibles",
+      "bridge_powerups": "Bonus des ponts",
+      "sinners_sacrifice": "Sinner's Sacrifice",
+      "soul_urn": "Soul Urn",
+      "unstable_rift": "Unstable Rift",
+      "troopers": "Vagues de troupes toutes les {{s}} s",
+      "respawn": "réapparition {{time}}"
+    },
+    "midBoss": {
+      "kill": "Mid Boss tué par {{killer}}, récompense prise par {{claimer}}",
+      "returns": "Le Mid Boss est de retour"
+    },
+    "objective": {
+      "core": "Patron",
+      "guardian": "Guardian",
+      "walker": "Walker",
+      "titan": "Titan",
+      "shrine": "Shrine",
+      "base_guardian": "Base Guardian"
+    }
+  },
   "matchType": {
     "normal": "Normale",
     "ranked": "Classée",

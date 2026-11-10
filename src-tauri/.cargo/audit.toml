@@ -10,4 +10,13 @@ ignore = [
   # push) and the app performs no RSA operation. Reviewed on 2026-10-14.
   # Remove this entry once `rsa` leaves Cargo.lock or a fixed release exists.
   "RUSTSEC-2023-0071",
+  # RUSTSEC-2026-0459, `libsqlite3-sys` (CVE-2026-119375: SQLite before 3.54.0 can return
+  # uninitialised page-cache memory when it opens a database with a `-wal` file of another page
+  # size). The fix is `libsqlite3-sys` 0.39, but the SQL plugin depends on `sqlx` 0.8, which accepts
+  # 0.30 only (`sqlx` 0.9 stops below 0.38): no release the app can use bundles the fixed SQLite.
+  # The attack is local: it needs a crafted database and `-wal` pair. The app opens only its own
+  # database, in its folder of the player's AppData; whoever can write files there already controls
+  # the player's Windows session. Reviewed on 2026-11-10.
+  # Remove this entry once the SQL plugin moves to a `sqlx` that accepts `libsqlite3-sys` 0.39.
+  "RUSTSEC-2026-0459",
 ]

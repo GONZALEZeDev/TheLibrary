@@ -39,7 +39,7 @@ export type ScheduleEntry =
       readonly type: 'once';
       /** When the event first appears. */
       readonly atS: number;
-      /** How long it takes to come back after being taken; `null` when it never respawns by itself. */
+      /** How long it takes to come back after being taken; `null` when it never comes back. */
       readonly respawnS: number | null;
     }
   | {
@@ -127,10 +127,10 @@ export function scheduleOccurrences(durationS: number): readonly ScheduleOccurre
   return expanded.map((item) => item.occurrence);
 }
 
-/** How long the mid boss takes to return after its first, second and later kills, in seconds. */
-const MID_BOSS_RETURN_DELAYS_S: readonly number[] = [420, 360, 300];
+/** How long the mid boss takes to return after its first and second kills, in seconds. */
+const MID_BOSS_RETURN_DELAYS_S: readonly number[] = [420, 360];
 
-/** The delay that applies from the third kill on. */
+/** The delay that applies from the third kill on, in seconds. */
 const MID_BOSS_LATER_RETURN_DELAY_S = 300;
 
 /**

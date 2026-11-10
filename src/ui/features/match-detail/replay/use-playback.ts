@@ -19,7 +19,7 @@ export interface Playback {
   readonly playing: boolean;
   /** The speed of the clock. */
   readonly speed: PlaybackSpeed;
-  /** Jump to a moment: rounded, clamped to the match, and the clock pauses. */
+  /** Jump to a moment: floored to the whole second, clamped to the match, and the clock pauses. */
   readonly seek: (timeS: number) => void;
   /** Move by a number of seconds from the current whole second, and pause. */
   readonly step: (deltaS: number) => void;

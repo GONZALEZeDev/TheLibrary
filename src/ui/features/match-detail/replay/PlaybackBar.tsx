@@ -1,7 +1,7 @@
 /**
- * The playback bar of the map replay: the play / step / speed controls, the time slider, and the two
- * rows under the slider that put the match on the same time scale (what happened in this match, and
- * the fixed game schedule). Every marker of the rows seeks the replay to its moment.
+ * The playback bar of the map replay: the play / step / speed controls, the time slider, and the
+ * two rows under the slider that put the match on the same time scale (what happened in this
+ * match, and the fixed game schedule). Every marker of the rows seeks the replay to its moment.
  *
  * The rows are built once per replay and never re-render while it plays: only the cursor line that
  * runs across them moves with the clock.
@@ -85,6 +85,9 @@ function Marker({ timeS, durationS, title, line, className, shape, onSeek }: Mar
   return (
     <button
       type="button"
+      // Markers are mouse targets: the keyboard uses the event buttons, the slider and the section
+      // keys.
+      tabIndex={-1}
       title={title}
       aria-label={title}
       data-shape={shape}
@@ -132,6 +135,9 @@ function Span({ fromS, toS, durationS, title, line, className, onSeek }: SpanPro
   return (
     <button
       type="button"
+      // Markers are mouse targets: the keyboard uses the event buttons, the slider and the section
+      // keys.
+      tabIndex={-1}
       title={title}
       aria-label={title}
       style={{ left: percentOf(fromS, durationS), width: `${String(widthRatio * 100)}%` }}
@@ -211,7 +217,8 @@ const MatchRow = memo(function MatchRow({ view, onSeek }: RowProps) {
           onSeek={onSeek}
         />
       ))}
-      {/* Bottom line: every death of every player, a round tick for an ally, a diamond for an enemy. */}
+      {/* Bottom line: every death of every player (a round tick for an ally, a diamond for an
+          enemy). */}
       {view.players.flatMap((player) =>
         player.deaths.map((death) => (
           <Marker
@@ -256,7 +263,8 @@ function scheduleTitle(occurrence: ScheduleOccurrence, t: TFunction): string {
 
 /**
  * The row "Game schedule": the fixed events of a match as markers, the rift as a span and the
- * trooper waves as one span per stretch. Memoised on the replay, so it does not draw at every frame.
+ * trooper waves as one span per stretch. Memoised on the replay, so it does not draw at every
+ * frame.
  */
 const ScheduleRow = memo(function ScheduleRow({ view, onSeek }: RowProps) {
   const { t } = useTranslation();
@@ -385,7 +393,7 @@ export function PlaybackBar({ view, playback, stepTimes }: PlaybackBarProps) {
         }}
       />
 
-      {/* The two rows share the scale of the slider; the cursor line is the only thing that moves. */}
+      {/* The two rows share the scale of the slider; only the cursor line moves. */}
       <div className="relative space-y-1">
         <div>
           <p className="text-xs text-fg-muted">{t('replay.rows.inMatch')}</p>

@@ -29,7 +29,10 @@ function player(overrides: Partial<ReplayViewPlayer>): ReplayViewPlayer {
   };
 }
 
-/** A replay of 20 minutes: a walker falls at 100 s, Haze dies at 800 s, Abrams (no path) at 790 s. */
+/**
+ * A replay of 20 minutes: a walker falls at 100 s, Haze dies at 800 s and Abrams (no path) at
+ * 790 s.
+ */
 function testView(): ReplayData {
   return {
     kind: 'replay',
@@ -73,14 +76,15 @@ describe('InstantPanel', () => {
   it('the panel lists the dead with their respawn countdown', async () => {
     await renderPanel(805);
     expect(screen.getByRole('heading', { name: 'At 13:25' })).toBeInTheDocument();
-    expect(screen.getByText('Haze')).toBeInTheDocument();
+    // The hero is told with its side, as the objective rows are.
+    expect(screen.getByText('Haze · ally')).toBeInTheDocument();
     expect(screen.getByText('respawns in 35 s')).toBeInTheDocument();
     expect(screen.getByText('Walker · enemy')).toBeInTheDocument();
   });
 
   it('lists deaths of players without a path from death_details', async () => {
     await renderPanel(805);
-    expect(screen.getByText('Abrams')).toBeInTheDocument();
+    expect(screen.getByText('Abrams · enemy')).toBeInTheDocument();
     expect(screen.getByText('respawns in 25 s')).toBeInTheDocument();
   });
 

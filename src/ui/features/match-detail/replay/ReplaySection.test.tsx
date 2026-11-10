@@ -30,7 +30,7 @@ const STRINGS = {
     mapUnavailable: 'The map is not available right now, but the rest of the replay is.',
     noPositions: "The players' paths are not in this match's archive, so the map cannot be drawn.",
     trackedOnly: "Only your path is in this match's archive, so only you are drawn on the map.",
-    unreadable: 'This match cannot be read.',
+    unreadable: 'The replay of this match could not be read.',
     slider: 'Time in the match',
   },
   fr: {
@@ -41,7 +41,7 @@ const STRINGS = {
       "Les trajets des joueurs ne sont pas dans l'archive de cette partie : la carte ne peut pas être dessinée.",
     trackedOnly:
       "Seul ton trajet est dans l'archive de cette partie : tu es le seul dessiné sur la carte.",
-    unreadable: 'Impossible de lire cette partie.',
+    unreadable: "Le replay de cette partie n'a pas pu être lu.",
     slider: 'Moment de la partie',
   },
 } as const satisfies Record<Language, Record<string, string>>;
@@ -221,11 +221,11 @@ describe('ReplaySection', () => {
     expect(playback.toggle).toHaveBeenCalledTimes(1);
   });
 
-  it('leaves the keys of a control inside the section to the control', async () => {
+  it('leaves Space and the plain arrows to the controls that need them', async () => {
     const user = userEvent.setup();
     const playback = await renderSection(replayView());
 
-    // The slider keeps its own arrows: the section does not step on top of them.
+    // The slider keeps its own plain arrows: the section does not step on top of them.
     screen.getByRole('slider', { name: STRINGS.en.slider }).focus();
     await user.keyboard('{ArrowRight}');
     expect(playback.step).not.toHaveBeenCalled();
@@ -235,5 +235,44 @@ describe('ReplaySection', () => {
     await user.keyboard(' ');
     expect(playback.toggle).not.toHaveBeenCalled();
     expect(playback.setSpeed).toHaveBeenCalledWith(4);
+  });
+
+  it('keeps the arrows working once a button of the bar has the focus', async () => {
+    const user = userEvent.setup();
+    const playback = await renderSection(replayView());
+
+    await user.click(screen.getByRole('button', { name: 'Play' }));
+    expect(screen.getByRole('button', { name: 'Play' })).toHaveFocus();
+    (playback.step as ReturnType<typeof vi.fn>).mockClear();
+
+    await user.keyboard('{ArrowRight}');
+    expect(playback.step).toHaveBeenLastCalledWith(1);
+    await user.keyboard('{Shift>}{ArrowLeft}{/Shift}');
+    expect(playback.step).toHaveBeenLastCalledWith(-10);
+  });
+
+  it('handles Shift + arrows and Space on the slider, and keeps its plain arrows', async () => {
+    const user = userEvent.setup();
+    const playback = await renderSection(replayView());
+    const slider = screen.getByRole('slider', { name: STRINGS.en.slider });
+    slider.focus();
+
+    await user.keyboard('{Shift>}{ArrowRight}{/Shift}');
+    expect(playback.step).toHaveBeenLastCalledWith(10);
+    // The section prevented the default, so the slider did not also move by one second.
+    expect(playback.seek).not.toHaveBeenCalled();
+
+    await user.keyboard(' ');
+    expect(playback.toggle).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not toggle twice when Space is pressed on a button', async () => {
+    const user = userEvent.setup();
+    const playback = await renderSection(replayView());
+
+    screen.getByRole('button', { name: 'Play' }).focus();
+    await user.keyboard(' ');
+    // The button's own click calls `toggle` once; the section adds nothing.
+    expect(playback.toggle).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,21 +1,22 @@
 /**
- * The map of the replay: the minimap picture with the zip lines, the objectives (standing or fallen)
+ * The map of the replay: the minimap picture with the zip lines, the objectives (standing or
+ * fallen)
  * and every player as the icon of their hero, at the moment the shared cursor shows.
  *
  * The map is drawn by hand in SVG. Its `viewBox` is told in a fixed frame of {@link MAP_SIZE} units
- * (the relative positions of the data times that size) and follows a {@link MapViewport} held by the
- * component: the wheel zooms towards the pointer, dragging pans, and a button shows the whole map
- * again. Icons, rings, markers and strokes are divided by the zoom, so that they keep their size on
- * the screen and nearby heroes separate instead of overlapping when the player zooms in.
+ * (the relative positions of the data times that size) and follows a {@link MapViewport} held by
+ * the component: the wheel zooms towards the pointer, dragging pans, and a button shows the whole
+ * map again. Icons, rings, markers and strokes are divided by the zoom, so that they keep their
+ * size on the screen and nearby heroes separate instead of overlapping when the player zooms in.
  *
  * The picture and the lanes never change while the cursor moves, so they are a memoised layer of
  * their own; each frame only re-renders the objectives, the trails and the players. For assistive
  * technologies the map is one image named by its title; each icon and marker carries a title the
- * pointer shows over it ("Walker · enemy"). Colours are the theme's tokens, and a team is never told
- * by its colour alone: an enemy player has a dashed ring (an ally a solid one), and an enemy
+ * pointer shows over it ("Walker · enemy"). Colours are the theme's tokens, and a team is never
+ * told by its colour alone: an enemy player has a dashed ring (an ally a solid one), and an enemy
  * objective is a diamond (an ally one a rounded square). A fallen objective is told by its dashed,
- * unfilled outline, a cue that no team shares with the shapes, so a fallen one is never taken for an
- * enemy one.
+ * unfilled outline, a cue that no team shares with the shapes, so a fallen one is never taken for
+ * an enemy one.
  *
  * @packageDocumentation
  */
@@ -48,7 +49,7 @@ import {
   type ReplayData,
 } from './replay-model';
 
-/** The size of the frame the map is drawn in: the relative units (0 to 1) of the data times this. */
+/** The size of the frame the map is drawn in: the relative units (0 to 1) of the data times it. */
 const MAP_SIZE = 1000;
 
 /** The size of a hero icon on the screen, in frame units at zoom 1. */
@@ -169,7 +170,8 @@ interface ObjectiveMarkerProps {
 }
 
 /**
- * The marker of one objective: a filled square while it stands, a dashed outline once it has fallen.
+ * The marker of one objective: a filled square while it stands, a dashed outline once it has
+ * fallen.
  * It is memoised, so only an objective that falls (or a zoom) redraws it.
  *
  * @returns The marker, or nothing when the objective has no position on the picture.
@@ -196,7 +198,8 @@ const ObjectiveMarker = memo(function ObjectiveMarker({
         width={radius * 2}
         height={radius * 2}
         rx={radius / 4}
-        // An enemy objective is turned into a diamond: a shape cue that is not the dashes of a fallen one.
+        // An enemy objective is turned into a diamond: a shape cue that is not the dashes of a
+        // fallen one.
         transform={objective.side === 'enemy' ? 'rotate(45)' : undefined}
         className={standing ? `${classes.fill} stroke-bg` : `fill-none ${classes.ring}`}
         strokeWidth={standing ? 1 : RING_WIDTH}
@@ -329,7 +332,8 @@ export function ReplayMap({ view, timeS, showTrails, onToggleTrails }: ReplayMap
     // Only the main button drags: a right click must not start a pan.
     if (event.button !== 0) return;
     dragFrom.current = { x: event.clientX, y: event.clientY };
-    // Keep the drag when the pointer leaves the picture (jsdom, which the tests run in, has no capture).
+    // Keep the drag when the pointer leaves the picture (jsdom, which the tests run in, has no
+    // capture).
     if ('setPointerCapture' in event.currentTarget) {
       event.currentTarget.setPointerCapture(event.pointerId);
     }
@@ -394,7 +398,7 @@ export function ReplayMap({ view, timeS, showTrails, onToggleTrails }: ReplayMap
         onLostPointerCapture={endDrag}
       >
         <defs>
-          {/* One circle for every icon: in bounding-box units, so it fits whatever the icon size. */}
+          {/* One circle for every icon, in bounding-box units so it fits any icon size. */}
           <clipPath id={clipId} clipPathUnits="objectBoundingBox">
             <circle cx={0.5} cy={0.5} r={0.5} />
           </clipPath>
@@ -455,7 +459,7 @@ export function ReplayMap({ view, timeS, showTrails, onToggleTrails }: ReplayMap
               y={y}
               scale={scale}
               clipId={clipId}
-              label={titleOf(player.heroName ?? '?', player.side, t)}
+              label={titleOf(player.heroName ?? t('timeline.deaths.unknownHero'), player.side, t)}
             />
           );
         })}

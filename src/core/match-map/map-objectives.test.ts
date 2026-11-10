@@ -23,6 +23,8 @@ const LAYOUT: MapLayout = {
     team0_titan: { left: 0.3905, top: 0.8236 },
     team1_titan: { left: 0.5095, top: 0.0757 },
     team0_tier1_1: { left: 0.069, top: 0.5363 },
+    team0_tier1_3: { left: 0.45, top: 0.6 },
+    team0_tier2_3: { left: 0.4, top: 0.7 },
     team1_tier1_4: { left: 0.828, top: 0.3637 },
     team0_tier2_4: { left: 0.7117, top: 0.6853 },
     team1_tier2_1: { left: 0.1981, top: 0.2164 },
@@ -98,24 +100,43 @@ describe('objectivePosition', () => {
   });
 
   it('turns counterparts of the two teams into points symmetric about the centre', () => {
-    // Core, titan, lane 1 guardian against lane 4, lane 4 walker against lane 1.
+    // Titan, lane 1 guardian against lane 4, lane 4 walker against lane 1. The walkers' real
+    // positions are 0.0098 off on the left axis, so they only hold within 0.05.
     const pairs = [
-      [0, 0],
-      [9, 9],
-      [1, 4],
-      [8, 5],
+      [9, 9, 2],
+      [1, 4, 2],
+      [8, 5, 1],
     ] as const;
-    for (const [ownId, otherId] of pairs) {
+    for (const [ownId, otherId, digits] of pairs) {
       const own = positionOf(0, ownId);
       const other = positionOf(1, otherId);
-      // Within 0.05 (the raw positions are 0.1 short of it, the core's 0.3).
-      expect(own.left + other.left).toBeCloseTo(1, 1);
-      expect(own.top + other.top).toBeCloseTo(1, 1);
+      expect(own.left + other.left).toBeCloseTo(1, digits);
+      expect(own.top + other.top).toBeCloseTo(1, digits);
     }
   });
 
+  it('places the two cores, asymmetric on top because the API clamps team 1 at 0', () => {
+    const own = positionOf(0, 0);
+    const other = positionOf(1, 0);
+    expect(own.left + other.left).toBeCloseTo(1, 3);
+    // The API clamps team1_core's top at 0, so the pair sums to 1.02 and not 1: the real place of
+    // team 0's core is unverified.
+    expect(own.top + other.top).toBeCloseTo(1.02, 3);
+  });
+
+  it('reads guardians from the tier-1 keys and walkers from the tier-2 keys', () => {
+    // Lane 3 has a different tier-1 and tier-2 position: id 3 is the guardian, id 7 the walker.
+    const guardian = positionOf(0, 3);
+    const walker = positionOf(0, 7);
+    expect(guardian.left).toBeCloseTo(0.5, 6);
+    expect(guardian.top).toBeCloseTo(0.65, 6);
+    expect(walker.left).toBeCloseTo(0.45, 6);
+    expect(walker.top).toBeCloseTo(0.75, 6);
+  });
+
   it('gives null when the layout lacks the key, or for a team other than 0 and 1', () => {
-    expect(objectivePosition(0, identityOf(7), LAYOUT)).toBeNull();
+    // Lane 4 has no tier-1 key for team 0 in this layout.
+    expect(objectivePosition(0, identityOf(4), LAYOUT)).toBeNull();
     expect(objectivePosition(2, identityOf(0), LAYOUT)).toBeNull();
   });
 

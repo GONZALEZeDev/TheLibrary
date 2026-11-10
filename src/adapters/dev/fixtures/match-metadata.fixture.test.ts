@@ -1313,7 +1313,7 @@ describe('the map replay data of createMatchMetadataFixture', () => {
     }
   });
 
-  it('knows the respawn of every death, and the path stays dead for that whole wait', () => {
+  it('knows the respawn of every death: dead until it, back on the map at it', () => {
     for (const row of rows) {
       const { replay } = replayOf(row);
 
@@ -1321,9 +1321,17 @@ describe('the map replay data of createMatchMetadataFixture', () => {
         for (const death of track.deaths) {
           expect(death.respawnS).not.toBeNull();
           const respawnS = death.respawnS ?? 0;
-          const lastDeadS = Math.min(replay.durationS, respawnS);
-          for (let second = death.timeS + 1; second <= lastDeadS; second += 1) {
+          // The respawn is the first second the player is alive again: dead from the death to just
+          // before it, and drawn again at it when the match is still on.
+          for (
+            let second = death.timeS;
+            second < Math.min(respawnS, replay.durationS + 1);
+            second += 1
+          ) {
             expect(track.positions[second]).toBeNull();
+          }
+          if (track.hasPath && respawnS <= replay.durationS) {
+            expect(track.positions[respawnS]).not.toBeNull();
           }
         }
       }

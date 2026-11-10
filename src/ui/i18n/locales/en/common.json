@@ -231,6 +231,7 @@
   },
   "replay": {
     "title": "Match replay",
+    "unreadable": "The replay of this match could not be read.",
     "map": {
       "title": "Match map",
       "resetZoom": "Reset zoom",

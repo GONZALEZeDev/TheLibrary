@@ -231,6 +231,7 @@
   },
   "replay": {
     "title": "Replay du match",
+    "unreadable": "Le replay de cette partie n'a pas pu être lu.",
     "map": {
       "title": "Carte du match",
       "resetZoom": "Réinitialiser le zoom",

@@ -3,17 +3,18 @@
  * which objectives and mid boss kills happened. It is the single input of the map replay.
  *
  * Everything is read from the archive's `match_info`: the players and their `death_details`, the
- * movement paths (decoded by `../match-detail/player-paths`), `objectives` and `mid_boss`. Like every
- * reader of an archive, it never puts a value of the payload in an error: the payload belongs to
- * players (account ids), and the errors end up in the logs.
+ * movement paths (decoded by `../match-detail/player-paths`), `objectives` and `mid_boss`. Like
+ * every reader of an archive, it never puts a value of the payload in an error: the payload belongs
+ * to players (account ids), and the errors end up in the logs.
  *
  * @packageDocumentation
  */
 import { z } from 'zod';
+import { AppError } from '../errors/app-error';
 import type { ArchiveEnvelope } from '../match-detail/archive-envelope';
 import { archiveCount, readArchiveFields } from '../match-detail/archive-fields';
 import { positionAt, readPlayerPaths } from '../match-detail/player-paths';
-import type { MapPoint, PlayerPath } from '../match-detail/player-paths';
+import type { MapPoint, PlayerPath, PlayerPaths } from '../match-detail/player-paths';
 import { findTrackedPlayer } from '../match-detail/pruning';
 import { identifyObjective } from './map-objectives';
 
@@ -22,8 +23,13 @@ export interface ReplayDeath {
   /** The second of the match the player died at. */
   readonly timeS: number;
   /**
-   * The second of the match the player is back at (`timeS + death_duration_s`); `null` when the
-   * payload does not say how long they waited.
+   * The second of the match the player is back at; `null` when the payload does not say how long
+   * they waited (or says a negative wait) and the player has no path to tell.
+   *
+   * For a player with a path it is the first second the path shows them alive again, never before
+   * `timeS + death_duration_s`: on a real match the path's dead run is one second later than the
+   * `death_details` one, so the API's own respawn would let the map hide a player the panel still
+   * lists. See {@link readMatchReplay}.
    */
   readonly respawnS: number | null;
 }
@@ -107,6 +113,7 @@ const replayPlayerSchema = z.looseObject({
     .array(
       z.looseObject({
         game_time_s: z.number().nonnegative(),
+        // A negative wait is nonsense: it is read as absent (see `readMatchReplay`), not rejected.
         death_duration_s: z.number().nullish(),
       }),
     )
@@ -158,6 +165,37 @@ export function isDeadAt(deaths: readonly ReplayDeath[], timeS: number): boolean
   );
 }
 
+/** The longest a player waits to respawn, in seconds: it bounds the search in a path's dead run. */
+const MAX_RESPAWN_WAIT_S = 180;
+
+/**
+ * Extend the respawn of each death to the first second the player's path shows them alive again.
+ *
+ * Starting at `max(timeS + 1, respawnS ?? timeS + 1)`, the search advances while the path has no
+ * position (dead sample), and stops at `min(timeS + 180, durationS + 1)`. The new respawn is the
+ * later of that second and the original one, so a death with no duration gets one from the path.
+ *
+ * @param deaths - The deaths of a player who has a path.
+ * @param path - The player's path.
+ * @param durationS - How long the match lasted, in seconds.
+ * @returns The deaths with their respawn extended.
+ */
+function extendRespawns(
+  deaths: readonly ReplayDeath[],
+  path: PlayerPath,
+  durationS: number,
+): readonly ReplayDeath[] {
+  return deaths.map((death): ReplayDeath => {
+    const cap = Math.min(death.timeS + MAX_RESPAWN_WAIT_S, durationS + 1);
+    let aliveS = Math.max(death.timeS + 1, death.respawnS ?? death.timeS + 1);
+    // Walk through the dead run of the path until the first alive sample (or the cap).
+    while (aliveS < cap && positionAt(path, aliveS) === null) {
+      aliveS += 1;
+    }
+    return { timeS: death.timeS, respawnS: Math.max(death.respawnS ?? aliveS, aliveS) };
+  });
+}
+
 /**
  * Build the positions of a player at each second of the match.
  *
@@ -178,21 +216,45 @@ function buildPositions(
 }
 
 /**
+ * Read the paths of an archive, treating a malformed `match_paths` header as no paths at all.
+ *
+ * @param envelope - The decoded archive.
+ * @returns The paths, or `null` when there are none or their header is malformed.
+ * @throws Any error other than an {@link AppError} of kind `invalid_payload`.
+ */
+function readPathsOrNone(envelope: ArchiveEnvelope): PlayerPaths | null {
+  try {
+    return readPlayerPaths(envelope);
+  } catch (error) {
+    // Only a malformed header is forgiven: the rest of the replay does not depend on the paths.
+    if (error instanceof AppError && error.kind === 'invalid_payload') return null;
+    throw error;
+  }
+}
+
+/**
  * Read the replay of an archived match.
  *
+ * Deaths and paths agree on one rule, {@link isDeadAt}: for a player with a path, the respawn of
+ * each death is extended to the first second the path shows them alive again (see
+ * {@link ReplayDeath.respawnS}), so the map and the panel list the same dead players. A dead run of
+ * the path with no `death_details` entry stays hidden on the map only. A negative
+ * `death_duration_s` is read as absent. A malformed `match_paths` header is not fatal: the replay
+ * is then built without any path.
+ *
  * @param envelope - The decoded archive; it is not modified.
- * @returns The replay. The coverage is `none` when the archive has no readable path, `tracked_only`
- *   for a format-1 archive, `all` otherwise.
- * @throws AppError of kind `invalid_payload` when the tracked player is missing, or when a field the
- *   replay needs is not what is expected (including `match_paths` itself). The context `issue` is
- *   `<name>.<path>: <code>` (`<name>` being for instance `match_info.objectives`); never a value of
- *   the payload.
+ * @returns The replay. The coverage is `none` when the archive has no readable path,
+ *   `tracked_only` for a format-1 archive, `all` otherwise.
+ * @throws AppError of kind `invalid_payload` when the tracked player is missing, or when a field
+ *   the replay needs is not what is expected (`match_paths` itself excepted). The context `issue`
+ *   is `<name>.<path>: <code>` (`<name>` being for instance `match_info.objectives`); never a value
+ *   of the payload.
  */
 export function readMatchReplay(envelope: ArchiveEnvelope): MatchReplay {
   const matchInfo = envelope.payload.match_info;
   const durationS = matchInfo.duration_s;
   const tracked = findTrackedPlayer(envelope.payload, envelope.prunedForAccountId);
-  const paths = readPlayerPaths(envelope);
+  const paths = readPathsOrNone(envelope);
 
   const players = matchInfo.players
     .map((player, index): ReplayPlayerTrack => {
@@ -201,17 +263,22 @@ export function readMatchReplay(envelope: ArchiveEnvelope): MatchReplay {
         player,
         `match_info.players.${String(index)}`,
       );
-      const deaths = (fields.death_details ?? [])
+      const apiDeaths = (fields.death_details ?? [])
         .map((death): ReplayDeath => ({
           timeS: death.game_time_s,
-          // The API may leave out how long the player waits: the respawn is unknown then.
+          // The API may leave out how long the player waits, or send a negative one: the respawn is
+          // unknown then.
           respawnS:
-            death.death_duration_s === null || death.death_duration_s === undefined
+            death.death_duration_s === null ||
+            death.death_duration_s === undefined ||
+            death.death_duration_s < 0
               ? null
               : death.game_time_s + death.death_duration_s,
         }))
         .toSorted((first, second) => first.timeS - second.timeS);
       const path = paths?.bySlot.get(fields.player_slot);
+      // A player with a path comes back when the path says so; one without keeps the API's wait.
+      const deaths = path === undefined ? apiDeaths : extendRespawns(apiDeaths, path, durationS);
       return {
         slot: fields.player_slot,
         team: fields.team,

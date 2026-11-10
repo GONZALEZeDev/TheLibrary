@@ -9,7 +9,7 @@
  * - loading, `not_archived` or a failed read: the chart alone, as the tab looks without a replay
  *   (the analysis above the tabs says why there is no detail, and a failed read must not hide the
  *   chart that does not need it);
- * - `unreadable`: the chart and the sentence of the timeline for an archive that cannot be read;
+ * - `unreadable`: the chart and a sentence saying that the replay cannot be read;
  * - `replay`: the layout above. The map area holds the map, or a sentence when the map cannot be
  *   drawn (`map` is `null`, or no player has a path); a replay that only knows the tracked player
  *   draws the map with a sentence under it. The bar and the panel always stay.
@@ -35,8 +35,33 @@ const SMALL_STEP_S = 1;
 /** How many seconds an arrow key moves the cursor while Shift is held. */
 const LARGE_STEP_S = 10;
 
-/** The elements that keep their own keys: the slider keeps its arrows, the buttons their Space. */
-const OWN_KEYS_TAGS: ReadonlySet<string> = new Set(['INPUT', 'BUTTON', 'TEXTAREA', 'SELECT']);
+/** The elements that keep every key: they use the arrows, Space and more themselves. */
+const ALL_KEYS_TAGS: ReadonlySet<string> = new Set(['TEXTAREA', 'SELECT']);
+
+/**
+ * Whether the section leaves a key to the element it was pressed on.
+ *
+ * The exemption is per key, not per element, so that the arrows keep working once a button of the
+ * bar has the focus: a button keeps Space and Enter (its click), a range slider keeps its plain
+ * arrows (one second, native), and every other input, a textarea or a select keeps all its keys.
+ *
+ * @param target - The element the key was pressed on.
+ * @param event - The key event.
+ * @returns `true` when the element handles the key and the section must not.
+ */
+function isKeyOwnedByTarget(target: Element, event: KeyboardEvent<HTMLElement>): boolean {
+  if (ALL_KEYS_TAGS.has(target.tagName)) return true;
+  if (target.tagName === 'BUTTON') return event.key === ' ' || event.key === 'Enter';
+  if (target instanceof HTMLInputElement) {
+    // The slider moves by one second with the plain arrows; the section takes Shift + arrows
+    // and Space.
+    if (target.type === 'range') {
+      return (event.key === 'ArrowLeft' || event.key === 'ArrowRight') && !event.shiftKey;
+    }
+    return true;
+  }
+  return false;
+}
 
 /** Props of {@link ReplaySection}. */
 export interface ReplaySectionProps {
@@ -44,7 +69,7 @@ export interface ReplaySectionProps {
   readonly matchId: MatchId;
   /** The playback clock, owned by the tab so that the chart and the death list can move it too. */
   readonly playback: Playback;
-  /** The souls chart, drawn in the right column next to the map (or alone when there is no replay). */
+  /** The souls chart: in the right column next to the map, or alone when there is no replay. */
   readonly chart: ReactNode;
   /**
    * The seconds of the kills of the tracked player, which the previous / next event buttons jump
@@ -57,10 +82,12 @@ export interface ReplaySectionProps {
  * The replay of one match around the souls chart.
  *
  * Keyboard: the root takes the focus (`tabIndex` 0, named by `replay.title`) and, while it has it,
- * the arrows step the cursor by one second (by ten with Shift) and Space plays or pauses. A key
- * pressed on an input, a button, a textarea or a select inside the section is left alone, so that
- * the slider keeps its own arrow handling and the buttons keep Space as a click. Only the section
- * itself, or what is not a control, drives the cursor.
+ * the arrows step the cursor by one second (by ten with Shift) and Space plays or pauses. The
+ * controls inside keep only the keys they need, per key: a button keeps Space and Enter (its click)
+ * but the arrows still reach the section, so they work after a click on a button; the range slider
+ * keeps its plain arrows (one second, native) while Shift + arrows (ten seconds) and Space are
+ * handled by the section, which stops the slider from also moving; a textarea, a select or another
+ * input keeps every key.
  *
  * @returns The chart alone, the chart and a sentence, or the whole replay layout.
  */
@@ -83,7 +110,7 @@ export function ReplaySection({ matchId, playback, chart, trackedKills }: Replay
     return (
       <>
         {chart}
-        <p className="text-sm text-fg-muted">{t('timeline.deaths.unreadable')}</p>
+        <p className="text-sm text-fg-muted">{t('replay.unreadable')}</p>
       </>
     );
   }
@@ -93,7 +120,7 @@ export function ReplaySection({ matchId, playback, chart, trackedKills }: Replay
     const { target } = event;
     // A control inside the section keeps its own keys.
     if (target !== event.currentTarget && target instanceof Element) {
-      if (OWN_KEYS_TAGS.has(target.tagName)) return;
+      if (isKeyOwnedByTarget(target, event)) return;
     }
     if (event.ctrlKey || event.altKey || event.metaKey) return;
     const stepS = event.shiftKey ? LARGE_STEP_S : SMALL_STEP_S;

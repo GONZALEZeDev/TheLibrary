@@ -1,6 +1,7 @@
 /**
  * The timeline tab of the match page: the chart of the souls of the player over the match, with
- * their deaths, kills and purchases, then the list of their deaths, with the ones that were avoidable.
+ * their deaths, kills and purchases, then the list of their deaths, with the ones that were
+ * avoidable.
  *
  * What the tab shows depends on the state of the view (`useTimelineTab`):
  * - `timeline`: the chart (with the map replay around it, when the match has one), then the list of
@@ -11,10 +12,10 @@
  *
  * The tab owns the playback clock of the replay: a click on the chart seeks it to the clicked time,
  * and picking a death in the list moves it to a few seconds before that death. The pointer over a
- * death marker of the chart only highlights the death and never moves the clock. It also holds the death picked, which the chart and
- * the list share: a row of the list picks its death and the chart draws its marker larger, and the
- * pointer over a marker of the chart picks its row. The chart and the list are each a section with
- * its own title; the tab only stacks them.
+ * death marker of the chart only highlights the death and never moves the clock. It also holds the
+ * death picked, which the chart and the list share: a row of the list picks its death and the
+ * chart draws its marker larger, and the pointer over a marker of the chart picks its row. The
+ * chart and the list are each a section with its own title; the tab only stacks them.
  *
  * While the replay plays, this component renders at every animation frame (the clock is its state).
  * The chart and the list are therefore built as memoised elements: the list never depends on the

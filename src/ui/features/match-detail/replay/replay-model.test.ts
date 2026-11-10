@@ -152,6 +152,10 @@ describe('stepEvents, previousEvent and nextEvent', () => {
     expect(stepEvents(view, [150, 200, 900])).toEqual([100, 150, 200, 400]);
   });
 
+  it('floors fractional times so a step can always be reached', () => {
+    expect(stepEvents(view, [150.7, 150.2, 200.9])).toEqual([100, 150, 200, 400]);
+  });
+
   it('excludes the deaths of other players', () => {
     expect(stepEvents(view, [])).not.toContain(300);
   });

@@ -13,6 +13,11 @@ describe('scheduleOccurrences', () => {
     expect(rifts).toEqual([{ kind: 'unstable_rift', timeS: 600, untilS: 720 }]);
   });
 
+  it('keeps the rift with its full end time when the match ends inside the window', () => {
+    const rifts = scheduleOccurrences(650).filter((o) => o.kind === 'unstable_rift');
+    expect(rifts).toEqual([{ kind: 'unstable_rift', timeS: 600, untilS: 720 }]);
+  });
+
   it('occurrences never pass the match end', () => {
     const occurrences = scheduleOccurrences(1000);
     expect(occurrences.length).toBeGreaterThan(0);

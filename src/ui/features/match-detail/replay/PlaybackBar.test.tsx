@@ -181,4 +181,15 @@ describe('PlaybackBar', () => {
     await renderBar(testPlayback());
     expect(screen.getByTitle('Small camps (T1) · 2:00 · respawn 1:25')).toBeInTheDocument();
   });
+
+  it('keeps the markers of the rows out of the tab order', async () => {
+    await renderBar(testPlayback());
+    // Mouse only: the keyboard uses the event buttons, the slider and the section keys.
+    expect(screen.getByTitle('Unstable Rift · 10:00')).toHaveAttribute('tabindex', '-1');
+    expect(screen.getByTitle('Mid Boss is back · 18:20')).toHaveAttribute('tabindex', '-1');
+    expect(screen.getByTitle('Small camps (T1) · 2:00 · respawn 1:25')).toHaveAttribute(
+      'tabindex',
+      '-1',
+    );
+  });
 });

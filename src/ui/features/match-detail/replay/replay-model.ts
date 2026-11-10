@@ -30,7 +30,8 @@ const MAX_SCALE = 8;
 /**
  * Where a player is at a moment, which may fall between two seconds while the replay plays.
  *
- * @param positions - The position at each second (the index is the second); `null` while dead or unknown.
+ * @param positions - The position at each second (the index is the second); `null` while dead or
+ *   unknown.
  * @param timeS - The moment, in seconds; fractional while playing.
  * @returns The sample at an integer second; the linear interpolation between the two neighbouring
  *   seconds otherwise; `null` when the player has no position at either of them or the moment is
@@ -151,7 +152,8 @@ export function panBy(view: MapViewport, dLeft: number, dTop: number): MapViewpo
  *
  * @param view - The replay.
  * @param trackedKills - The seconds of the kills of the tracked player.
- * @returns The times, sorted, without duplicates, within [0, `durationS`].
+ * @returns The times, floored to whole seconds, sorted, without duplicates, within
+ *   [0, `durationS`].
  */
 export function stepEvents(view: ReplayData, trackedKills: readonly number[]): readonly number[] {
   const times: number[] = [...trackedKills];
@@ -162,7 +164,9 @@ export function stepEvents(view: ReplayData, trackedKills: readonly number[]): r
   for (const player of view.players) {
     if (player.isTracked) for (const death of player.deaths) times.push(death.timeS);
   }
-  return [...new Set(times.filter((timeS) => timeS >= 0 && timeS <= view.durationS))].toSorted(
+  // Floor first: seeking floors, so a fractional time must not be a step the cursor cannot reach.
+  const floored = times.map((timeS) => Math.floor(timeS));
+  return [...new Set(floored.filter((timeS) => timeS >= 0 && timeS <= view.durationS))].toSorted(
     (first, second) => first - second,
   );
 }

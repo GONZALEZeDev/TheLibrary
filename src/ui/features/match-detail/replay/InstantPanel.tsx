@@ -51,7 +51,8 @@ export function InstantPanel({ view, timeS }: InstantPanelProps) {
           <ul>
             {summary.destroyed.map((objective, index) => (
               <li
-                // Two objectives of a kind can fall at the same second: the index keeps the key unique.
+                // Two objectives of a kind can fall at the same second: the index keeps the key
+                // unique.
                 key={`${objective.identity.kind}-${String(objective.destroyedAtS)}-${String(index)}`}
                 className="flex justify-between gap-2"
               >
@@ -76,7 +77,11 @@ export function InstantPanel({ view, timeS }: InstantPanelProps) {
           <ul>
             {summary.dead.map(({ player, respawnInS }) => (
               <li key={player.slot} className="flex justify-between gap-2">
-                <span>{player.heroName ?? t('timeline.deaths.unknownHero')}</span>
+                <span>
+                  {player.heroName ?? t('timeline.deaths.unknownHero')}
+                  {' · '}
+                  {t(`replay.side.${player.side}`)}
+                </span>
                 <span className="text-fg-muted">
                   {respawnInS === null
                     ? t('replay.panel.respawnUnknown')

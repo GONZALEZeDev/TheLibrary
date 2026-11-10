@@ -9,16 +9,35 @@ import {
   type ObjectiveIdentity,
 } from './map-objectives';
 
-/** A small layout with only the keys these tests read. */
+/**
+ * A layout with the map asset's real positions (November 2026) of the objectives these tests read,
+ * by pairs of counterparts: team 0's core, titan, lane 1 guardian and lane 4 walker face team 1's
+ * core, titan, lane 4 guardian and lane 1 walker.
+ */
 const LAYOUT: MapLayout = {
   radius: 10752,
   imageUrl: 'https://assets-bucket.deadlock-api.com/minimap.png',
   objectivePositions: {
-    team0_core: { left: 0.29, top: 0.92 },
-    team1_tier2_4: { left: 0.75, top: 0.23 },
+    team0_core: { left: 0.2905, top: 0.92 },
+    team1_core: { left: 0.4095, top: 0 },
+    team0_titan: { left: 0.3905, top: 0.8236 },
+    team1_titan: { left: 0.5095, top: 0.0757 },
+    team0_tier1_1: { left: 0.069, top: 0.5363 },
+    team1_tier1_4: { left: 0.828, top: 0.3637 },
+    team0_tier2_4: { left: 0.7117, top: 0.6853 },
+    team1_tier2_1: { left: 0.1981, top: 0.2164 },
+    team1_tier2_4: { left: 0.7497, top: 0.2279 },
   },
   lanes: [],
 };
+
+/** Read the position of an objective that the test knows is in the layout. */
+function positionOf(team: number, id: number): { left: number; top: number } {
+  const position = objectivePosition(team, identityOf(id), LAYOUT);
+  if (position === null)
+    throw new Error(`Objective ${String(id)} of team ${String(team)} has no place`);
+  return position;
+}
 
 /** Identify an id that the test knows is valid, failing loudly otherwise. */
 function identityOf(id: number): ObjectiveIdentity {
@@ -59,18 +78,45 @@ describe('identifyObjective', () => {
 });
 
 describe('objectivePosition', () => {
-  it('reads the walker of team 1 lane 4 as team1_tier2_4 from the layout', () => {
-    expect(objectivePosition(1, identityOf(8), LAYOUT)).toEqual({
-      left: 0.75,
-      top: 0.23,
-    });
+  it('reads the walker of team 1 lane 4 as team1_tier2_4, moved from the icon corner', () => {
+    const walker = positionOf(1, 8);
+    expect(walker.left).toBeCloseTo(0.7997, 6);
+    expect(walker.top).toBeCloseTo(0.2779, 6);
+  });
+
+  it('reads guardians as tier-1 keys and the titan and the core by their own keys', () => {
+    const guardian = positionOf(0, 1);
+    expect(guardian.left).toBeCloseTo(0.119, 6);
+    expect(guardian.top).toBeCloseTo(0.5863, 6);
+    const titan = positionOf(1, 9);
+    expect(titan.left).toBeCloseTo(0.5595, 6);
+    expect(titan.top).toBeCloseTo(0.1257, 6);
+    // The core's icon is wider: it lands behind its titan, on the same vertical.
+    const core = positionOf(0, 0);
+    expect(core.left).toBeCloseTo(positionOf(0, 9).left, 6);
+    expect(core.top).toBeCloseTo(0.97, 6);
+  });
+
+  it('turns counterparts of the two teams into points symmetric about the centre', () => {
+    // Core, titan, lane 1 guardian against lane 4, lane 4 walker against lane 1.
+    const pairs = [
+      [0, 0],
+      [9, 9],
+      [1, 4],
+      [8, 5],
+    ] as const;
+    for (const [ownId, otherId] of pairs) {
+      const own = positionOf(0, ownId);
+      const other = positionOf(1, otherId);
+      // Within 0.05 (the raw positions are 0.1 short of it, the core's 0.3).
+      expect(own.left + other.left).toBeCloseTo(1, 1);
+      expect(own.top + other.top).toBeCloseTo(1, 1);
+    }
   });
 
   it('gives null when the layout lacks the key, or for a team other than 0 and 1', () => {
-    const core = identityOf(0);
-    expect(objectivePosition(1, core, LAYOUT)).toBeNull();
-    expect(objectivePosition(2, core, LAYOUT)).toBeNull();
-    expect(objectivePosition(0, core, LAYOUT)).toEqual({ left: 0.29, top: 0.92 });
+    expect(objectivePosition(0, identityOf(7), LAYOUT)).toBeNull();
+    expect(objectivePosition(2, identityOf(0), LAYOUT)).toBeNull();
   });
 
   it('takes shrines and base guardians from the hand-placed table', () => {
@@ -109,6 +155,23 @@ describe('hand-placed positions', () => {
       expect(point.left).toBeLessThanOrEqual(1);
       expect(point.top).toBeGreaterThanOrEqual(0);
       expect(point.top).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("places team 0's base half a turn from team 1's", () => {
+    // Shrines keep their index; team 0's lane 1 faces team 1's lane 4.
+    const counterparts = [
+      ['shrine_1', 'shrine_1'],
+      ['shrine_2', 'shrine_2'],
+      ['base_guardian_1', 'base_guardian_4'],
+      ['base_guardian_3', 'base_guardian_3'],
+      ['base_guardian_4', 'base_guardian_1'],
+    ] as const;
+    for (const [own, other] of counterparts) {
+      const team0 = HAND_PLACED_POSITIONS[`team0_${own}`];
+      const team1 = HAND_PLACED_POSITIONS[`team1_${other}`];
+      expect((team0?.left ?? 0) + (team1?.left ?? 0)).toBeCloseTo(1, 6);
+      expect((team0?.top ?? 0) + (team1?.top ?? 0)).toBeCloseTo(1, 6);
     }
   });
 

@@ -396,16 +396,16 @@ describe('MatchReplayService', () => {
       expect(fallen.map((objective) => objective.side)).toEqual(
         [0, 1].map((team) => (team === trackedTeam ? 'ally' : 'enemy')),
       );
-      // The positions come from the layout (the core of team 0, the titan of team 1)...
-      expect(view.objectives[0]).toMatchObject({
-        identity: { kind: 'core' },
-        position: { left: 0.29, top: 0.92 },
-        destroyedAtS: null,
-      });
-      expect(view.objectives[13 + MAP_OBJECTIVE_IDS.indexOf(9)]).toMatchObject({
-        identity: { kind: 'titan' },
-        position: { left: 0.51, top: 0.08 },
-      });
+      // The positions come from the layout (the core of team 0, the titan of team 1), moved from
+      // the corner of the API's icon to the building...
+      const core = view.objectives[0];
+      expect(core).toMatchObject({ identity: { kind: 'core' }, destroyedAtS: null });
+      expect(core?.position?.left).toBeCloseTo(0.44, 6);
+      expect(core?.position?.top).toBeCloseTo(0.97, 6);
+      const titan = view.objectives[13 + MAP_OBJECTIVE_IDS.indexOf(9)];
+      expect(titan).toMatchObject({ identity: { kind: 'titan' } });
+      expect(titan?.position?.left).toBeCloseTo(0.56, 6);
+      expect(titan?.position?.top).toBeCloseTo(0.13, 6);
       // ... and the shrines are hand placed, so they have one even if the layout lacks them.
       const shrine = view.objectives.find((objective) => objective.identity.kind === 'shrine');
       expect(shrine?.position).not.toBeNull();

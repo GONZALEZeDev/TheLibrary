@@ -60,27 +60,53 @@ export function identifyObjective(teamObjectiveId: number): ObjectiveIdentity | 
 }
 
 /**
+ * How far the map asset's objective positions sit from the buildings they name, on the picture.
+ *
+ * The API places each objective by the top-left corner of the icon its own minimap draws, not by the
+ * building's centre. The map is point-symmetric (each team's half is the other's turned half a turn
+ * around the centre), so a position of team 0 and its counterpart of team 1 should add up to 1 on
+ * each axis: they add up to 0.9, and once moved by this offset the guardians and walkers fall on
+ * their zip lines and next to the lane shops of the map asset.
+ */
+const API_ICON_OFFSET: RelativePoint = { left: 0.05, top: 0.05 };
+
+/**
+ * The same offset for the core, whose icon is wider: moved by it, each core falls behind its titan,
+ * on the middle zip line, where the players who destroy it stand.
+ */
+const API_CORE_ICON_OFFSET: RelativePoint = { left: 0.15, top: 0.05 };
+
+/**
  * The positions the map asset does not give: each team's two shrines (`team{t}_shrine_{1|2}`) and
  * three base guardians (`team{t}_base_guardian_{1|3|4}`).
  *
- * These are hand-placed starting values, to be checked visually against the minimap image. Team 0's
- * base is at the bottom of the picture and team 1's at the top. A shrine sits beside its team's
- * titan (index 1 on the left, 2 on the right), between the titan and the tier-2 walkers. A base
- * guardian stands on its lane, 60% of the way from the tier-2 walker of that lane to the titan.
+ * Team 0's base is at the bottom of the picture and team 1's at the top; the two bases are the same
+ * building turned half a turn, so each position of team 0 is `1 − x` of its counterpart of team 1 on
+ * both axes. The lane numbers are the zip lines' (lane 1 is the yellow line on the left for both
+ * teams), so team 0's lane 1 faces team 1's lane 4.
+ *
+ * - A base guardian stands where its lane's zip line turns into the base.
+ * - The shrines stand inside the base, on either side of the middle line, between the base guardians
+ *   and the titan. A shrine's index is taken to belong to its own base, turned with it: shrine 1 of
+ *   team 1 is on the right of the picture, so shrine 1 of team 0 is on the left.
+ *
+ * Team 1's places were measured on the picture against the zip lines and against where the attackers
+ * stood in a real match at the second each of its base objectives fell; team 0's are their
+ * counterparts.
  */
 export const HAND_PLACED_POSITIONS: Readonly<Record<string, RelativePoint>> = {
-  // Team 0 (bottom base, titan at 0.3905 / 0.8236).
-  team0_shrine_1: { left: 0.2705, top: 0.8036 },
-  team0_shrine_2: { left: 0.5105, top: 0.8036 },
-  team0_base_guardian_1: { left: 0.2976, top: 0.7622 },
-  team0_base_guardian_3: { left: 0.3903, top: 0.7388 },
-  team0_base_guardian_4: { left: 0.519, top: 0.7683 },
-  // Team 1 (top base, titan at 0.5095 / 0.0757).
-  team1_shrine_1: { left: 0.3895, top: 0.0957 },
-  team1_shrine_2: { left: 0.6295, top: 0.0957 },
-  team1_base_guardian_1: { left: 0.3849, top: 0.132 },
-  team1_base_guardian_3: { left: 0.5097, top: 0.1608 },
-  team1_base_guardian_4: { left: 0.6056, top: 0.1366 },
+  // Team 0 (bottom base, titan at 0.4405 / 0.8736).
+  team0_shrine_1: { left: 0.4, top: 0.88 },
+  team0_shrine_2: { left: 0.48, top: 0.88 },
+  team0_base_guardian_1: { left: 0.38, top: 0.82 },
+  team0_base_guardian_3: { left: 0.44, top: 0.765 },
+  team0_base_guardian_4: { left: 0.5, top: 0.82 },
+  // Team 1 (top base, titan at 0.5595 / 0.1257).
+  team1_shrine_1: { left: 0.6, top: 0.12 },
+  team1_shrine_2: { left: 0.52, top: 0.12 },
+  team1_base_guardian_1: { left: 0.5, top: 0.18 },
+  team1_base_guardian_3: { left: 0.56, top: 0.235 },
+  team1_base_guardian_4: { left: 0.62, top: 0.18 },
 };
 
 /** The mid boss pit, at the centre of the picture. */
@@ -90,7 +116,8 @@ export const MID_BOSS_POSITION: RelativePoint = { left: 0.5, top: 0.5 };
  * Find where an objective stands on the minimap picture.
  *
  * Core, titan, guardians and walkers are read from the map layout by the API's key
- * (`team{t}_core`, `team{t}_titan`, `team{t}_tier1_{lane}`, `team{t}_tier2_{lane}`); shrines and base
+ * (`team{t}_core`, `team{t}_titan`, `team{t}_tier1_{lane}`, `team{t}_tier2_{lane}`) and moved from
+ * the corner of the API's icon to the building (see {@link API_ICON_OFFSET}); shrines and base
  * guardians come from {@link HAND_PLACED_POSITIONS}.
  *
  * @param team - The team number, 0 or 1.
@@ -107,18 +134,39 @@ export function objectivePosition(
   const prefix = `team${String(team)}`;
   switch (identity.kind) {
     case 'core':
-      return layout.objectivePositions[`${prefix}_core`] ?? null;
+      return fromApiIcon(layout.objectivePositions[`${prefix}_core`], API_CORE_ICON_OFFSET);
     case 'titan':
-      return layout.objectivePositions[`${prefix}_titan`] ?? null;
+      return fromApiIcon(layout.objectivePositions[`${prefix}_titan`], API_ICON_OFFSET);
     case 'guardian':
       // The guardians are the tier-1 objectives of the API.
-      return layout.objectivePositions[`${prefix}_tier1_${String(identity.lane)}`] ?? null;
+      return fromApiIcon(
+        layout.objectivePositions[`${prefix}_tier1_${String(identity.lane)}`],
+        API_ICON_OFFSET,
+      );
     case 'walker':
       // The walkers are the tier-2 objectives of the API.
-      return layout.objectivePositions[`${prefix}_tier2_${String(identity.lane)}`] ?? null;
+      return fromApiIcon(
+        layout.objectivePositions[`${prefix}_tier2_${String(identity.lane)}`],
+        API_ICON_OFFSET,
+      );
     case 'shrine':
       return HAND_PLACED_POSITIONS[`${prefix}_shrine_${String(identity.index)}`] ?? null;
     case 'base_guardian':
       return HAND_PLACED_POSITIONS[`${prefix}_base_guardian_${String(identity.lane)}`] ?? null;
   }
+}
+
+/**
+ * Move a position of the map asset from the corner of its icon to the building it names.
+ *
+ * @param position - The API's position, or `undefined` when the layout lacks the key.
+ * @param offset - The offset of that kind of icon.
+ * @returns The building's position, or `null` when there is none.
+ */
+function fromApiIcon(
+  position: RelativePoint | undefined,
+  offset: RelativePoint,
+): RelativePoint | null {
+  if (position === undefined) return null;
+  return { left: position.left + offset.left, top: position.top + offset.top };
 }

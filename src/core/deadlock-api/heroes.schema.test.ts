@@ -68,6 +68,7 @@ describe('parseHeroAssets', () => {
         id: 67,
         name: 'Paige',
         imageUrl: `${HERO_IMAGES}/bookworm_sm.webp`,
+        minimapImageUrl: null,
         loadout: {
           weapon: 'citadel_weapon_bookworm_set2',
           melee: 'ability_melee_bookworm',
@@ -103,8 +104,43 @@ describe('parseHeroAssets', () => {
 
   it('leaves the image and the loadout null when the entry has neither', () => {
     expect(parseHeroAssets([{ id: 2, name: 'Infernus' }])).toStrictEqual([
-      { id: 2, name: 'Infernus', imageUrl: null, loadout: null },
+      { id: 2, name: 'Infernus', imageUrl: null, minimapImageUrl: null, loadout: null },
     ]);
+  });
+
+  it('reads the minimap icon, WebP first', () => {
+    const [hero] = parseHeroAssets([
+      rawHero(67, 'Paige', {
+        images: {
+          minimap_image: `${HERO_IMAGES}/bookworm_mm.png`,
+          minimap_image_webp: `${HERO_IMAGES}/bookworm_mm.webp`,
+        },
+      }),
+    ]);
+
+    expect(hero?.minimapImageUrl).toBe(`${HERO_IMAGES}/bookworm_mm.webp`);
+  });
+
+  it('falls back to the PNG minimap icon when the WebP one is absent', () => {
+    const [hero] = parseHeroAssets([
+      rawHero(67, 'Paige', { images: { minimap_image: `${HERO_IMAGES}/bookworm_mm.png` } }),
+    ]);
+
+    expect(hero?.minimapImageUrl).toBe(`${HERO_IMAGES}/bookworm_mm.png`);
+  });
+
+  it('minimap icon is null when absent or off the bucket', () => {
+    const heroes = parseHeroAssets([
+      rawHero(1, 'Infernus', { images: {} }),
+      rawHero(2, 'Seven', {
+        images: {
+          minimap_image_webp: 'https://example.net/seven_mm.webp',
+          minimap_image: 'https://assets-bucket.deadlock-api.com.example.net/seven_mm.png',
+        },
+      }),
+    ]);
+
+    expect(heroes.map((hero) => hero.minimapImageUrl)).toEqual([null, null]);
   });
 
   it('leaves the loadout null when a signature is missing', () => {
@@ -179,8 +215,8 @@ describe('parseHeroAssets', () => {
     ]);
 
     expect(heroes).toStrictEqual([
-      { id: 1, name: 'Infernus', imageUrl: null, loadout: null },
-      { id: 2, name: 'Seven', imageUrl: null, loadout: null },
+      { id: 1, name: 'Infernus', imageUrl: null, minimapImageUrl: null, loadout: null },
+      { id: 2, name: 'Seven', imageUrl: null, minimapImageUrl: null, loadout: null },
     ]);
   });
 

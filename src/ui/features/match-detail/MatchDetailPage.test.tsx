@@ -393,6 +393,7 @@ describe('MatchDetailPage', () => {
       id: PAIGE_HERO_ID,
       name: catalogueHeroOf(PAIGE_HERO_ID).name,
       imageUrl: null,
+      minimapImageUrl: null,
       loadout: null,
     };
     vi.spyOn(testServices.services.heroes, 'getHeroAssets').mockResolvedValue([noPortrait]);

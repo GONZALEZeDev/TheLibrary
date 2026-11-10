@@ -29,7 +29,7 @@ import {
   parseRankCatalogue,
   type CatalogueItem,
 } from '../core/deadlock-api/assets.schema';
-import { itemsRequest, ranksRequest } from '../core/deadlock-api/endpoints';
+import { itemsRequest, mapRequest, ranksRequest } from '../core/deadlock-api/endpoints';
 import type { AccountId } from '../core/domain/account';
 import { RANK_TIER_NAMES } from '../core/domain/rank';
 import { AppError } from '../core/errors/app-error';
@@ -330,6 +330,105 @@ describe('GameAssetService', () => {
         // A tier the game does not have is simply absent.
         expect(ranks.get(12)).toBeUndefined();
       }
+    });
+  });
+
+  describe('map layout', () => {
+    /** A map asset trimmed to what the app reads. */
+    const mapBody = {
+      radius: 10_752,
+      images: {
+        minimap: `${ASSET_IMAGE_ORIGIN}assets-api-res/images/maps/minimap_midtown_mid.png`,
+      },
+      objective_positions: { team0_core: { left_relative: 0.2905, top_relative: 0.92 } },
+      zipline_paths: [
+        {
+          origin: [-1280, -10774, 1472],
+          color: '#29b1cc',
+          P0_points: [
+            [0, 0, 0],
+            [0, 1158, 288],
+          ],
+        },
+      ],
+    };
+
+    /** Answers the map request, and fails any other. */
+    const mapHandler: FixtureHandler = (request) =>
+      request.url === mapRequest().url ? jsonResponse(mapBody) : jsonResponse({}, 404);
+
+    it('getMapLayout downloads once, then serves the cache for a week', async () => {
+      const { assets, http, clock, answer, cache } = setUp();
+      answer.handler = mapHandler;
+
+      const downloaded = await assets.getMapLayout();
+      clock.now += 6 * DAY;
+      const cached = await assets.getMapLayout();
+
+      expect(http.requests.map((request) => request.url)).toEqual([mapRequest().url]);
+      expect(cached).toEqual(downloaded);
+      expect(cached.radius).toBe(10_752);
+      expect(cached.lanes).toHaveLength(1);
+      // The cache holds exactly one entry: the layout, a plain object.
+      const entry = await cache.get('map');
+      expect(entry?.expiresAt).toBe(START + 7 * DAY);
+      expect(JSON.parse(entry?.payloadJson ?? 'null')).toEqual([downloaded]);
+
+      // The week ends: it is downloaded again.
+      clock.now += DAY;
+      await assets.getMapLayout();
+      expect(http.requests).toHaveLength(2);
+    });
+
+    it('getMapLayout falls back to the stale cache when the download fails', async () => {
+      const { assets, logger, clock, answer } = setUp();
+      answer.handler = mapHandler;
+      const downloaded = await assets.getMapLayout();
+      clock.now += 30 * DAY;
+      answer.handler = () => {
+        throw new AppError('network', 'The request failed');
+      };
+
+      await expect(assets.getMapLayout()).resolves.toEqual(downloaded);
+
+      expect(logger.entries.filter((entry) => entry.level !== 'debug')).toMatchObject([
+        {
+          level: 'warn',
+          scope: 'assets',
+          message: 'Could not refresh the map layout, using the cached one',
+          context: { kind: 'network' },
+        },
+      ]);
+    });
+
+    it('getMapLayout fails when nothing is cached and the download fails', async () => {
+      const { assets, answer } = setUp();
+      answer.handler = () => jsonResponse({}, 500);
+
+      await expect(assets.getMapLayout()).rejects.toMatchObject({ kind: 'service_unavailable' });
+    });
+
+    it('getMapLayout ignores a cached layout whose picture is off the asset bucket', async () => {
+      const { assets, cache, http, answer } = setUp();
+      answer.handler = mapHandler;
+      await cache.put('map', {
+        payloadJson: JSON.stringify([
+          {
+            radius: 1,
+            imageUrl: 'https://images.example.net/map.png',
+            objectivePositions: {},
+            lanes: [],
+          },
+        ]),
+        fetchedAt: START,
+        expiresAt: START + 7 * DAY,
+      });
+
+      const layout = await assets.getMapLayout();
+
+      // The unreadable entry counted as absent: the layout was downloaded.
+      expect(http.requests).toHaveLength(1);
+      expect(layout.radius).toBe(10_752);
     });
   });
 

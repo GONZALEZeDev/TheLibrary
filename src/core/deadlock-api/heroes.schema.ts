@@ -2,7 +2,7 @@
  * Validation and mapping of deadlock-api's hero catalogue (`GET /v1/assets/heroes`).
  *
  * The response describes each hero in depth (about 1.4 MB for 42 heroes); the app keeps the id and
- * the English name of the heroes a player can pick, their small portrait and their loadout (the
+ * the English name of the heroes a player can pick, their small portrait, their minimap icon and their loadout (the
  * weapon, the melee attack and the four signature abilities by class name).
  *
  * @packageDocumentation
@@ -26,7 +26,7 @@ const catalogueHeroSchema = z.object({
   // Flags of the game data; an absent flag never hides a hero.
   player_selectable: z.boolean().optional(),
   disabled: z.boolean().optional(),
-  // Portraits by name (`icon_image_small_webp`, `icon_image_small`…).
+  // Portraits and minimap icons by name (`icon_image_small_webp`, `minimap_image_webp`…).
   images: looseMapSchema,
   // The hero's fixed items by slot name (`weapon_primary`, `signature1`…), as class names.
   items: looseMapSchema,
@@ -102,7 +102,8 @@ function readLoadout(items: CatalogueHero['items']): HeroLoadout | null {
  * read stays, without portrait or loadout.
  *
  * The portrait is the small icon, WebP first (`images.icon_image_small_webp`,
- * `images.icon_image_small`), and only when it points into the asset bucket.
+ * `images.icon_image_small`), and only when it points into the asset bucket. The minimap icon is
+ * read the same way (`images.minimap_image_webp`, `images.minimap_image`).
  *
  * @param body - The parsed JSON body of the response.
  * @returns The playable heroes, sorted by id.
@@ -125,6 +126,8 @@ export function parseHeroAssets(body: unknown): HeroAsset[] {
         id,
         name,
         imageUrl: firstAssetImageUrl([images?.icon_image_small_webp, images?.icon_image_small]),
+        // The icon the match map draws the hero with: WebP first, like the portrait.
+        minimapImageUrl: firstAssetImageUrl([images?.minimap_image_webp, images?.minimap_image]),
         loadout: readLoadout(items),
       },
     ];

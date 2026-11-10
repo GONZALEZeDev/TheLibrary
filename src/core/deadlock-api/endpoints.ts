@@ -168,6 +168,20 @@ export function ranksRequest(): ApiRequest {
 }
 
 /**
+ * The map of the game: the minimap picture, the world radius, the objective positions and the zip
+ * lines. It is the same for every match and has no language parameter.
+ *
+ * @returns The request.
+ */
+export function mapRequest(): ApiRequest {
+  return {
+    url: `${DEADLOCK_API_BASE_URL}/v1/assets/map`,
+    endpoint: '/v1/assets/map',
+    family: 'assets',
+  };
+}
+
+/**
  * The detail of one match (players, items, damage and healing over time): the full payload the
  * app archives.
  *

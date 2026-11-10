@@ -51,6 +51,11 @@ export interface HeroLoadout {
 export interface HeroAsset extends Hero {
   /** Small portrait on the asset bucket, or `null` when the hero has none (or none the app may load). */
   readonly imageUrl: string | null;
+  /**
+   * The hero's icon on the minimap, on the asset bucket (WebP first, then PNG), or `null` when the
+   * hero has none (or none the app may load). The match map draws each hero with it.
+   */
+  readonly minimapImageUrl: string | null;
   /** The hero's weapon and abilities, or `null` when the catalogue does not give all of them. */
   readonly loadout: HeroLoadout | null;
 }

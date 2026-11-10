@@ -32,10 +32,10 @@ const cachedLoadoutSchema = z.object({
 /**
  * Schema of the cached catalogue: never empty, as the download refuses an empty one.
  *
- * The portrait and the loadout are required keys that may be `null`. That is what tells an entry
- * written since M4b from an older one, which held `{ id, name }` heroes only: the older entry does
- * not fit, so it counts as absent and the catalogue is downloaded again. The portrait must be on
- * the asset bucket, like every image a catalogue gives. The annotation makes the compiler check
+ * The portrait, the minimap icon and the loadout are required keys that may be `null`. That is what
+ * tells a current entry from an older one (names only before M4b, no minimap icon before the match
+ * map): the older entry does not fit, so it counts as absent and the catalogue is downloaded again.
+ * The portrait and the minimap icon must be on the asset bucket, like every image a catalogue gives. The annotation makes the compiler check
  * that what the schema gives is a list of heroes with their assets.
  */
 const cachedHeroesSchema: z.ZodType<HeroAsset[]> = z
@@ -44,6 +44,7 @@ const cachedHeroesSchema: z.ZodType<HeroAsset[]> = z
       id: z.int().positive(),
       name: z.string().min(1),
       imageUrl: cachedImageUrlSchema,
+      minimapImageUrl: cachedImageUrlSchema,
       loadout: cachedLoadoutSchema.nullable(),
     }),
   )

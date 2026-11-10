@@ -42,6 +42,7 @@ import {
   itemDetailRequest,
   itemsRequest,
   itemStatsRequest,
+  mapRequest,
   matchHistoryRequest,
   matchMetadataRequest,
   MAX_RESPONSE_BYTES,
@@ -67,6 +68,7 @@ import {
   type WeaponDetail,
 } from '../core/deadlock-api/item-detail.schema';
 import { parseItemStats, type ItemStatsRow } from '../core/deadlock-api/item-stats.schema';
+import { parseMapLayout, type MapLayout } from '../core/deadlock-api/map.schema';
 import { parseMatchHistory } from '../core/deadlock-api/match-history.schema';
 import {
   parseMetricBenchmark,
@@ -375,6 +377,20 @@ export class DeadlockApiService {
    */
   fetchRankCatalogue(): Promise<CatalogueRank[]> {
     return this.#fetchAsset(ranksRequest(), parseRankCatalogue);
+  }
+
+  /**
+   * Download and validate the map: the minimap picture, the world radius, the objective positions
+   * and the zip lines, for the match replay.
+   *
+   * Same rules as {@link DeadlockApiService.fetchItemCatalogue}: one request under the asset budget.
+   *
+   * @returns The map layout, its zip lines projected onto the picture.
+   * @throws AppError, as {@link DeadlockApiService.fetchItemCatalogue}; `invalid_payload` too when
+   *   the answer is not a readable map or the picture is not on the asset bucket.
+   */
+  fetchMapLayout(): Promise<MapLayout> {
+    return this.#fetchAsset(mapRequest(), parseMapLayout);
   }
 
   /**

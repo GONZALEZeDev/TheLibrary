@@ -30,6 +30,7 @@ import { ANALYTICS_RATE_LIMIT } from '../core/deadlock-api/budgets';
 import {
   itemsRequest,
   MAX_RESPONSE_BYTES,
+  mapRequest,
   matchMetadataRequest,
   ranksRequest,
   type CohortQuery,
@@ -385,6 +386,7 @@ describe('DeadlockApiService.fetchHeroes', () => {
       id: PAIGE_HERO_ID,
       name: 'Paige',
       imageUrl: `${ASSET_IMAGE_ORIGIN}assets-api-res/images/heroes/bookworm_sm.webp`,
+      minimapImageUrl: null,
       loadout: {
         weapon: 'citadel_weapon_bookworm_set2',
         melee: 'ability_melee_bookworm',
@@ -418,6 +420,55 @@ describe('DeadlockApiService.fetchHeroes', () => {
     await syncState.setPausedUntil(START + 5_000);
 
     await expect(api.fetchHeroes()).rejects.toMatchObject({ kind: 'rate_limited' });
+  });
+});
+
+/** A map asset trimmed to what the app reads: the radius, the picture, one objective, one line. */
+const MAP_BODY = {
+  radius: 10_752,
+  images: { minimap: `${ASSET_IMAGE_ORIGIN}assets-api-res/images/maps/minimap_midtown_mid.png` },
+  objective_positions: { team0_core: { left_relative: 0.2905, top_relative: 0.92 } },
+  zipline_paths: [
+    {
+      origin: [-1280, -10774, 1472],
+      color: '#29b1cc',
+      P0_points: [
+        [0, 0, 0],
+        [0, 1158, 288],
+      ],
+    },
+  ],
+};
+
+describe('DeadlockApiService.fetchMapLayout', () => {
+  it('fetchMapLayout validates and returns the layout', async () => {
+    const { api, http } = setUp(() => jsonResponse(MAP_BODY));
+
+    const layout = await api.fetchMapLayout();
+
+    expect(http.requests.map((request) => request.url)).toEqual([mapRequest().url]);
+    expect(layout.radius).toBe(10_752);
+    expect(layout.imageUrl.startsWith(ASSET_IMAGE_ORIGIN)).toBe(true);
+    expect(layout.objectivePositions).toEqual({ team0_core: { left: 0.2905, top: 0.92 } });
+    expect(layout.lanes).toHaveLength(1);
+    expect(layout.lanes[0]?.color).toBe('#29b1cc');
+  });
+
+  it('fetchMapLayout is refused when the asset budget is spent', async () => {
+    const { api, http } = setUp((request) =>
+      request.url === mapRequest().url
+        ? jsonResponse(MAP_BODY)
+        : createFixtureApi({ now: START, matchCount: 5 })(request),
+    );
+    await api.fetchHeroes();
+    await api.fetchItemCatalogue();
+
+    await expect(api.fetchMapLayout()).rejects.toMatchObject({
+      kind: 'rate_limited',
+      context: { nextAllowedAt: START + 1_000 },
+    });
+    // Refused before it was sent.
+    expect(http.requests).toHaveLength(2);
   });
 });
 

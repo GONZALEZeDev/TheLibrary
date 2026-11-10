@@ -13,6 +13,7 @@
  */
 import { z } from 'zod';
 import {
+  ASSET_IMAGE_ORIGIN,
   ITEM_KINDS,
   ITEM_SLOTS,
   MAX_ITEM_TIER,
@@ -20,6 +21,8 @@ import {
   type CatalogueItem,
   type CatalogueRank,
 } from '../core/deadlock-api/assets.schema';
+import type { MapLayout } from '../core/deadlock-api/map.schema';
+import { AppError } from '../core/errors/app-error';
 import type { AccountSource } from '../ports/account-source.port';
 import type { Logger } from '../ports/logger.port';
 import type { ApiCacheRepository } from './api-cache.repository';
@@ -68,6 +71,28 @@ const cachedRanksSchema: z.ZodType<CatalogueRank[]> = z
   .min(1);
 
 /**
+ * Schema of the cached map layout: exactly one entry, the layout itself (the cache keeps lists, so
+ * the single layout is wrapped in one). The picture link must be on the asset bucket and is never
+ * `null`: a map without its picture is not worth keeping. The annotation makes the compiler check
+ * that what the schema gives is a list of layouts.
+ */
+const cachedMapSchema: z.ZodType<MapLayout[]> = z
+  .array(
+    z.object({
+      radius: z.number().positive(),
+      imageUrl: z.string().startsWith(ASSET_IMAGE_ORIGIN),
+      objectivePositions: z.record(z.string(), z.object({ left: z.number(), top: z.number() })),
+      lanes: z.array(
+        z.object({
+          color: z.string(),
+          points: z.array(z.object({ left: z.number(), top: z.number() })),
+        }),
+      ),
+    }),
+  )
+  .length(1);
+
+/**
  * The item catalogue, indexed the two ways the app looks an item up.
  *
  * Both indexes hold the very same entries. Ids and class names are unique in the game data; should
@@ -106,6 +131,8 @@ export class GameAssetService {
   readonly #readItems: () => Promise<readonly CatalogueItem[]>;
   /** Reads the rank catalogue, sharing the run among the calls that overlap. */
   readonly #readRanks: () => Promise<readonly CatalogueRank[]>;
+  /** Reads the map layout (a list of exactly one), sharing the run among the calls that overlap. */
+  readonly #readMap: () => Promise<readonly MapLayout[]>;
 
   /**
    * @param dependencies - See {@link GameAssetServiceDependencies}.
@@ -128,6 +155,14 @@ export class GameAssetService {
       logScope: LOG_SCOPE,
       schema: cachedRanksSchema,
       download: () => api.fetchRankCatalogue(),
+    });
+    this.#readMap = cachedCatalogue(shared, {
+      cacheKey: 'map',
+      label: 'map layout',
+      logScope: LOG_SCOPE,
+      schema: cachedMapSchema,
+      // The cache keeps lists: the one layout travels as a list of one entry.
+      download: async () => [await api.fetchMapLayout()],
     });
   }
 
@@ -164,5 +199,23 @@ export class GameAssetService {
   async getRankCatalogue(): Promise<ReadonlyMap<number, CatalogueRank>> {
     const ranks = await this.#readRanks();
     return new Map(ranks.map((rank) => [rank.tier, rank]));
+  }
+
+  /**
+   * The map of the match replay: the minimap picture, the world radius, the objective positions and
+   * the zip lines.
+   *
+   * @returns The layout, under the same rules as {@link GameAssetService.getItemCatalogue}, except
+   *   that there is no empty answer: the map is needed to draw anything, so without a linked account
+   *   and without a cached layout the call fails.
+   * @throws AppError under the same conditions as {@link GameAssetService.getItemCatalogue}.
+   */
+  async getMapLayout(): Promise<MapLayout> {
+    const [layout] = await this.#readMap();
+    if (layout === undefined) {
+      // Nothing cached and nothing downloaded (no linked account): the map cannot be drawn.
+      throw new AppError('not_found', 'The map layout is not available');
+    }
+    return layout;
   }
 }

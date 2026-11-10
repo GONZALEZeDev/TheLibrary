@@ -17,6 +17,7 @@ import {
   itemStatsRequest,
   itemsRequest,
   matchHistoryRequest,
+  mapRequest,
   matchMetadataRequest,
   metricBenchmarkRequest,
   performanceCurveRequest,
@@ -74,6 +75,16 @@ describe('heroesRequest', () => {
       'https://api.deadlock-api.com/v1/assets/heroes?language=english&only_active=true',
     );
     expect(request.endpoint).toBe('/v1/assets/heroes');
+    expect(request.family).toBe('assets');
+  });
+});
+
+describe('mapRequest', () => {
+  it('requests the map layout without a language parameter', () => {
+    const request = mapRequest();
+
+    expect(request.url).toBe('https://api.deadlock-api.com/v1/assets/map');
+    expect(request.endpoint).toBe('/v1/assets/map');
     expect(request.family).toBe('assets');
   });
 });

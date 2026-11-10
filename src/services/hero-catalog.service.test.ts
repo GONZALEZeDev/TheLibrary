@@ -67,6 +67,8 @@ const PAIGE_ASSET = {
   id: PAIGE_HERO_ID,
   name: 'Paige',
   imageUrl: `${ASSET_IMAGE_ORIGIN}assets-api-res/images/heroes/bookworm_sm.webp`,
+  // The fixture catalogue gives no minimap icon yet.
+  minimapImageUrl: null,
   loadout: {
     weapon: 'citadel_weapon_bookworm_set2',
     melee: 'ability_melee_bookworm',
@@ -179,7 +181,9 @@ describe('HeroCatalogService', () => {
       const cached = await catalog.getHeroAssets();
 
       expect(http.requests).toHaveLength(1);
-      expect(cached).toEqual([{ id: 99, name: 'Newcomer', imageUrl: null, loadout: null }]);
+      expect(cached).toEqual([
+        { id: 99, name: 'Newcomer', imageUrl: null, minimapImageUrl: null, loadout: null },
+      ]);
     });
 
     it('uses the cached images and loadouts when the catalogue cannot be refreshed', async () => {
@@ -211,6 +215,23 @@ describe('HeroCatalogService', () => {
       // An old entry is no problem to report: it is replaced without a warning (the download itself
       // only logs at debug level).
       expect(logger.entries.filter((entry) => entry.level !== 'debug')).toEqual([]);
+    });
+
+    it('a cached catalogue without minimapImageUrl counts as absent and is downloaded again', async () => {
+      const { catalog, http, cache } = setUp();
+      // An entry of the current shape minus the key: written before the minimap icon was kept.
+      const withoutMinimap: Partial<typeof PAIGE_ASSET> = { ...PAIGE_ASSET };
+      delete withoutMinimap.minimapImageUrl;
+      await cache.put(CACHE_KEY, {
+        payloadJson: JSON.stringify([withoutMinimap]),
+        fetchedAt: START,
+        expiresAt: START + 7 * DAY,
+      });
+
+      const heroes = await catalog.getHeroAssets();
+
+      expect(http.requests).toHaveLength(1);
+      expect(heroes.find((hero) => hero.id === PAIGE_HERO_ID)).toEqual(PAIGE_ASSET);
     });
 
     it('replaces an entry written before M4b with one that fits', async () => {

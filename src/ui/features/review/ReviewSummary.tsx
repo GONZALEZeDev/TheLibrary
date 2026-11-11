@@ -7,9 +7,11 @@
  * that every point the review flags is here. A section where nothing recurs says so in a sentence,
  * with no header of columns over an empty list.
  *
- * The two sections are always stacked, the weaknesses over the strengths: they are read in that
- * order, unlike the families of the stats tab, which stand side by side on a wide tab. The points
- * come from every other tab (a metric, the deaths of a phase, a place among the players, a
+ * The two sections stand side by side when the tab is wide enough for two lists of rows
+ * (`REVIEW_TWO_LISTS`, as the families of the stats tab do), the weaknesses on the left, and one
+ * under the other on a narrower tab, the weaknesses first: either way they are read in that order.
+ *
+ * The points come from every other tab (a metric, the deaths of a phase, a place among the players, a
  * resistance item…), and a resistance item shows its picture before its name, so that the item is
  * known at a glance. The name of each point is a link to the tab it comes from, which sets it among
  * the points of its kind. The page around the tab handles every state (no account, no match, a
@@ -24,7 +26,7 @@ import type { TFunction } from 'i18next';
 import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Review, ReviewRow as ReviewRowData } from '../../../services/review-view';
-import { REVIEW_SECTION_TITLE } from './review-layout';
+import { REVIEW_SECTION_TITLE, REVIEW_TWO_LISTS } from './review-layout';
 import { ReviewRowList } from './ReviewRowList';
 
 /** Props of {@link ReviewSummary}. */
@@ -89,17 +91,20 @@ function renderSection(
 /**
  * The summary of the review.
  *
- * @returns The weaknesses, then the strengths, stacked.
+ * @returns The weaknesses, then the strengths, side by side on a wide tab.
  */
 export function ReviewSummary({ summary }: ReviewSummaryProps) {
   const { t } = useTranslation();
   const idPrefix = useId();
 
   return (
-    <div className="space-y-6">
-      {SECTIONS.map((section) =>
-        renderSection(section, summary[section.side], `${idPrefix}-${section.side}`, t),
-      )}
+    // The container is what the grid reads its width from: the room of the tab, not the window.
+    <div className="@container">
+      <div className={REVIEW_TWO_LISTS}>
+        {SECTIONS.map((section) =>
+          renderSection(section, summary[section.side], `${idPrefix}-${section.side}`, t),
+        )}
+      </div>
     </div>
   );
 }

@@ -19,7 +19,7 @@ import type {
   ReviewSubject,
 } from '../../../services/review-view';
 import { createI18n } from '../../i18n/i18n';
-import { REVIEW_LIST_BOX } from './review-layout';
+import { REVIEW_LIST_BOX, REVIEW_ROW_LIST_MAX_WIDTH, REVIEW_TWO_LISTS } from './review-layout';
 import { ReviewRowList } from './ReviewRowList';
 
 /** The name of the columns of the tier and of the gap, which the header writes as one, by language. */
@@ -152,11 +152,20 @@ describe('ReviewRowList', () => {
     await renderIn('en', <ReviewRowList rows={metricRows().rows} />);
 
     const list = screen.getByRole('list');
-    expect(list.parentElement?.className).toBe(REVIEW_LIST_BOX);
+    expect(list.parentElement?.className).toBe(`${REVIEW_LIST_BOX} ${REVIEW_ROW_LIST_MAX_WIDTH}`);
     expect(REVIEW_LIST_BOX).toContain('border-border');
     // The header and the rows share the padding of the box, so that their columns line up; padding
     // on the list alone would come out of the name column of the rows and push them off the header.
     expect(list.className).not.toMatch(/(^|\s)p[xytblrse]?-/u);
+  });
+
+  it('stops at its widest, and a column of two lists is no wider than a list', () => {
+    // The box never grows past a fixed width, so that the figures stay next to the names on a wide
+    // tab; the grid of two lists writes the same width out (Tailwind only reads full classes), and
+    // the two must not drift apart, or the second list would stand away from the first.
+    const width = /^max-w-\[(?<rem>[\d.]+rem)\]$/u.exec(REVIEW_ROW_LIST_MAX_WIDTH)?.groups?.rem;
+    expect(width).toBeDefined();
+    expect(REVIEW_TWO_LISTS).toContain(`grid-cols-[repeat(2,minmax(0,${width ?? ''}))]`);
   });
 
   it.each(['resistance_minute', 'resistance_rate'] as const)(

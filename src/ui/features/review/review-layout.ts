@@ -31,6 +31,9 @@ import { PANEL_CLASSES } from '../../components/Panel';
  * A list of rows is about 690 px wide at the least with a name of 150 px, so two lists stand side by
  * side when the tab is at least {@link REVIEW_TWO_LISTS} wide.
  *
+ * The name never grows past 16 rem, or a wide tab would push the figures far from the name they
+ * belong to: the list stops at {@link REVIEW_ROW_LIST_MAX_WIDTH} instead.
+ *
  * The row adds its own look (rounded corners, vertical padding, a tint); the header, its caption
  * style.
  */
@@ -38,12 +41,28 @@ export const REVIEW_ROW_GRID =
   'grid grid-cols-[1.25rem_minmax(0,1fr)_7rem_minmax(0,8rem)_minmax(0,11rem)] items-center gap-x-3 px-3';
 
 /**
+ * The widest a list of rows grows: the box of {@link REVIEW_LIST_BOX} (a 1 px border and 0.25 rem of
+ * padding on each side, 0.625 rem), the padding of a row (1.5 rem), the fixed columns (1.25 + 7 + 8
+ * + 11 = 27.25 rem), the four gaps (3 rem) and a name of 16 rem: 48.375 rem, rounded up. The longest
+ * name of a point ("Morts avant ton premier objet de résistance", about 240 px, or an item's picture
+ * and name) fits on one line in it.
+ *
+ * The figure is written out here and in {@link REVIEW_TWO_LISTS}, since Tailwind only reads classes
+ * written in full: change both together.
+ */
+export const REVIEW_ROW_LIST_MAX_WIDTH = 'max-w-[48.5rem]';
+
+/**
  * The grid of the lists of a tab that stand two by two on a wide tab, and one under the other on a
  * narrower one: two lists of rows and the gap between them need about 87 rem (see
  * {@link REVIEW_ROW_GRID}). It reads the width of the nearest `@container`, which the caller sets
  * around it, so that it follows the room the tab has and not the window.
+ *
+ * A column is no wider than a list at its widest ({@link REVIEW_ROW_LIST_MAX_WIDTH}), so that on a
+ * very wide tab the second list stands right after the first and not at the far end of the tab.
  */
-export const REVIEW_TWO_LISTS = 'grid grid-cols-1 items-start gap-4 @min-[87rem]:grid-cols-2';
+export const REVIEW_TWO_LISTS =
+  'grid grid-cols-1 items-start gap-4 @min-[87rem]:grid-cols-[repeat(2,minmax(0,48.5rem))]';
 
 /**
  * The look of the box of a list of the review: the rounded border of the lists of the match page. A

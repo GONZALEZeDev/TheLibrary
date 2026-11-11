@@ -35,7 +35,7 @@ import type {
 import { REVIEW_TABS, reviewSearchSchema } from '../../app/router';
 import { Tabs } from '../../components/Tabs';
 import { createI18n } from '../../i18n/i18n';
-import { REVIEW_SECTION_TITLE } from './review-layout';
+import { REVIEW_SECTION_TITLE, REVIEW_TWO_LISTS } from './review-layout';
 import { ReviewSummary } from './ReviewSummary';
 
 /** The texts of the tab, by language. */
@@ -320,7 +320,7 @@ describe('ReviewSummary', () => {
     }
   });
 
-  it('stacks the two sections: the rows need the whole width of the tab', async () => {
+  it('sets the two sections side by side on a wide tab, the weaknesses first', async () => {
     await renderIn(
       'en',
       <ReviewSummary
@@ -328,11 +328,14 @@ describe('ReviewSummary', () => {
       />,
     );
 
-    const container = sectionNamed(STRINGS.en.weaknesses).parentElement;
-    expect(container).toBe(sectionNamed(STRINGS.en.strengths).parentElement);
-    // Side by side, a row would be crushed: nothing makes the container a grid, a flex line or
-    // columns, at any width.
-    expect(container?.className).not.toMatch(/grid|flex|columns/u);
+    const weaknesses = sectionNamed(STRINGS.en.weaknesses);
+    const grid = weaknesses.parentElement ?? expect.unreachable('The tab holds sections');
+    // The grid of two lists, which reads the width of the tab, not of the window: one under the
+    // other on a narrow tab, side by side on a wide one.
+    expect(grid).toHaveClass(REVIEW_TWO_LISTS);
+    expect(grid.parentElement).toHaveClass('@container');
+    // Each section is a cell of the grid, in reading order: the weaknesses, then the strengths.
+    expect(Array.from(grid.children)).toEqual([weaknesses, sectionNamed(STRINGS.en.strengths)]);
   });
 
   it.each(LANGUAGES)(

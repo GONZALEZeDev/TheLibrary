@@ -6,7 +6,9 @@
  * side, share its padding, and are laid out on the same grid (`REVIEW_ROW_GRID`), so that each name
  * stays over its figures. The list inside it adds no padding of its own, and neither does a caller
  * around the box: the budget of the grid (`./review-layout`) counts the border and the padding of
- * this box, and any other padding comes out of the name column of the rows.
+ * this box, and any other padding comes out of the name column of the rows. The box never grows past
+ * `REVIEW_ROW_LIST_MAX_WIDTH`, so that on a wide tab the figures stay next to the names rather than
+ * at the far end of the tab.
  *
  * The rows are listed in the order they are given: the list never sorts, filters or cuts them. A row
  * is keyed by its point (`reviewRowKey`), which no language changes and no two points share, so that
@@ -26,7 +28,7 @@
 import type { ReviewRow as ReviewRowData } from '../../../services/review-view';
 import { GamePicture } from '../../components/GamePicture';
 import { reviewRowKey, reviewTabOf } from './review-format';
-import { REVIEW_LIST_BOX } from './review-layout';
+import { REVIEW_LIST_BOX, REVIEW_ROW_LIST_MAX_WIDTH } from './review-layout';
 import { ReviewRow } from './ReviewRow';
 import { ReviewRowHeader } from './ReviewRowHeader';
 
@@ -71,7 +73,8 @@ export function ReviewRowList({ rows, linked = false }: ReviewRowListProps) {
     return null;
   }
   return (
-    <div className={REVIEW_LIST_BOX}>
+    // The box stops at its widest, so that the figures stay next to the names on a wide tab.
+    <div className={`${REVIEW_LIST_BOX} ${REVIEW_ROW_LIST_MAX_WIDTH}`}>
       <ReviewRowHeader />
       <ul className="divide-y divide-border">
         {rows.map((row) => (

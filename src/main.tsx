@@ -40,6 +40,7 @@ import { APP_VERSION } from './ui/app/app-info';
 import { createQueryClient } from './ui/app/query-client';
 import { createAppRouter } from './ui/app/router';
 import { createUnhandledErrorReporter } from './ui/app/unhandled-errors';
+import { MINIMUM_LOADING_MS } from './ui/components/LoadingGate';
 import { createI18n, RESOURCES } from './ui/i18n/i18n';
 import './ui/theme/theme.css';
 
@@ -229,7 +230,12 @@ async function bootstrap(
     // here too would write each of them twice.
   }).render(
     <StrictMode>
-      <AppProviders services={services} queryClient={queryClient} i18n={i18n}>
+      <AppProviders
+        services={services}
+        queryClient={queryClient}
+        i18n={i18n}
+        minimumLoadingMs={MINIMUM_LOADING_MS}
+      >
         <RouterProvider router={router} />
         {DevTools !== null && (
           <Suspense fallback={null}>

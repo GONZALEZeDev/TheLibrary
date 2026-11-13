@@ -1,7 +1,9 @@
 /**
- * The map replay of the timeline tab, laid out around the souls chart (layout "B"): on wide screens
- * the map takes the left 45 % and the chart and the "At 14:05" panel stack on the right, and the
- * playback bar spans the full width below; on narrow screens everything stacks.
+ * The map replay of the timeline tab, laid out around the souls chart (layout "A"): the players
+ * strip spans the full width on top; below it, on wide screens, the map (45 %) with its buttons and
+ * the objectives history stand on the left, and the chart, the live feed and the rules reminder
+ * stack on the right; the playback bar spans the full width at the bottom. On narrow screens the
+ * two columns stack.
  *
  * The chart is a slot (`chart`): the tab builds it, since it shares the picked death with the death
  * list, and this section only decides where it stands. What the section shows depends on the replay
@@ -12,7 +14,8 @@
  * - `unreadable`: the chart and a sentence saying that the replay cannot be read;
  * - `replay`: the layout above. The map area holds the map, or a sentence when the map cannot be
  *   drawn (`map` is `null`, or no player has a path); a replay that only knows the tracked player
- *   draws the map with a sentence under it. The bar and the panel always stay.
+ *   draws the map with a sentence under it. The strip, the history, the feed, the reminder and the
+ *   bar always stay.
  *
  * The section is focusable and answers the keyboard, see {@link ReplaySection}.
  *
@@ -22,10 +25,13 @@ import type { KeyboardEvent, ReactNode } from 'react';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { MatchId } from '../../../../core/domain/match';
-import { InstantPanel } from './InstantPanel';
+import { LiveFeed } from './LiveFeed';
+import { ObjectivesHistory } from './ObjectivesHistory';
 import { PlaybackBar } from './PlaybackBar';
+import { PlayersStrip } from './PlayersStrip';
 import { stepEvents } from './replay-model';
 import { ReplayMap } from './ReplayMap';
+import { RulesReminder } from './RulesReminder';
 import { useMatchReplay } from './use-match-replay';
 import type { Playback } from './use-playback';
 
@@ -175,14 +181,22 @@ export function ReplaySection({ matchId, playback, chart, trackedKills }: Replay
       onKeyDown={onKeyDown}
       className="space-y-4 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-bright"
     >
-      {/* Wide: the map on the left (45 %), the chart then the panel on the right (55 %). */}
+      {/* The twelve players, full width. */}
+      <PlayersStrip view={view} timeS={playback.timeS} />
+      {/* Wide: the map and the history on the left (45 %), the chart, the feed and the reminder on
+          the right (55 %); narrow: the columns stack. */}
       <div className="grid gap-4 lg:grid-cols-[45fr_55fr]">
-        <div className="min-w-0">{mapArea}</div>
+        <div className="min-w-0 space-y-4">
+          {mapArea}
+          <ObjectivesHistory view={view} timeS={playback.timeS} onSeek={playback.seek} />
+        </div>
         <div className="min-w-0 space-y-4">
           {chart}
-          <InstantPanel view={view} timeS={playback.timeS} />
+          <LiveFeed view={view} timeS={playback.timeS} />
+          <RulesReminder />
         </div>
       </div>
+      {/* The transport controls, full width. */}
       <PlaybackBar view={view} playback={playback} stepTimes={stepTimes} />
     </section>
   );

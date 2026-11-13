@@ -253,17 +253,6 @@
       "trackedOnly": "Only your path is in this match's archive, so only you are drawn on the map.",
       "noPositions": "The players' paths are not in this match's archive, so the map cannot be drawn."
     },
-    "panel": {
-      "title": "At {{time}}",
-      "destroyed": "Objectives destroyed",
-      "noneDestroyed": "No objective destroyed yet.",
-      "dead": "Dead players",
-      "noneDead": "Nobody is dead.",
-      "respawnsIn": "respawns in {{s}} s",
-      "respawnUnknown": "respawn time unknown",
-      "next": "Next event",
-      "noNext": "No more scheduled events."
-    },
     "controls": {
       "play": "Play",
       "pause": "Pause",

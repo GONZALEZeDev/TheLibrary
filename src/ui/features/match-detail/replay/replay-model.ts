@@ -1,5 +1,5 @@
 /**
- * The pure model of the map replay: everything the map, the playback bar and the "At 14:05" panel
+ * The pure model of the map replay: everything the map, the playback bar and the live cards
  * compute from a {@link ReplayView} and the shared cursor, with no React in it.
  *
  * Times are in seconds since the start of the match, positions are relative to the minimap picture
@@ -7,8 +7,6 @@
  *
  * @packageDocumentation
  */
-import { scheduleOccurrences } from '../../../../core/match-map/game-schedule';
-import type { ScheduleOccurrence } from '../../../../core/match-map/game-schedule';
 import type { RelativePoint } from '../../../../core/match-map/map-geometry';
 import { isDeadAt } from '../../../../core/match-map/match-replay';
 import type {
@@ -192,69 +190,6 @@ export function previousEvent(times: readonly number[], currentS: number): numbe
  */
 export function nextEvent(times: readonly number[], currentS: number): number | null {
   return times.find((timeS) => timeS > currentS) ?? null;
-}
-
-/** What the "At 14:05" panel shows for one moment. */
-export interface InstantSummary {
-  /** The objectives fallen by then (`destroyedAtS` at or before the moment), the latest first. */
-  readonly destroyed: readonly ReplayViewObjective[];
-  /**
-   * The players dead at the moment, with or without a path: the tracked player first, then their
-   * allies, then the enemies. `respawnInS` is the wait left in whole seconds, `null` when unknown.
-   */
-  readonly dead: readonly {
-    readonly player: ReplayViewPlayer;
-    readonly respawnInS: number | null;
-  }[];
-  /** The next scheduled event after the moment; `null` when none is left. */
-  readonly next: ScheduleOccurrence | null;
-}
-
-/**
- * Sort key of a player in the panel: the tracked player, then allies, then enemies.
- *
- * @param player - The player.
- * @returns 0 for the tracked player, 1 for an ally, 2 for an enemy.
- */
-function sideRank(player: ReplayViewPlayer): number {
-  if (player.isTracked) return 0;
-  return player.side === 'ally' ? 1 : 2;
-}
-
-/**
- * Sum up what has happened at a moment of the match.
- *
- * @param view - The replay.
- * @param timeS - The moment, in seconds; may be fractional.
- * @returns The fallen objectives, the dead players and the next scheduled event.
- */
-export function instantAt(view: ReplayData, timeS: number): InstantSummary {
-  const destroyed = view.objectives
-    .filter(
-      (objective): objective is ReplayViewObjective & { destroyedAtS: number } =>
-        objective.destroyedAtS !== null && objective.destroyedAtS <= timeS,
-    )
-    .toSorted((first, second) => second.destroyedAtS - first.destroyedAtS);
-
-  const dead = view.players
-    .filter((player) => isDeadAt(player.deaths, timeS))
-    .toSorted((first, second) => sideRank(first) - sideRank(second) || first.slot - second.slot)
-    .map((player) => {
-      // The death that covers the moment tells when the player is back.
-      const death = player.deaths.findLast((entry) => entry.timeS <= timeS);
-      return {
-        player,
-        respawnInS:
-          death?.respawnS === null || death === undefined
-            ? null
-            : Math.ceil(death.respawnS - timeS),
-      };
-    });
-
-  // A fractional moment still sits inside its second: the next event is after that second.
-  const second = Math.floor(timeS);
-  const next = scheduleOccurrences(view.durationS).find((entry) => entry.timeS > second) ?? null;
-  return { destroyed, dead, next };
 }
 
 /** What the players strip shows for one player at a moment. */

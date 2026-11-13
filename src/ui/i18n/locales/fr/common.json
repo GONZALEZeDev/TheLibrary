@@ -253,17 +253,6 @@
       "trackedOnly": "Seul ton trajet est dans l'archive de cette partie : tu es le seul dessiné sur la carte.",
       "noPositions": "Les trajets des joueurs ne sont pas dans l'archive de cette partie : la carte ne peut pas être dessinée."
     },
-    "panel": {
-      "title": "À {{time}}",
-      "destroyed": "Objectifs détruits",
-      "noneDestroyed": "Aucun objectif n'est encore détruit.",
-      "dead": "Joueurs morts",
-      "noneDead": "Personne n'est mort.",
-      "respawnsIn": "réapparaît dans {{s}} s",
-      "respawnUnknown": "délai de réapparition inconnu",
-      "next": "Prochain événement",
-      "noNext": "Plus aucun événement prévu."
-    },
     "controls": {
       "play": "Lecture",
       "pause": "Pause",

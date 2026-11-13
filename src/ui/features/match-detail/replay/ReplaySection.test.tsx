@@ -6,7 +6,7 @@
  *
  * @packageDocumentation
  */
-import { render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { Language } from '../../../../core/settings/language';
@@ -54,7 +54,7 @@ function player(overrides: Partial<ReplayViewPlayer> = {}): ReplayViewPlayer {
   return {
     slot: 1,
     side: 'ally',
-    team: 'hidden_king',
+    team: overrides.side === 'enemy' ? 'archmother' : 'hidden_king',
     isTracked: true,
     heroId: 1,
     heroName: 'Haze',
@@ -161,7 +161,8 @@ describe('ReplaySection', () => {
     expect(screen.getByTestId('chart')).toBeInTheDocument();
     expect(screen.getByRole('slider', { name: strings.slider })).toBeInTheDocument();
     // The panel is titled by the moment of the cursor.
-    expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent(/0:03/);
+    // The v1 "At 14:05" panel is gone; the cards of layout A stand in its place.
+    expect(screen.queryByText(/^At 0:03$/)).not.toBeInTheDocument();
     expect(screen.queryByText(strings.mapUnavailable)).not.toBeInTheDocument();
     expect(screen.queryByText(strings.trackedOnly)).not.toBeInTheDocument();
   });
@@ -175,7 +176,6 @@ describe('ReplaySection', () => {
       expect(screen.getByText(strings.mapUnavailable)).toBeInTheDocument();
       expect(screen.queryByRole('img', { name: strings.mapTitle })).not.toBeInTheDocument();
       expect(screen.getByRole('slider', { name: strings.slider })).toBeInTheDocument();
-      expect(screen.getByRole('heading', { level: 3 })).toBeInTheDocument();
       expect(screen.getByTestId('chart')).toBeInTheDocument();
     },
   );
@@ -277,5 +277,114 @@ describe('ReplaySection', () => {
     await user.keyboard(' ');
     // The button's own click calls `toggle` once; the section adds nothing.
     expect(playback.toggle).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** A replay with twelve players (six per team) and a few deaths, for the layout tests. */
+function fullReplay(overrides: Partial<ReplayData> = {}): ReplayData {
+  const players = Array.from({ length: 12 }, (_, index) =>
+    player({
+      slot: index + 1,
+      side: index < 6 ? 'ally' : 'enemy',
+      isTracked: index === 0,
+      heroName: `Hero${String(index + 1)}`,
+      deaths:
+        index === 1
+          ? [{ timeS: 5, respawnS: 20, killerSlot: 8 }]
+          : index === 7
+            ? [{ timeS: 6, respawnS: 21, killerSlot: 1 }]
+            : [],
+    }),
+  );
+  return replayView({ durationS: 60, players, ...overrides });
+}
+
+/** The cards of layout A are named sections; the strip and the feed hold the fixed slots. */
+describe('ReplaySection layout A', () => {
+  it('layout A renders the strip, the map column with the history, and the right column with the feed and the reminder', async () => {
+    await renderSection(fullReplay());
+    const section = screen.getByRole('region', { name: STRINGS.en.title });
+
+    const strip = within(section).getByRole('region', { name: 'Players' });
+    expect(within(strip).getAllByRole('listitem')).toHaveLength(12);
+    const history = within(section).getByRole('region', { name: 'Objectives history' });
+    const feed = within(section).getByRole('region', { name: 'Live feed' });
+    const map = within(section).getByRole('img', { name: STRINGS.en.mapTitle });
+    const chart = within(section).getByTestId('chart');
+    const rules = within(section).getByRole('heading', { name: 'Game rules' });
+    const slider = within(section).getByRole('slider', { name: STRINGS.en.slider });
+
+    // Order in the document: strip, then the map column (map, history), then the right column
+    // (chart, feed, reminder), then the bar.
+    const follows = (first: Element, second: Element) =>
+      Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(follows(strip, map)).toBe(true);
+    expect(follows(map, history)).toBe(true);
+    expect(follows(history, chart)).toBe(true);
+    expect(follows(chart, feed)).toBe(true);
+    expect(follows(feed, rules)).toBe(true);
+    expect(follows(rules, slider)).toBe(true);
+  });
+
+  it('wires the objectives history to the playback seek', async () => {
+    const user = userEvent.setup();
+    const playback = await renderSection(
+      fullReplay({
+        objectives: [
+          {
+            side: 'enemy',
+            team: 'archmother',
+            identity: { kind: 'walker', lane: 1, index: null },
+            position: null,
+            destroyedAtS: 30,
+          },
+        ],
+      }),
+    );
+    const history = screen.getByRole('region', { name: 'Objectives history' });
+    await user.click(within(history).getAllByRole('button').at(0) ?? history);
+    expect(playback.seek).toHaveBeenCalledTimes(1);
+  });
+
+  it('the map-unavailable sentence keeps every other card', async () => {
+    await renderSection(fullReplay({ map: null }));
+
+    expect(screen.getByText(STRINGS.en.mapUnavailable)).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Players' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Objectives history' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Live feed' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Game rules' })).toBeInTheDocument();
+    expect(screen.getByRole('slider', { name: STRINGS.en.slider })).toBeInTheDocument();
+  });
+
+  it('keeps every other card when no position is known', async () => {
+    await renderSection(fullReplay({ coverage: 'none' }));
+
+    expect(screen.getByText(STRINGS.en.noPositions)).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Players' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Objectives history' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Live feed' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Game rules' })).toBeInTheDocument();
+  });
+
+  it('the section height does not change between two seconds with different event counts', async () => {
+    /** The structure that fixes the height: the strip slots and the feed line slots. */
+    const slotCounts = () => ({
+      strip: within(screen.getByRole('region', { name: 'Players' })).getAllByRole('listitem')
+        .length,
+      feed: within(screen.getByRole('region', { name: 'Live feed' })).getAllByRole('listitem')
+        .length,
+    });
+
+    // Second 3: no death yet, so the feed is empty. Second 30: two deaths and some health.
+    const view = fullReplay();
+    await renderSection(view, 'en', playbackAt(3));
+    const atThree = slotCounts();
+    cleanup();
+    await renderSection(view, 'en', playbackAt(30));
+    const atThirty = slotCounts();
+
+    expect(atThree).toEqual({ strip: 12, feed: 5 });
+    expect(atThirty).toEqual(atThree);
   });
 });

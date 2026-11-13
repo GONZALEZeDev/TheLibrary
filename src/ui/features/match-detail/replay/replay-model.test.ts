@@ -9,7 +9,6 @@ import {
   DEATH_LEAD_S,
   feedEvents,
   FULL_MAP,
-  instantAt,
   LIVE_FEED_SIZE,
   liveFeedAt,
   objectiveHistory,
@@ -202,68 +201,6 @@ describe('stepEvents, previousEvent and nextEvent', () => {
 
   it('leads a picked death by five seconds', () => {
     expect(DEATH_LEAD_S).toBe(5);
-  });
-});
-
-describe('instantAt', () => {
-  const view = replay({
-    durationS: 700,
-    players: [
-      player({ slot: 3, side: 'enemy', deaths: [{ timeS: 100, respawnS: 130, killerSlot: null }] }),
-      player({
-        slot: 1,
-        isTracked: true,
-        hasPath: false,
-        deaths: [{ timeS: 100, respawnS: 160, killerSlot: null }],
-      }),
-      player({ slot: 2, side: 'ally', deaths: [{ timeS: 100, respawnS: null, killerSlot: null }] }),
-    ],
-    objectives: [
-      {
-        side: 'ally',
-        team: 'hidden_king',
-        identity: { kind: 'walker', lane: 1, index: null },
-        position: null,
-        destroyedAtS: 50,
-      },
-      {
-        side: 'enemy',
-        team: 'archmother',
-        identity: { kind: 'walker', lane: 3, index: null },
-        position: null,
-        destroyedAtS: 90,
-      },
-      {
-        side: 'enemy',
-        team: 'archmother',
-        identity: { kind: 'core', lane: null, index: null },
-        position: null,
-        destroyedAtS: 500,
-      },
-    ],
-  });
-
-  it('lists the destroyed objectives, latest first', () => {
-    expect(instantAt(view, 100).destroyed.map((o) => o.destroyedAtS)).toEqual([90, 50]);
-  });
-
-  it('lists the dead, tracked first then allies then enemies, with the respawn countdown', () => {
-    const { dead } = instantAt(view, 100);
-    expect(dead.map((d) => d.player.slot)).toEqual([1, 2, 3]);
-    // Tracked has no path and is still listed; 60 s left.
-    expect(dead.map((d) => d.respawnInS)).toEqual([60, null, 30]);
-  });
-
-  it('rounds the countdown up to whole seconds', () => {
-    const { dead } = instantAt(view, 100.5);
-    expect(dead.find((d) => d.player.slot === 3)?.respawnInS).toBe(30);
-  });
-
-  it('gives the next scheduled event strictly after the time', () => {
-    expect(instantAt(view, 100).next?.timeS).toBe(120);
-    expect(instantAt(view, 120).next?.timeS).toBe(180);
-    expect(instantAt(view, 120.4).next?.timeS).toBe(180);
-    expect(instantAt(replay({ durationS: 10 }), 5).next).toBeNull();
   });
 });
 

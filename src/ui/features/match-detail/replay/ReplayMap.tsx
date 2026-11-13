@@ -12,9 +12,12 @@
  * The picture and the lanes never change while the cursor moves, so they are a memoised layer of
  * their own; each frame only re-renders the objectives, the trails and the players. For assistive
  * technologies the map is one image named by its title; each icon and marker carries a title the
- * pointer shows over it ("Walker · enemy"). Colours are the theme's tokens, and a team is never
- * told by its colour alone: an enemy player has a dashed ring (an ally a solid one), and an enemy
- * objective is a diamond (an ally one a rounded square). A fallen objective is told by its dashed,
+ * pointer shows over it ("Walker · Archmother"). Everything is coloured by the game's team identity
+ * (Hidden King or Archmother), never by ally or enemy, and a team is never told by its colour
+ * alone: an enemy player has a dashed ring (an ally a solid one), and an enemy objective is a
+ * diamond (an ally one a rounded square). Standing guardians, walkers and the mid boss pit carry
+ * their game icon; an icon that fails to load leaves the drawn shape. A fallen objective is told by
+ * its dashed,
  * unfilled outline, a cue that no team shares with the shapes, so a fallen one is never taken for
  * an enemy one.
  *
@@ -32,12 +35,10 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { useTranslation } from 'react-i18next';
+import { GAME_ICONS, type GameIconId } from '../../../../core/match-map/game-icons';
 import type { RelativePoint } from '../../../../core/match-map/map-geometry';
-import type {
-  ReplayViewObjective,
-  ReplayViewPlayer,
-  Side,
-} from '../../../../services/match-replay-view';
+import type { TeamIdentity } from '../../../../core/match-map/team-identity';
+import type { ReplayViewObjective, ReplayViewPlayer } from '../../../../services/match-replay-view';
 import { Button } from '../../../components/Button';
 import {
   FULL_MAP,
@@ -48,6 +49,7 @@ import {
   type MapViewport,
   type ReplayData,
 } from './replay-model';
+import { TEAM_FILL, TEAM_STROKE } from './team-style';
 
 /** The size of the frame the map is drawn in: the relative units (0 to 1) of the data times it. */
 const MAP_SIZE = 1000;
@@ -77,7 +79,7 @@ const LANE_WIDTH_PX = 3;
 /** The width of a trail on the screen, in pixels. */
 const TRAIL_WIDTH_PX = 2;
 
-/** Between the parts of the title of an icon or a marker: "Walker · enemy". */
+/** Between the parts of the title of an icon or a marker: "Walker · Archmother". */
 const TITLE_SEPARATOR = ' · ';
 
 /** The half size of the marker of each kind of objective, in frame units at zoom 1. */
@@ -93,11 +95,14 @@ const OBJECTIVE_RADIUS = {
 /** The half size of the marker of the mid boss pit, in frame units at zoom 1. */
 const MID_BOSS_RADIUS = 14;
 
-/** The classes of each team, written out in full so that Tailwind finds them. */
-const SIDE_CLASSES = {
-  ally: { ring: 'stroke-accent-bright', fill: 'fill-accent-bright' },
-  enemy: { ring: 'stroke-loss', fill: 'fill-loss' },
-} as const satisfies Record<Side, { readonly ring: string; readonly fill: string }>;
+/** The game icon a standing objective carries inside its shape; the other kinds have none. */
+const OBJECTIVE_ICON: Partial<Record<ReplayViewObjective['identity']['kind'], GameIconId>> = {
+  guardian: 'guardian',
+  walker: 'walker',
+};
+
+/** How big the icon of an objective is next to the half size of its shape. */
+const OBJECTIVE_ICON_RATIO = 1.5;
 
 /** Props of {@link ReplayMap}. */
 export interface ReplayMapProps {
@@ -165,14 +170,16 @@ interface ObjectiveMarkerProps {
   readonly standing: boolean;
   /** The zoom of the map, to keep the marker the same size on the screen. */
   readonly scale: number;
-  /** The title the pointer shows over it ("Walker · enemy"). */
+  /** The title the pointer shows over it ("Walker · Archmother"). */
   readonly label: string;
 }
 
 /**
- * The marker of one objective: a filled square while it stands, a dashed outline once it has
- * fallen.
- * It is memoised, so only an objective that falls (or a zoom) redraws it.
+ * The marker of one objective: a square in the colour of its team while it stands (with the game
+ * icon of a guardian or a walker inside), a dashed outline once it has fallen (with no icon, so a
+ * fallen one reads as empty).
+ * It is memoised, so only an objective that falls (or a zoom) redraws it; whether its icon failed
+ * to load is its own state.
  *
  * @returns The marker, or nothing when the objective has no position on the picture.
  */
@@ -182,10 +189,13 @@ const ObjectiveMarker = memo(function ObjectiveMarker({
   scale,
   label,
 }: ObjectiveMarkerProps) {
+  // Set once the icon failed to load: the plain shape stays.
+  const [iconFailed, setIconFailed] = useState(false);
   if (objective.position === null) return null;
   const { x, y } = frameOf(objective.position);
   const radius = OBJECTIVE_RADIUS[objective.identity.kind] / scale;
-  const classes = SIDE_CLASSES[objective.side];
+  const iconId = OBJECTIVE_ICON[objective.identity.kind];
+  const iconSize = radius * OBJECTIVE_ICON_RATIO;
   return (
     <g
       data-state={standing ? 'standing' : 'destroyed'}
@@ -201,11 +211,74 @@ const ObjectiveMarker = memo(function ObjectiveMarker({
         // An enemy objective is turned into a diamond: a shape cue that is not the dashes of a
         // fallen one.
         transform={objective.side === 'enemy' ? 'rotate(45)' : undefined}
-        className={standing ? `${classes.fill} stroke-bg` : `fill-none ${classes.ring}`}
+        className={
+          standing
+            ? `${TEAM_FILL[objective.team]} stroke-bg`
+            : `fill-none ${TEAM_STROKE[objective.team]}`
+        }
         strokeWidth={standing ? 1 : RING_WIDTH}
         vectorEffect="non-scaling-stroke"
         strokeDasharray={standing ? undefined : '4 3'}
       />
+      {standing && iconId !== undefined && !iconFailed && (
+        <image
+          href={GAME_ICONS[iconId]}
+          x={-iconSize / 2}
+          y={-iconSize / 2}
+          width={iconSize}
+          height={iconSize}
+          onError={() => {
+            setIconFailed(true);
+          }}
+        />
+      )}
+    </g>
+  );
+});
+
+/** Props of {@link MidBossMarker}. */
+interface MidBossMarkerProps {
+  /** Where the pit is, in frame units. */
+  readonly x: number;
+  /** Where the pit is, in frame units. */
+  readonly y: number;
+  /** The zoom of the map, to keep the marker the same size on the screen. */
+  readonly scale: number;
+  /** The title the pointer shows over it. */
+  readonly label: string;
+}
+
+/**
+ * The marker of the mid boss pit: its game icon, or a drawn disc when the icon fails to load. It
+ * is memoised, so only a zoom redraws it.
+ *
+ * @returns The marker.
+ */
+const MidBossMarker = memo(function MidBossMarker({ x, y, scale, label }: MidBossMarkerProps) {
+  // Set once the icon failed to load: the drawn disc takes its place.
+  const [iconFailed, setIconFailed] = useState(false);
+  const radius = MID_BOSS_RADIUS / scale;
+  return (
+    <g transform={`translate(${String(x)} ${String(y)})`}>
+      <title>{label}</title>
+      {iconFailed ? (
+        <circle
+          r={radius}
+          className="fill-surface-raised stroke-fg-muted"
+          strokeWidth={RING_WIDTH / scale}
+        />
+      ) : (
+        <image
+          href={GAME_ICONS.mid_boss}
+          x={-radius}
+          y={-radius}
+          width={radius * 2}
+          height={radius * 2}
+          onError={() => {
+            setIconFailed(true);
+          }}
+        />
+      )}
     </g>
   );
 });
@@ -222,7 +295,7 @@ interface PlayerIconProps {
   readonly scale: number;
   /** The id of the clip path that rounds the icons. */
   readonly clipId: string;
-  /** The title the pointer shows over the icon ("Haze · ally"). */
+  /** The title the pointer shows over the icon ("Haze · Hidden King"). */
   readonly label: string;
 }
 
@@ -235,12 +308,11 @@ interface PlayerIconProps {
  */
 function PlayerIcon({ player, x, y, scale, clipId, label }: PlayerIconProps) {
   const size = ICON_SIZE / scale;
-  const classes = SIDE_CLASSES[player.side];
   return (
     <g transform={`translate(${String(x)} ${String(y)})`}>
       <title>{label}</title>
       {player.iconUrl === null ? (
-        <circle r={size / 2} className={classes.fill} />
+        <circle r={size / 2} className={TEAM_FILL[player.team]} />
       ) : (
         <image
           href={player.iconUrl}
@@ -253,7 +325,7 @@ function PlayerIcon({ player, x, y, scale, clipId, label }: PlayerIconProps) {
       )}
       <circle
         r={size / 2}
-        className={`fill-none ${classes.ring}`}
+        className={`fill-none ${TEAM_STROKE[player.team]}`}
         strokeWidth={RING_WIDTH / scale}
         // An enemy ring is dashed, an ally ring solid: the team is not told by its colour alone.
         strokeDasharray={
@@ -274,15 +346,15 @@ function PlayerIcon({ player, x, y, scale, clipId, label }: PlayerIconProps) {
 }
 
 /**
- * The title of an icon or a marker: its name, then its team.
+ * The title of an icon or a marker: its name, then the game's name of its team.
  *
  * @param name - The name.
- * @param side - The team, relative to the tracked player.
+ * @param team - The in-game identity of its team.
  * @param t - Translation function.
- * @returns The title ("Haze · ally").
+ * @returns The title ("Haze · Hidden King").
  */
-function titleOf(name: string, side: Side, t: TFunction): string {
-  return [name, t(`replay.side.${side}`)].join(TITLE_SEPARATOR);
+function titleOf(name: string, team: TeamIdentity, t: TFunction): string {
+  return [name, t(`replay.teams.${team}`)].join(TITLE_SEPARATOR);
 }
 
 /**
@@ -411,20 +483,16 @@ export function ReplayMap({ view, timeS, showTrails, onToggleTrails }: ReplayMap
             objective={objective}
             standing={objective.destroyedAtS === null || objective.destroyedAtS > second}
             scale={scale}
-            label={titleOf(t(`replay.objective.${objective.identity.kind}`), objective.side, t)}
+            label={titleOf(t(`replay.objective.${objective.identity.kind}`), objective.team, t)}
           />
         ))}
         {/* The mid boss pit, which stands apart from the objectives of the teams. */}
-        <g
-          transform={`translate(${String(frameOf(map.midBoss).x)} ${String(frameOf(map.midBoss).y)})`}
-        >
-          <title>{t('replay.schedule.mid_boss')}</title>
-          <circle
-            r={MID_BOSS_RADIUS / scale}
-            className="fill-surface-raised stroke-fg-muted"
-            strokeWidth={RING_WIDTH / scale}
-          />
-        </g>
+        <MidBossMarker
+          x={frameOf(map.midBoss).x}
+          y={frameOf(map.midBoss).y}
+          scale={scale}
+          label={t('replay.schedule.mid_boss')}
+        />
         {showTrails &&
           icons.map(({ player }) => {
             const trail = trailOf(player.positions, timeS, TRAIL_SECONDS);
@@ -439,7 +507,7 @@ export function ReplayMap({ view, timeS, showTrails, onToggleTrails }: ReplayMap
                     (point) => `${String(point.left * MAP_SIZE)},${String(point.top * MAP_SIZE)}`,
                   )
                   .join(' ')}
-                className={`fill-none ${SIDE_CLASSES[player.side].ring}`}
+                className={`fill-none ${TEAM_STROKE[player.team]}`}
                 strokeWidth={TRAIL_WIDTH_PX}
                 strokeOpacity={0.7}
                 strokeLinejoin="round"
@@ -459,7 +527,7 @@ export function ReplayMap({ view, timeS, showTrails, onToggleTrails }: ReplayMap
               y={y}
               scale={scale}
               clipId={clipId}
-              label={titleOf(player.heroName ?? t('timeline.deaths.unknownHero'), player.side, t)}
+              label={titleOf(player.heroName ?? t('timeline.deaths.unknownHero'), player.team, t)}
             />
           );
         })}

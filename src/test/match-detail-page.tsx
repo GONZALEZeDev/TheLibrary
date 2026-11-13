@@ -519,6 +519,11 @@ interface RenderOptions {
   /** The query client of the page, for the test that must watch it; a test one by default. */
   readonly queryClient?: QueryClient;
   /**
+   * The minimum time of the loading gate, in milliseconds, for the tests about the gate; none by
+   * default, so the page shows its content as soon as it is read.
+   */
+  readonly minimumLoadingMs?: number;
+  /**
    * Whether the page is rendered inside `<StrictMode>`, as `main.tsx` does in development: React then
    * renders twice and replays the effects (mount, unmount, mount). Off by default.
    */
@@ -544,6 +549,7 @@ interface RenderedPage {
  * @param options - See {@link RenderOptions}.
  * @param options.language - Language of the interface; English by default.
  * @param options.queryClient - The query client of the page; a test one by default.
+ * @param options.minimumLoadingMs - The minimum time of the loading gate; none by default.
  * @param options.strict - Whether to render the page inside `<StrictMode>`; off by default.
  * @param options.tab - The `tab` search parameter of the address the page opens at; none by default.
  * @returns The router of the page and its history.
@@ -554,6 +560,7 @@ export async function renderMatchDetail(
   {
     language = 'en',
     queryClient = createTestQueryClient(testServices.logger),
+    minimumLoadingMs = 0,
     strict = false,
     tab,
   }: RenderOptions = {},
@@ -563,7 +570,12 @@ export async function renderMatchDetail(
   const history = createMemoryHistory({ initialEntries: [`/matches/${String(matchId)}${search}`] });
   const router = createAppRouter(history);
   const page = (
-    <AppProviders services={testServices.services} queryClient={queryClient} i18n={i18n}>
+    <AppProviders
+      services={testServices.services}
+      queryClient={queryClient}
+      i18n={i18n}
+      minimumLoadingMs={minimumLoadingMs}
+    >
       <RouterProvider router={router} />
     </AppProviders>
   );

@@ -2,8 +2,11 @@
  * Review screen: the player's last matches summed up, set against the players of the tier above and
  * against the matches before, or why there is no review.
  *
- * The review (`useReview`) is read from the local database, so it is quick and works offline. The
- * page then shows one of:
+ * The review (`useReview`) is read from the local database, so it is quick and works offline. Under
+ * the title, the page first shows a loading gate ("Analysing your matches…") until the review is
+ * read, and for a short minimum each time the page opens, so that the player sees the app look at
+ * their matches; opening another tab of the review shows no gate, and a review returned to through the
+ * browser history skips the minimum, so that it comes back where the player left it. The page then shows one of:
  * - the invitation to link a Steam account, the same one the match list gives, when none is linked;
  * - one sentence, when the account has no analysed match yet: the review fills after the next
  *   synchronisation;
@@ -57,8 +60,10 @@ import type {
   ReviewItemStats,
   ReviewWindow,
 } from '../../../services/review-view';
+import { useReturnedThroughHistory } from '../../app/history-return';
 import type { ReviewTab } from '../../app/router';
 import { EmptyState } from '../../components/EmptyState';
+import { LoadingGate, useMinimumLoading } from '../../components/LoadingGate';
 import { PageHeader } from '../../components/PageHeader';
 import { Panel } from '../../components/Panel';
 import { StatusLine } from '../../components/StatusLine';
@@ -310,10 +315,20 @@ export function ReviewPage() {
   // The review, read again at every synchronisation, and the download of its comparison.
   const { review, refresh } = useReviewWithCommunity();
   const view = review.data;
-  const ready = view?.kind === 'ready' ? view.review : null;
+  // The loading gate, until the review is read (or failed to be), for a short minimum from the
+  // opening of the page; the key never changes, so moving between the tabs shows no gate.
+  // Returned to through the browser history (back from a match it links to), the review shows as
+  // soon as it is read, so that the router finds it whole when it gives its scroll back.
+  const returned = useReturnedThroughHistory();
+  const gated = useMinimumLoading(view !== undefined || review.isError, 'review', {
+    skipMinimum: returned,
+  });
+  const ready = !gated && view?.kind === 'ready' ? view.review : null;
 
   let body: ReactNode = null;
-  if (ready !== null) {
+  if (gated) {
+    body = <LoadingGate text={t('review.loading')} />;
+  } else if (ready !== null) {
     body = (
       <Tabs
         label={t('review.tabs.label')}
@@ -351,7 +366,6 @@ export function ReviewPage() {
     // empty screen.
     body = <StatusLine kind="error" error={review.error} />;
   }
-  // While the review is read (from the local database, so in a blink) only the title is shown.
 
   return (
     <>

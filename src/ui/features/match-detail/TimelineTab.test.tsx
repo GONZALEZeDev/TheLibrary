@@ -356,9 +356,11 @@ describe('the timeline tab in the match page', () => {
     // The panel is named by its tab, and holds the chart of the match read from its archive.
     const panel = screen.getByRole('tabpanel');
     expect(panel).toHaveAccessibleName('Timeline');
-    expect(
-      await within(panel).findByRole('img', { name: STRINGS.en.chartTitle }),
-    ).toBeInTheDocument();
+    // Read in one go: the chart is drawn alone first, then moved next to the map once the replay is
+    // read, which draws it again. An element found before the move would be gone after it.
+    await waitFor(() => {
+      expect(within(panel).getByRole('img', { name: STRINGS.en.chartTitle })).toBeInTheDocument();
+    });
   });
 
   it.each(LANGUAGES)('shows the timeline tab second, in %s', async (language) => {

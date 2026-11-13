@@ -86,6 +86,7 @@ import {
 import { matchSummary, testMatchId } from '../../../test/test-data';
 import { AppProviders } from '../../app/AppProviders';
 import { createAppRouter, type MatchTab } from '../../app/router';
+import { MINIMUM_LOADING_MS } from '../../components/LoadingGate';
 import { createI18n } from '../../i18n/i18n';
 import { DETAILS_QUERY_KEY } from '../matches/use-matches';
 
@@ -1655,5 +1656,89 @@ describe('MatchDetailPage way back', () => {
 
     expect(router.state.location.pathname).toBe(matchAddress);
     expect(entryIndex(router)).toBe(1);
+  });
+});
+
+describe('MatchDetailPage loading gate', () => {
+  /** What the gate says, in English. */
+  const LOADING = 'Analysing the match…';
+
+  /** How long a test waits for the content behind the gate: well past the minimum of the app. */
+  const CONTENT_TIMEOUT_MS = 3_000;
+
+  /**
+   * Wait for the tabs of the match, behind the gate.
+   *
+   * @returns The list of the tabs.
+   */
+  function findTabs(): Promise<HTMLElement> {
+    return screen.findByRole('tablist', {}, { timeout: CONTENT_TIMEOUT_MS });
+  }
+
+  it('shows the gate under the header as a status, then the tabs of the match', async () => {
+    const testServices = await synchronised();
+
+    await renderMatchDetail(ARCHIVED_ID, testServices, { minimumLoadingMs: MINIMUM_LOADING_MS });
+
+    // The title stays above the gate; the tabs wait behind it.
+    expect(
+      await screen.findByRole('heading', { level: 1, name: `Match ${String(ARCHIVED_ID)}` }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(LOADING).closest('[role="status"]')).not.toBeNull();
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    await findTabs();
+    expect(screen.queryByText(LOADING)).not.toBeInTheDocument();
+  });
+
+  it('shows the gate again for another match, even one already read, but not for another tab', async () => {
+    const user = userEvent.setup();
+    const testServices = await synchronised();
+    const other = ARCHIVED_IDS.find((id) => id !== ARCHIVED_ID) ?? expect.unreachable();
+    const { router } = await renderMatchDetail(ARCHIVED_ID, testServices, {
+      minimumLoadingMs: MINIMUM_LOADING_MS,
+    });
+    await findTabs();
+
+    // Another tab of the same match: no gate.
+    await user.click(screen.getByRole('tab', { name: 'Timeline' }));
+    expect(screen.queryByText(LOADING)).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Timeline' })).toHaveAttribute('aria-selected', 'true');
+
+    // Another match, then back to the first, already read: the gate each time, before the tabs.
+    for (const matchId of [other, ARCHIVED_ID]) {
+      await act(() => router.navigate({ to: '/matches/$matchId', params: { matchId } }));
+      expect(screen.getByText(LOADING)).toBeInTheDocument();
+      expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+      await findTabs();
+    }
+  });
+
+  it('skips the gate for a match returned to through the browser history', async () => {
+    const testServices = await synchronised();
+    const other = ARCHIVED_IDS.find((id) => id !== ARCHIVED_ID) ?? expect.unreachable();
+    const { router } = await renderMatchDetail(ARCHIVED_ID, testServices, {
+      minimumLoadingMs: MINIMUM_LOADING_MS,
+    });
+    await findTabs();
+    await act(() => router.navigate({ to: '/matches/$matchId', params: { matchId: other } }));
+    await findTabs();
+
+    // Whether the gate shows at any moment of the way back, watched on every change of the page.
+    let gateShown = false;
+    const observer = new MutationObserver(() => {
+      gateShown ||= screen.queryByText(LOADING) !== null;
+    });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    act(() => {
+      router.history.back();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(String(ARCHIVED_ID));
+    });
+    await findTabs();
+    observer.disconnect();
+
+    // The match, read before, shows at once: the router finds it whole to give its scroll back.
+    expect(gateShown).toBe(false);
   });
 });

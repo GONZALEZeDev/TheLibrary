@@ -10,6 +10,16 @@ Ajouts, Modifications, Corrections et Suppressions.
 
 ## [Unreleased]
 
+### Modifications
+
+- La liste des parties alterne le fond de ses lignes : chaque partie se lit d'un seul trait.
+- L'ouverture d'une partie ou du Bilan passe par une courte étape « Analyse… » avant la page, à chaque fois, même quand les données sont déjà là.
+- Pendant une synchronisation, une partie dont le détail est encore attendu ne peut pas être ouverte : sa ligne indique « En cours… » jusqu'à ce que la synchronisation l'ait archivée.
+
+### Suppressions
+
+- Les parties Street Brawl : l'app ne les télécharge plus et supprime celles qu'elle avait enregistrées.
+
 ## [0.1.2] - 2026-11-02
 
 ### Ajouts

@@ -34,6 +34,12 @@
  * goes, and the damage tab, which has nothing to show until the analysis is stored, is read again
  * when it is.
  *
+ * Under the header, the page first shows a loading gate ("Analysing the match…"): until the view of
+ * the match is read, and its analysis too for an archived match, and for a short minimum every time
+ * another match opens, even one already read, so that the player sees the app look at the match they
+ * picked. Opening another tab of the same match shows no gate, and a match returned to through the
+ * browser history (back, forward) skips the minimum, so that it comes back where the player left it.
+ *
  * Above the title of every state of the page is a link back to the match list: a step back in the
  * browser history when the match was opened from the list (the filters and the scroll of the list
  * come back with it), a visit of the list otherwise.
@@ -48,10 +54,11 @@ import { useTranslation } from 'react-i18next';
 import type { MatchId } from '../../../core/domain/match';
 import type { ArchiveFacts } from '../../../core/match-detail/archive-facts';
 import type { MatchDetailView } from '../../../services/match-detail.service';
-import { wasOpenedFromHistory } from '../../app/history-return';
+import { useReturnedThroughHistory, wasOpenedFromHistory } from '../../app/history-return';
 import type { MatchTab } from '../../app/router';
 import { Button } from '../../components/Button';
 import { EmptyState } from '../../components/EmptyState';
+import { LoadingGate, useMinimumLoading } from '../../components/LoadingGate';
 import { PageHeader } from '../../components/PageHeader';
 import { Panel } from '../../components/Panel';
 import { StatusLine } from '../../components/StatusLine';
@@ -70,6 +77,7 @@ import { DamageTab } from './DamageTab';
 import { MatchHeader } from './MatchHeader';
 import { PlayersTab } from './PlayersTab';
 import { TimelineTab } from './TimelineTab';
+import { useMatchAnalysis } from './use-match-analysis';
 import { useMatchDetail, useRetryDetail } from './use-match-detail';
 
 /**
@@ -366,6 +374,21 @@ export function MatchDetailPage() {
   const detail = useMatchDetail(matchId);
   const retry = useRetryDetail(matchId);
   const viewKind = detail.data?.kind;
+  // The loading gate: the page shows it until it knows what to show of the match, and for a short
+  // minimum each time another match opens, even from the cache (see `components/LoadingGate`). For
+  // an archived match, that is once its analysis is read too: the tabs never open on an analysis
+  // still loading. The analysis is read here for that, the same query as the run of the analysis
+  // and the analysis tab read under the gate.
+  const archived = viewKind === 'ready';
+  const analysis = useMatchAnalysis(matchId, { enabled: archived });
+  const detailAnswered = detail.data !== undefined || detail.isError;
+  const analysisAnswered = analysis.data !== undefined || analysis.isError;
+  // A match returned to through the browser history shows as soon as it is read, so that the router
+  // finds it whole when it gives its scroll back.
+  const returned = useReturnedThroughHistory();
+  const gated = useMinimumLoading(detailAnswered && (!archived || analysisAnswered), matchId, {
+    skipMinimum: returned,
+  });
   // An evicted match (its archive file was removed to free space, and the match is inside the 90
   // days) was put back in the queue when the service read it, but nothing starts the queue for it:
   // the next scheduled synchronisation would take it, which can be a long wait for a page the player
@@ -400,7 +423,9 @@ export function MatchDetailPage() {
     match === null ? undefined : heroes.data?.find((candidate) => candidate.id === match.heroId);
 
   let body: ReactNode = null;
-  if (detail.data !== undefined) {
+  if (gated) {
+    body = <LoadingGate text={t('matchDetail.loading')} />;
+  } else if (detail.data !== undefined) {
     // A failed refresh keeps the view already shown: the error only replaces an empty screen.
     body = renderView(
       detail.data,
@@ -437,7 +462,6 @@ export function MatchDetailPage() {
   } else if (detail.isError) {
     body = <StatusLine kind="error" error={detail.error} />;
   }
-  // While the view is read (from the local database, so in a blink) only the title is shown.
 
   return (
     <>

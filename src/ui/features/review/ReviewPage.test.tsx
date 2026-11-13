@@ -47,6 +47,7 @@ import {
 } from '../../../test/create-test-services';
 import { AppProviders } from '../../app/AppProviders';
 import { createAppRouter, REVIEW_TABS, type ReviewTab } from '../../app/router';
+import { MINIMUM_LOADING_MS } from '../../components/LoadingGate';
 import { createI18n } from '../../i18n/i18n';
 
 /** Time of the tests: the synthetic history ends 2 hours before it. */
@@ -183,6 +184,20 @@ interface RenderOptions {
   readonly queryClient?: QueryClient;
   /** The address the application opens at; the review without a tab by default. */
   readonly url?: string;
+  /** The minimum time of the loading gate, for the tests about the gate; none by default. */
+  readonly minimumLoadingMs?: number;
+}
+
+/**
+ * The status of the header of the review: the lines about the comparison, which a screen reader is
+ * told of. It is read once the review is shown (its tabs are there): before that, the one status of
+ * the page is the loading gate.
+ *
+ * @returns The status element.
+ */
+async function findReviewStatus(): Promise<HTMLElement> {
+  await screen.findByRole('tablist');
+  return screen.getByRole('status');
 }
 
 /**
@@ -198,13 +213,19 @@ async function renderReview(
     language = 'en',
     queryClient = createTestQueryClient(test.logger),
     url = '/review',
+    minimumLoadingMs = 0,
   }: RenderOptions = {},
 ) {
   const i18n = await createI18n(language);
   const history = createMemoryHistory({ initialEntries: [url] });
   const router = createAppRouter(history);
   const { unmount } = render(
-    <AppProviders services={test.services} queryClient={queryClient} i18n={i18n}>
+    <AppProviders
+      services={test.services}
+      queryClient={queryClient}
+      i18n={i18n}
+      minimumLoadingMs={minimumLoadingMs}
+    >
       <RouterProvider router={router} />
     </AppProviders>,
   );
@@ -449,6 +470,33 @@ describe('ReviewPage', () => {
   });
 
   describe('states', () => {
+    it.each([
+      ['en', 'Analysing your matches…', 'Summary'],
+      ['fr', 'Analyse de tes parties…', 'Résumé'],
+    ] as const)(
+      'shows the loading gate first, then the review, not again for another tab, in %s',
+      async (language, loading, firstTab) => {
+        const user = userEvent.setup();
+        const test = await setUp();
+        noDownload(test.services);
+        await renderReview(test, { language, minimumLoadingMs: MINIMUM_LOADING_MS });
+
+        // The gate is a status under the title; the tabs wait behind it.
+        const gate = await screen.findByText(loading);
+        expect(gate.closest('[role="status"]')).not.toBeNull();
+        expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+        const tabs = await screen.findByRole('tablist', {}, { timeout: 3_000 });
+        expect(screen.queryByText(loading)).not.toBeInTheDocument();
+
+        // Another tab of the review shows no gate.
+        const [first, second] = within(tabs).getAllByRole('tab');
+        expect(first).toHaveTextContent(firstTab);
+        await user.click(second ?? expect.unreachable());
+        expect(screen.queryByText(loading)).not.toBeInTheDocument();
+        expect(screen.getByRole('tablist')).toBeInTheDocument();
+      },
+    );
+
     it('invites to link an account', async () => {
       const test = createTestServices({
         now: () => NOW,
@@ -713,7 +761,7 @@ describe('ReviewPage', () => {
         const { unmount } = await renderReview(test, { language });
 
         // One line, among the lines about the comparison, which a screen reader is told of.
-        const status = await screen.findByRole('status');
+        const status = await findReviewStatus();
         expect(await within(status).findByText(line)).toBeInTheDocument();
         unmount();
       }
@@ -896,7 +944,7 @@ describe('ReviewPage', () => {
         }));
         await renderReview(test, { language });
 
-        const status = await screen.findByRole('status');
+        const status = await findReviewStatus();
         expect(await within(status).findByText(line)).toBeInTheDocument();
         // One line for each count that is not 0, and none for the other.
         const otherLine =

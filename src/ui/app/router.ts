@@ -26,7 +26,7 @@ import { PaigePage } from '../features/paige/PaigePage';
 import { ReviewPage } from '../features/review/ReviewPage';
 import { SettingsPage } from '../features/settings/SettingsPage';
 import { AppShell } from './AppShell';
-import { MAIN_SCROLL_SELECTOR } from './history-return';
+import { MAIN_SCROLL_SELECTOR, trackHistoryMoves } from './history-return';
 import { NotFoundPage } from './NotFoundPage';
 import { RouteErrorFallback } from './RouteErrorFallback';
 
@@ -158,7 +158,7 @@ const routeTree = rootRoute.addChildren([
  * @returns A router bound to the application route tree.
  */
 export function createAppRouter(history?: RouterHistory) {
-  return createRouter({
+  const router = createRouter({
     routeTree,
     ...(history ? { history } : {}),
     // A failing or unknown page renders inside the shell, so the navigation stays usable.
@@ -173,6 +173,10 @@ export function createAppRouter(history?: RouterHistory) {
     scrollRestoration: true,
     scrollToTopSelectors: [MAIN_SCROLL_SELECTOR],
   });
+  // The pages that wait before they show their content skip the wait when they are returned to, so
+  // that the router finds them whole when it gives their scroll back (see `history-return`).
+  trackHistoryMoves(router.history);
+  return router;
 }
 
 declare module '@tanstack/react-router' {

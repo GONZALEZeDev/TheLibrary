@@ -10,6 +10,16 @@ Fixed and Removed.
 
 ## [Unreleased]
 
+### Changed
+
+- The match list alternates the background of its rows, so each match reads as one line.
+- Opening a match or the review shows a short "Analysing…" step before the page, every time, even when the data is already there.
+- While a sync runs, a match still waiting for its detail cannot be opened: its row says "In progress…" until the sync has archived it.
+
+### Removed
+
+- Street Brawl matches: the app no longer downloads them, and removes the ones it had stored.
+
 ## [0.1.2] - 2026-11-02
 
 ### Added

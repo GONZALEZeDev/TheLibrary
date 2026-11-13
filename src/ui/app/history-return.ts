@@ -19,9 +19,16 @@
  * the selector {@link MAIN_SCROLL_SELECTOR} for the scroll to the top of a page that is not returned
  * to).
  *
+ * **The return.** The router gives the scroll of a page back when the page is returned to through the
+ * browser history (back, forward), right after it draws the page: the page must then be drawn whole
+ * at once, at its full height. The app records the last move of the history
+ * ({@link trackHistoryMoves}, set up with the router), and a page tells with
+ * {@link useReturnedThroughHistory} whether it was returned to: the pages that show a loading gate
+ * skip its minimum time then, and show their content as soon as it is read (from the cache, at once).
+ *
  * @packageDocumentation
  */
-import type { HistoryState } from '@tanstack/react-router';
+import { useRouter, type HistoryState, type RouterHistory } from '@tanstack/react-router';
 
 declare module '@tanstack/react-router' {
   /**
@@ -64,3 +71,42 @@ export const MAIN_SCROLL_ATTRIBUTES = { 'data-scroll-restoration-id': 'main' } a
  * for an element other than the window.
  */
 export const MAIN_SCROLL_SELECTOR = '[data-scroll-restoration-id="main"]';
+
+/**
+ * A move of a history, as its listeners hear of it: `PUSH`, `REPLACE`, `BACK`, `FORWARD` or `GO`.
+ * Read from the type of the listeners, as the router does not re-export the type of the history
+ * package.
+ */
+type HistoryMove = Parameters<Parameters<RouterHistory['subscribe']>[0]>[0]['action']['type'];
+
+/** The last move of each history the app follows, see {@link trackHistoryMoves}. */
+const lastMoves = new WeakMap<RouterHistory, HistoryMove>();
+
+/** The moves of the browser history that return to an entry rather than open a new one. */
+const RETURN_MOVES: ReadonlySet<HistoryMove> = new Set(['BACK', 'FORWARD', 'GO']);
+
+/**
+ * Follow the moves of a history: from now on, {@link useReturnedThroughHistory} tells whether the
+ * last one returned to an entry. Called once for the history of the router, as it is built: the
+ * router hears of each move first and draws the page it leads to afterwards, so the move is known
+ * when the page is drawn.
+ *
+ * @param history - The history of the router.
+ */
+export function trackHistoryMoves(history: RouterHistory): void {
+  history.subscribe(({ action }) => {
+    lastMoves.set(history, action.type);
+  });
+}
+
+/**
+ * Whether the page on screen was returned to through the browser history (back, forward, or a jump
+ * of several entries), rather than opened by a link, a typed address or a new navigation.
+ *
+ * @returns `true` when the last move of the history of the router returned to an entry.
+ */
+export function useReturnedThroughHistory(): boolean {
+  const { history } = useRouter();
+  const move = lastMoves.get(history);
+  return move !== undefined && RETURN_MOVES.has(move);
+}

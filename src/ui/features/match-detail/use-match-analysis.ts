@@ -34,6 +34,16 @@ import { BREAKDOWN_QUERY_KEY_OF } from './use-match-breakdown';
 export const ANALYSIS_COMMUNITY_QUERY_KEY = ['analysis-community'] as const;
 
 /**
+ * How long a read of the analysis counts as fresh: five seconds. Everything that changes the analysis
+ * reads it again whatever its age (a synchronisation and the detail queue refresh the details, an
+ * analysis run writes its answer, new community data refreshes it), so this only spares the reads
+ * that change nothing: the match page reads the analysis behind its loading gate, and the run and
+ * the analysis tab that mount as the gate opens, a moment later, take that read instead of asking
+ * for the same one again.
+ */
+const ANALYSIS_STALE_TIME_MS = 5_000;
+
+/**
  * The key of the analysis of a match. It sits under {@link DETAILS_QUERY_KEY}: whatever refreshes the
  * match details (a synchronisation, an account change) reads the analysis again, since the state of
  * a match (archived or not, analysed or not) follows from them. Every archived match is projected at
@@ -55,14 +65,20 @@ function analysisKey(matchId: MatchId) {
  * match details, and by {@link useCommunityRefresh} once new community data is stored.
  *
  * @param matchId - The match.
+ * @param options - How the analysis is asked for.
+ * @param options.enabled - Whether to read it now; `true` by default. The match page reads it only
+ *   for an archived match, to know when its loading gate can open (a match with no archive has no
+ *   analysis to wait for).
  * @returns The TanStack Query result holding the view of the analysis: `ready`, `pending`, `failed`
  *   or `not_analysed`.
  */
-export function useMatchAnalysis(matchId: MatchId) {
+export function useMatchAnalysis(matchId: MatchId, options: { readonly enabled?: boolean } = {}) {
   const { analysis } = useServices();
   return useQuery({
     queryKey: analysisKey(matchId),
     queryFn: () => analysis.getMatchAnalysis(matchId),
+    enabled: options.enabled ?? true,
+    staleTime: ANALYSIS_STALE_TIME_MS,
   });
 }
 

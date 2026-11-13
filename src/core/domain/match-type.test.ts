@@ -8,8 +8,18 @@ import {
   MATCH_TYPES,
   PRIVATE_LOBBY_MATCH_MODE,
   STREET_BRAWL_GAME_MODE,
+  isStreetBrawl,
   matchTypeOf,
 } from './match-type';
+
+describe('isStreetBrawl', () => {
+  it('tells a Street Brawl match by its game mode alone', () => {
+    expect(isStreetBrawl({ gameMode: 4 })).toBe(true);
+    expect(isStreetBrawl({ gameMode: 1 })).toBe(false);
+    // A game mode the app does not know is not Street Brawl: it is kept, not dropped.
+    expect(isStreetBrawl({ gameMode: 3 })).toBe(false);
+  });
+});
 
 describe('match type constants', () => {
   it('holds the codes of the game data', () => {

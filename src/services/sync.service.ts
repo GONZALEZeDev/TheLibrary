@@ -1,6 +1,7 @@
 /**
  * Synchronisation of the match history and of the match details: downloads the history of the
- * linked account from deadlock-api and saves it, then runs the detail queue, which downloads and
+ * linked account from deadlock-api and saves it (every match but the Street Brawl ones, which the
+ * app does not keep), then runs the detail queue, which downloads and
  * archives the detail of the Paige matches that are due. It runs at startup, every 13 minutes, when
  * the user asks for it and right after an account was linked.
  *
@@ -55,6 +56,7 @@
  */
 import type { AccountId } from '../core/domain/account';
 import type { MatchId } from '../core/domain/match';
+import { isStreetBrawl } from '../core/domain/match-type';
 import {
   AppError,
   errorLogContext,
@@ -802,9 +804,11 @@ export class SyncService {
       await this.#syncState.setAccountState(accountId, { ...state, lastSync });
       return lastSync;
     }
+    // The Street Brawl matches are dropped before they are stored: the app keeps no trace of them.
+    const kept = result.matches.filter((match) => !isStreetBrawl(match));
     // Counting before and after tells how many matches are new, whatever the upsert updated.
     const before = await this.#matches.count(accountId);
-    await this.#matches.upsertMany(result.matches);
+    await this.#matches.upsertMany(kept);
     const after = await this.#matches.count(accountId);
     const now = this.#now();
     const lastSync: LastSync = {
@@ -820,6 +824,7 @@ export class SyncService {
     this.#logger.log('info', 'sync', 'Match history saved', {
       syncRunId,
       received: result.matches.length,
+      droppedStreetBrawl: result.matches.length - kept.length,
       newMatches: lastSync.newMatches,
       fromSteam: result.fromSteam,
     });

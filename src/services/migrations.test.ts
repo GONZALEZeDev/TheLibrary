@@ -1,7 +1,7 @@
 /**
- * Tests of the migrations that rebuild a table, on the real files of `migrations/` applied in order
- * on sql.js, over rows written before the rebuild (as the database of a user who ran an older
- * version of the app holds them).
+ * Tests of the migrations that rebuild a table or delete rows, on the real files of `migrations/`
+ * applied in order on sql.js, over rows written before them (as the database of a user who ran an
+ * older version of the app holds them).
  *
  * @packageDocumentation
  */
@@ -238,5 +238,77 @@ describe('migration 6 (the evicted status)', () => {
     expect(indexes.map(({ name }) => name)).toEqual(['matches_by_hero', 'matches_by_start_time']);
     // The same names on the same columns, created by the same SQL.
     await expect(databaseAfter().select(SELECT_INDEXES)).resolves.toEqual(indexes);
+  });
+});
+
+/** How many migrations come before the one that drops the Street Brawl matches (0001 to 0006). */
+const MIGRATIONS_BEFORE_STREET_BRAWL = 6;
+
+/**
+ * The SQL of the migration that drops the Street Brawl matches: the seventh file of `migrations/`.
+ *
+ * @returns The text of the file.
+ * @throws Error when the file is missing, or is not that migration.
+ */
+function dropStreetBrawlMigration(): string {
+  const migration = MIGRATIONS.at(MIGRATIONS_BEFORE_STREET_BRAWL);
+  if (!migration?.includes('DELETE FROM matches WHERE game_mode = 4')) {
+    throw new Error('migrations/0007_drop_street_brawl.sql is missing');
+  }
+  return migration;
+}
+
+describe('migration 7 (no Street Brawl match)', () => {
+  // Two normal matches (one of another player) and two Street Brawl matches (one of another
+  // player), each with a projection row and a metric row, as a database could hold them before.
+  const normal = { ...fullRow(1, 'ready'), game_mode: 1 };
+  const otherNormal = { ...fullRow(2, 'ready'), game_mode: 1, account_id: 2_000_001 };
+  const brawl = { ...fullRow(3, 'pending'), game_mode: 4 };
+  const otherBrawl = { ...fullRow(4, 'pending'), game_mode: 4, account_id: 2_000_001 };
+  const rows = [normal, otherNormal, brawl, otherBrawl];
+  const seed = rows
+    .flatMap((row) => [
+      `INSERT INTO matches (${MATCH_COLUMNS.join(', ')})
+       VALUES (${MATCH_COLUMNS.map((column) => sqlLiteral(row[column])).join(', ')});`,
+      `INSERT INTO match_projections (account_id, match_id, projection_version, player_badge,
+         has_leaver, failed, projected_at)
+       VALUES (${String(row.account_id)}, ${String(row.match_id)}, 1, NULL, 0, 0, 1);`,
+      `INSERT INTO match_metrics (account_id, match_id, metric_key, value)
+       VALUES (${String(row.account_id)}, ${String(row.match_id)}, 'kda', 1.5);`,
+    ])
+    .join('\n');
+
+  /**
+   * The seeded database once migration 7 ran on it.
+   *
+   * @returns The database.
+   */
+  function migrated(): SqlJsDatabase {
+    return new SqlJsDatabase(
+      () => initSqlJs(),
+      [...MIGRATIONS.slice(0, MIGRATIONS_BEFORE_STREET_BRAWL), seed, dropStreetBrawlMigration()],
+    );
+  }
+
+  it('deletes the Street Brawl matches of every player and keeps the others whole', async () => {
+    await expect(migrated().select(SELECT_ALL_ROWS)).resolves.toEqual([normal, otherNormal]);
+  });
+
+  it('deletes the projection and metric rows of the Street Brawl matches only', async () => {
+    const database = migrated();
+    const kept = [
+      { account_id: normal.account_id, match_id: normal.match_id },
+      { account_id: otherNormal.account_id, match_id: otherNormal.match_id },
+    ];
+    await expect(
+      database.select(
+        'SELECT account_id, match_id FROM match_projections ORDER BY account_id, match_id',
+      ),
+    ).resolves.toEqual(kept);
+    await expect(
+      database.select(
+        'SELECT account_id, match_id FROM match_metrics ORDER BY account_id, match_id',
+      ),
+    ).resolves.toEqual(kept);
   });
 });

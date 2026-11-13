@@ -30,6 +30,20 @@ export const MATCH_TYPES = ['normal', 'ranked', 'street_brawl', 'custom'] as con
 export type MatchType = (typeof MATCH_TYPES)[number];
 
 /**
+ * Whether a match is a Street Brawl match: the game mode alone decides, whatever the match mode.
+ *
+ * The app keeps no Street Brawl match: the synchronisation drops them before storing the history,
+ * as they say nothing about how the player plays the real game. {@link matchTypeOf} still reads the
+ * mode, so that a pair of codes is never mistaken for an unknown one.
+ *
+ * @param match - The game mode of the match.
+ * @returns `true` for a Street Brawl match.
+ */
+export function isStreetBrawl(match: Pick<MatchSummary, 'gameMode'>): boolean {
+  return match.gameMode === STREET_BRAWL_GAME_MODE;
+}
+
+/**
  * Read the type of a match from its two mode codes.
  *
  * The rules are applied in this order, the first that fits decides:
@@ -43,7 +57,7 @@ export type MatchType = (typeof MATCH_TYPES)[number];
  *   the game): the caller shows nothing rather than a wrong label.
  */
 export function matchTypeOf(match: Pick<MatchSummary, 'gameMode' | 'matchMode'>): MatchType | null {
-  if (match.gameMode === STREET_BRAWL_GAME_MODE) {
+  if (isStreetBrawl(match)) {
     return 'street_brawl';
   }
   if (match.matchMode === PRIVATE_LOBBY_MATCH_MODE) {

@@ -357,6 +357,12 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../../migrations/0006_evicted_status.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 7,
+            description: "drop street brawl matches",
+            sql: include_str!("../../migrations/0007_drop_street_brawl.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

@@ -474,6 +474,34 @@ describe('SyncService', () => {
     });
   });
 
+  it('drops the Street Brawl matches before it saves the history', async () => {
+    // The fixture history with one match in three turned into a Street Brawl match: 80 of 240.
+    const fixtures = historyOnlyApi();
+    const handler: FixtureHandler = async (request) => {
+      const response = await fixtures(request);
+      if (!request.url.endsWith('/match-history') || typeof response.body !== 'string') {
+        return response;
+      }
+      const rows = JSON.parse(response.body) as Record<string, unknown>[];
+      const body = JSON.stringify(
+        rows.map((row, index) => (index % 3 === 0 ? { ...row, game_mode: 4 } : row)),
+      );
+      return { ...response, body };
+    };
+    const { sync, countMatches, logger } = setUp({ handler });
+
+    await sync.syncNow('startup');
+
+    await expect(countMatches()).resolves.toBe(160);
+    await expect(sync.getStatus()).resolves.toMatchObject({ lastSync: { newMatches: 160 } });
+    const saved = logger.entries.find((entry) => entry.message === 'Match history saved');
+    expect(saved?.context).toMatchObject({
+      received: 240,
+      droppedStreetBrawl: 80,
+      newMatches: 160,
+    });
+  });
+
   it('runs one synchronisation at a time: a trigger during a running one joins it', async () => {
     const { sync, historyRequests } = setUp({ handler: historyOnlyApi() });
 

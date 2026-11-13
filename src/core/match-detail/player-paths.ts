@@ -34,7 +34,7 @@ export interface MapPoint {
 
 /**
  * The key of a path's private part. It is not exported: only this module reads the samples and
- * the clock of a path, through {@link positionAt}.
+ * the clock of a path, through {@link positionAt} and {@link healthAt}.
  */
 const TRACK = Symbol('player path track');
 
@@ -202,18 +202,57 @@ export function readPlayerPaths(envelope: ArchiveEnvelope): PlayerPaths | null {
  *   outside the path (before its start, past its end, or not a number).
  */
 export function positionAt(path: PlayerPath, timeS: number): MapPoint | null {
-  const { intervalS, resolution, bounds, samples, anchors } = path[TRACK];
-  const index = Math.round(timeS / intervalS + shiftAt(anchors, timeS));
-  const x = samples.xPos[index];
-  const y = samples.yPos[index];
-  // An index out of the path (NaN included) reads no sample.
-  if (x === undefined || y === undefined || isDead(samples, index)) {
+  const track = path[TRACK];
+  const { resolution, bounds, samples } = track;
+  const index = aliveSampleIndexAt(track, timeS);
+  const x = index === null ? undefined : samples.xPos[index];
+  const y = index === null ? undefined : samples.yPos[index];
+  if (x === undefined || y === undefined) {
     return null;
   }
   return {
     x: bounds.xMin + (x / resolution.x) * (bounds.xMax - bounds.xMin),
     y: bounds.yMin + (y / resolution.y) * (bounds.yMax - bounds.yMin),
   };
+}
+
+/**
+ * How much health a player had at a second of the match.
+ *
+ * It reads the very sample {@link positionAt} reads at that second (both go through the same
+ * clock), so a position and its health always belong together.
+ *
+ * @param path - The player's path.
+ * @param timeS - The second of the match (a fraction of a second is read at the nearest sample).
+ * @returns The health in percent (0 to 100), as the sample records it, or `null` when the path has
+ *   no health, when the player was dead then, or when the second falls outside the path.
+ */
+export function healthAt(path: PlayerPath, timeS: number): number | null {
+  const track = path[TRACK];
+  const index = aliveSampleIndexAt(track, timeS);
+  return index === null ? null : (track.samples.health?.[index] ?? null);
+}
+
+/**
+ * Find the sample a second of the match is read from, when the player is alive there.
+ *
+ * The second is turned into a sample index through the path's clock, then rounded to the nearest
+ * sample. It is the one place that does so: {@link positionAt} and {@link healthAt} both use it,
+ * so they can never read two different samples.
+ *
+ * @param track - The private part of the player's path.
+ * @param timeS - The second of the match.
+ * @returns The index of the sample, or `null` when it is out of the path (before its start, past
+ *   its end, or not a number) or when the player is dead at that sample.
+ */
+function aliveSampleIndexAt(track: PathTrack, timeS: number): number | null {
+  const { intervalS, samples, anchors } = track;
+  const index = Math.round(timeS / intervalS + shiftAt(anchors, timeS));
+  // An index out of the path (NaN included) reads no sample.
+  if (samples.xPos[index] === undefined || samples.yPos[index] === undefined) {
+    return null;
+  }
+  return isDead(samples, index) ? null : index;
 }
 
 /**

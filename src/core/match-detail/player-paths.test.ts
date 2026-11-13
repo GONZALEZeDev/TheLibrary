@@ -15,8 +15,8 @@ import { parseMatchMetadata } from '../deadlock-api/match-metadata.schema';
 import { testAccountId } from '../../test/test-data';
 import { createArchiveEnvelope } from './archive-envelope';
 import type { ArchiveEnvelope } from './archive-envelope';
-import { positionAt, readPlayerPaths } from './player-paths';
-import type { PlayerPaths } from './player-paths';
+import { healthAt, positionAt, readPlayerPaths } from './player-paths';
+import type { PlayerPath, PlayerPaths } from './player-paths';
 
 /** How long the match lasts, in seconds. */
 const DURATION_S = 600;
@@ -208,6 +208,20 @@ function xAt(envelope: ArchiveEnvelope, timeS: number): number | null {
   const position = positionAt(path, timeS);
   // Rounded: the decoding divides then multiplies by the resolution, which is exact to a hair only.
   return position === null ? null : Math.round(position.x * 1_000) / 1_000;
+}
+
+/**
+ * The path of the player at slot {@link SLOT}, read out of an archive.
+ *
+ * @param envelope - The archive.
+ * @returns Their path.
+ */
+function pathOf(envelope: ArchiveEnvelope): PlayerPath {
+  const path = readPaths(envelope).bySlot.get(SLOT);
+  if (path === undefined) {
+    return expect.unreachable('the player should have a path');
+  }
+  return path;
 }
 
 /**
@@ -508,4 +522,46 @@ describe('readPlayerPaths and positionAt', () => {
       );
     },
   );
+});
+
+describe('healthAt', () => {
+  it('reads the same sample as positionAt', () => {
+    // A path of three samples, stretched over the match by the clock: the health tells the sample.
+    const path = rawPath(SLOT, 3);
+    path.health?.splice(0, 3, 100, 80, 60);
+    const read = pathOf(archive({ paths: pathsWith(path) }));
+    // The clock stretches the three samples over the match: every second reads the sample of
+    // positionAt, the health agrees with the x of that sample.
+    for (const timeS of [0, 150, 300, 450, 600]) {
+      const sample = positionAt(read, timeS)?.x;
+      expect(healthAt(read, timeS)).toBe([100, 80, 60][Math.round(sample ?? -1)]);
+    }
+  });
+
+  it('reads the health of the sample as recorded, on an aligned path', () => {
+    const path = rawPath(SLOT, DURATION_S + 1);
+    path.health?.splice(0, 3, 100, 80.5, 60);
+    const read = pathOf(archive({ paths: pathsWith(path) }));
+    expect(healthAt(read, 1)).toBe(80.5);
+    expect(healthAt(read, 2)).toBe(60);
+  });
+
+  it('is null without a health array, on a dead sample, and outside the path', () => {
+    const noHealth = pathOf(
+      archive({ paths: pathsWith(rawPath(SLOT, DURATION_S + 1, { withHealth: false })) }),
+    );
+    expect(healthAt(noHealth, 10)).toBeNull();
+
+    const dying = pathOf(
+      archive({ paths: pathsWith(rawPath(SLOT, DURATION_S + 1, { deadRuns: [[50, 10]] })) }),
+    );
+    expect(healthAt(dying, 49)).toBe(100);
+    expect(healthAt(dying, 50)).toBeNull();
+    expect(healthAt(dying, 59)).toBeNull();
+    expect(healthAt(dying, 60)).toBe(100);
+
+    expect(healthAt(dying, -5)).toBeNull();
+    expect(healthAt(dying, DURATION_S + 100)).toBeNull();
+    expect(healthAt(dying, Number.NaN)).toBeNull();
+  });
 });

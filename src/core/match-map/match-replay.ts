@@ -13,7 +13,7 @@ import { z } from 'zod';
 import { AppError } from '../errors/app-error';
 import type { ArchiveEnvelope } from '../match-detail/archive-envelope';
 import { archiveCount, readArchiveFields } from '../match-detail/archive-fields';
-import { positionAt, readPlayerPaths } from '../match-detail/player-paths';
+import { healthAt, positionAt, readPlayerPaths } from '../match-detail/player-paths';
 import type { MapPoint, PlayerPath, PlayerPaths } from '../match-detail/player-paths';
 import { findTrackedPlayer } from '../match-detail/pruning';
 import { identifyObjective } from './map-objectives';
@@ -32,6 +32,11 @@ export interface ReplayDeath {
    * lists. See {@link readMatchReplay}.
    */
   readonly respawnS: number | null;
+  /**
+   * The slot of the player who killed them, a slot of the match. `null` when the payload does not
+   * say, says `0` (no hero: a creep, a guardian…), or names a slot no player of the match has.
+   */
+  readonly killerSlot: number | null;
 }
 
 /** Where one player was during the match, and when they were dead. */
@@ -51,6 +56,12 @@ export interface ReplayPlayerTrack {
    * the length is always `durationS + 1`. `null` while dead (see {@link isDeadAt}) or unknown.
    */
   readonly positions: readonly (MapPoint | null)[];
+  /**
+   * The health of the player at each second, in percent (0 to 100): the index is the second, so the
+   * length is always `durationS + 1`. `null` exactly where {@link positions} is `null` (dead or
+   * unknown), and where the path holds no health; all `null` without a path.
+   */
+  readonly health: readonly (number | null)[];
   /** The deaths of the player, sorted by time. */
   readonly deaths: readonly ReplayDeath[];
 }
@@ -115,6 +126,8 @@ const replayPlayerSchema = z.looseObject({
         game_time_s: z.number().nonnegative(),
         // A negative wait is nonsense: it is read as absent (see `readMatchReplay`), not rejected.
         death_duration_s: z.number().nullish(),
+        // Who killed the player: a value that cannot be read is no killer, it never fails the replay.
+        killer_player_slot: archiveCount.nullish().catch(null),
       }),
     )
     .nullish(),
@@ -192,7 +205,11 @@ function extendRespawns(
     while (aliveS < cap && positionAt(path, aliveS) === null) {
       aliveS += 1;
     }
-    return { timeS: death.timeS, respawnS: Math.max(death.respawnS ?? aliveS, aliveS) };
+    return {
+      timeS: death.timeS,
+      respawnS: Math.max(death.respawnS ?? aliveS, aliveS),
+      killerSlot: death.killerSlot,
+    };
   });
 }
 
@@ -212,6 +229,22 @@ function buildPositions(
   return Array.from({ length: durationS + 1 }, (_, timeS) =>
     // A player is hidden while dead even when their path sample says otherwise.
     path === undefined || isDeadAt(deaths, timeS) ? null : positionAt(path, timeS),
+  );
+}
+
+/**
+ * Build the health of a player at each second of the match.
+ *
+ * @param path - The player's path, or `undefined` when they have none.
+ * @param positions - The positions of the player: the health is unknown wherever they are.
+ * @returns `durationS + 1` entries (one for each position); all `null` without a path.
+ */
+function buildHealth(
+  path: PlayerPath | undefined,
+  positions: readonly (MapPoint | null)[],
+): readonly (number | null)[] {
+  return positions.map((position, timeS) =>
+    path === undefined || position === null ? null : healthAt(path, timeS),
   );
 }
 
@@ -256,13 +289,14 @@ export function readMatchReplay(envelope: ArchiveEnvelope): MatchReplay {
   const tracked = findTrackedPlayer(envelope.payload, envelope.prunedForAccountId);
   const paths = readPathsOrNone(envelope);
 
-  const players = matchInfo.players
-    .map((player, index): ReplayPlayerTrack => {
-      const fields = readArchiveFields(
-        replayPlayerSchema,
-        player,
-        `match_info.players.${String(index)}`,
-      );
+  // Every player is read first: a killer is only known as one when its slot is a player's.
+  const readPlayers = matchInfo.players.map((player, index) =>
+    readArchiveFields(replayPlayerSchema, player, `match_info.players.${String(index)}`),
+  );
+  const matchSlots = new Set(readPlayers.map((fields) => fields.player_slot));
+
+  const players = readPlayers
+    .map((fields): ReplayPlayerTrack => {
       const apiDeaths = (fields.death_details ?? [])
         .map((death): ReplayDeath => ({
           timeS: death.game_time_s,
@@ -274,18 +308,25 @@ export function readMatchReplay(envelope: ArchiveEnvelope): MatchReplay {
             death.death_duration_s < 0
               ? null
               : death.game_time_s + death.death_duration_s,
+          // 0 (no hero) and slots outside the match are no killer.
+          killerSlot:
+            death.killer_player_slot != null && matchSlots.has(death.killer_player_slot)
+              ? death.killer_player_slot
+              : null,
         }))
         .toSorted((first, second) => first.timeS - second.timeS);
       const path = paths?.bySlot.get(fields.player_slot);
       // A player with a path comes back when the path says so; one without keeps the API's wait.
       const deaths = path === undefined ? apiDeaths : extendRespawns(apiDeaths, path, durationS);
+      const positions = buildPositions(path, deaths, durationS);
       return {
         slot: fields.player_slot,
         team: fields.team,
         heroId: fields.hero_id,
         isTracked: fields.player_slot === tracked.playerSlot,
         hasPath: path !== undefined,
-        positions: buildPositions(path, deaths, durationS),
+        positions,
+        health: buildHealth(path, positions),
         deaths,
       };
     })

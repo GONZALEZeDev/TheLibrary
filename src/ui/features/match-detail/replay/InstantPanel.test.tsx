@@ -40,13 +40,17 @@ function testView(): ReplayData {
     coverage: 'tracked_only',
     map: null,
     players: [
-      player({ slot: 1, heroName: 'Haze', deaths: [{ timeS: 800, respawnS: 840 }] }),
+      player({
+        slot: 1,
+        heroName: 'Haze',
+        deaths: [{ timeS: 800, respawnS: 840, killerSlot: null }],
+      }),
       player({
         slot: 7,
         side: 'enemy',
         heroName: 'Abrams',
         hasPath: false,
-        deaths: [{ timeS: 790, respawnS: 830 }],
+        deaths: [{ timeS: 790, respawnS: 830, killerSlot: null }],
       }),
     ],
     objectives: [

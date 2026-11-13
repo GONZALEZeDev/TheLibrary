@@ -128,8 +128,12 @@ describe('stepEvents, previousEvent and nextEvent', () => {
   const view = replay({
     durationS: 600,
     players: [
-      player({ slot: 1, isTracked: true, deaths: [{ timeS: 200, respawnS: 220 }] }),
-      player({ slot: 2, deaths: [{ timeS: 300, respawnS: 320 }] }),
+      player({
+        slot: 1,
+        isTracked: true,
+        deaths: [{ timeS: 200, respawnS: 220, killerSlot: null }],
+      }),
+      player({ slot: 2, deaths: [{ timeS: 300, respawnS: 320, killerSlot: null }] }),
     ],
     objectives: [
       {
@@ -178,9 +182,14 @@ describe('instantAt', () => {
   const view = replay({
     durationS: 700,
     players: [
-      player({ slot: 3, side: 'enemy', deaths: [{ timeS: 100, respawnS: 130 }] }),
-      player({ slot: 1, isTracked: true, hasPath: false, deaths: [{ timeS: 100, respawnS: 160 }] }),
-      player({ slot: 2, side: 'ally', deaths: [{ timeS: 100, respawnS: null }] }),
+      player({ slot: 3, side: 'enemy', deaths: [{ timeS: 100, respawnS: 130, killerSlot: null }] }),
+      player({
+        slot: 1,
+        isTracked: true,
+        hasPath: false,
+        deaths: [{ timeS: 100, respawnS: 160, killerSlot: null }],
+      }),
+      player({ slot: 2, side: 'ally', deaths: [{ timeS: 100, respawnS: null, killerSlot: null }] }),
     ],
     objectives: [
       {

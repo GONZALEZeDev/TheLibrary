@@ -66,6 +66,9 @@ function rawPath(
 interface RawDeath {
   readonly timeS: number;
   readonly durationS?: number;
+  /** The `killer_player_slot` of the death: 1 when the key is missing, the field is left out when
+   * it is `undefined`. */
+  readonly killer?: unknown;
 }
 
 /** How to build an archive. */
@@ -119,7 +122,10 @@ function archive(options: ArchiveOptions = {}): ArchiveEnvelope {
           deaths: deaths.length,
           death_details: deaths.map((death) => ({
             game_time_s: death.timeS,
-            killer_player_slot: 1,
+            // Slot 1 unless the test gives a killer; an `undefined` one leaves the field out.
+            ...(death.killer === undefined && 'killer' in death
+              ? {}
+              : { killer_player_slot: 'killer' in death ? death.killer : 1 }),
             ...(death.durationS === undefined ? {} : { death_duration_s: death.durationS }),
           })),
         };
@@ -274,8 +280,8 @@ describe('readMatchReplay', () => {
     const deathsBySlot = new Map([[SLOT, [{ timeS: 300, durationS: 20 }, { timeS: 100 }]]]);
     const { deaths } = trackOf(readMatchReplay(archive({ paths, deathsBySlot })), SLOT);
     expect(deaths).toEqual([
-      { timeS: 100, respawnS: null },
-      { timeS: 300, respawnS: 320 },
+      { timeS: 100, respawnS: null, killerSlot: 1 },
+      { timeS: 300, respawnS: 320, killerSlot: 1 },
     ]);
   });
 
@@ -285,7 +291,7 @@ describe('readMatchReplay', () => {
     );
     const deathsBySlot = new Map([[SLOT, [{ timeS: 100, durationS: -5 }]]]);
     const { deaths } = trackOf(readMatchReplay(archive({ paths, deathsBySlot })), SLOT);
-    expect(deaths).toEqual([{ timeS: 100, respawnS: null }]);
+    expect(deaths).toEqual([{ timeS: 100, respawnS: null, killerSlot: 1 }]);
   });
 
   it('treats a malformed match_paths header as no paths', () => {
@@ -293,6 +299,72 @@ describe('readMatchReplay', () => {
     expect(replay.coverage).toBe('none');
     expect(replay.players.every((player) => !player.hasPath)).toBe(true);
     expect(replay.players).toHaveLength(12);
+  });
+
+  describe('health', () => {
+    it('has durationS + 1 entries and is null while the player is dead', () => {
+      const paths = SLOTS.map((slot) =>
+        rawPath(slot, DURATION_S + 1, slot === SLOT ? [[101, 12]] : []),
+      );
+      const deathsBySlot = new Map([[SLOT, [{ timeS: 100, durationS: 10 }]]]);
+      const track = trackOf(readMatchReplay(archive({ paths, deathsBySlot })), SLOT);
+      expect(track.health).toHaveLength(DURATION_S + 1);
+      expect(track.health[99]).toBe(100);
+      // Null exactly where the position is null (the extended respawn included).
+      expect(track.health[100]).toBeNull();
+      expect(track.health[112]).toBeNull();
+      expect(track.health[113]).toBe(100);
+      expect(track.health.map((value) => value === null)).toEqual(
+        track.positions.map((position) => position === null),
+      );
+    });
+
+    it('is all null without a path', () => {
+      const paths = SLOTS.filter((slot) => slot !== 3).map((slot) => rawPath(slot, DURATION_S + 1));
+      const { health } = trackOf(readMatchReplay(archive({ paths })), 3);
+      expect(health).toHaveLength(DURATION_S + 1);
+      expect(health.every((value) => value === null)).toBe(true);
+    });
+
+    it('is null for a path without a health array', () => {
+      // `health: undefined` is a path with no health at all (the key is dropped on parsing).
+      const paths = SLOTS.map((slot) => ({ ...rawPath(slot, DURATION_S + 1), health: undefined }));
+      const track = trackOf(readMatchReplay(archive({ paths })), SLOT);
+      expect(track.positions[10]).not.toBeNull();
+      expect(track.health.every((value) => value === null)).toBe(true);
+    });
+
+    it('a format-1 archive gives health for the tracked player only', () => {
+      // A format-1 archive only holds the tracked player's path.
+      const paths = [rawPath(SLOT, DURATION_S + 1)];
+      const replay = readMatchReplay(archive({ paths, archiveFormat: 1 }));
+      expect(trackOf(replay, SLOT).health[10]).toBe(100);
+      for (const player of replay.players.filter((other) => other.slot !== SLOT)) {
+        expect(player.health).toHaveLength(DURATION_S + 1);
+        expect(player.health.every((value) => value === null)).toBe(true);
+      }
+    });
+  });
+
+  describe('killerSlot', () => {
+    /** The killer slots of the deaths of the tracked player, in time order. */
+    function killersOf(killers: readonly unknown[]): readonly (number | null)[] {
+      const deaths = killers.map((killer, index) => ({ timeS: 100 + index * 50, killer }));
+      const replay = readMatchReplay(archive({ deathsBySlot: new Map([[SLOT, deaths]]) }));
+      return trackOf(replay, SLOT).deaths.map((death) => death.killerSlot);
+    }
+
+    it('is the killer slot, null for 0 and for a slot not in the match', () => {
+      expect(killersOf([4, 0, 13, 99, 12])).toEqual([4, null, null, null, 12]);
+    });
+
+    it('is null when the killer is absent or null', () => {
+      expect(killersOf([undefined, null])).toEqual([null, null]);
+    });
+
+    it('reads an unreadable killer as null instead of failing the replay', () => {
+      expect(killersOf(['secret-value', -3, 2.5])).toEqual([null, null, null]);
+    });
   });
 
   describe('respawn read from the path', () => {
@@ -303,7 +375,7 @@ describe('readMatchReplay', () => {
       );
       const deathsBySlot = new Map([[SLOT, [{ timeS: 100, durationS: 10 }]]]);
       const track = trackOf(readMatchReplay(archive({ paths, deathsBySlot })), SLOT);
-      expect(track.deaths).toEqual([{ timeS: 100, respawnS: 113 }]);
+      expect(track.deaths).toEqual([{ timeS: 100, respawnS: 113, killerSlot: 1 }]);
       // Dead (panel and map) at the API's respawn second, alive at the extended one.
       expect(isDeadAt(track.deaths, 110)).toBe(true);
       expect(track.positions[110]).toBeNull();
@@ -317,7 +389,7 @@ describe('readMatchReplay', () => {
       );
       const deathsBySlot = new Map([[SLOT, [{ timeS: 100 }]]]);
       const { deaths } = trackOf(readMatchReplay(archive({ paths, deathsBySlot })), SLOT);
-      expect(deaths).toEqual([{ timeS: 100, respawnS: 108 }]);
+      expect(deaths).toEqual([{ timeS: 100, respawnS: 108, killerSlot: 1 }]);
     });
 
     it('keeps the API duration for a player without a path', () => {
@@ -326,7 +398,7 @@ describe('readMatchReplay', () => {
       );
       const deathsBySlot = new Map([[SLOT, [{ timeS: 100, durationS: 10 }]]]);
       const { deaths } = trackOf(readMatchReplay(archive({ paths, deathsBySlot })), SLOT);
-      expect(deaths).toEqual([{ timeS: 100, respawnS: 110 }]);
+      expect(deaths).toEqual([{ timeS: 100, respawnS: 110, killerSlot: 1 }]);
     });
 
     it('caps the search at 180 s after the death, or at the end of the match', () => {
@@ -337,11 +409,11 @@ describe('readMatchReplay', () => {
       const early = new Map([[SLOT, [{ timeS: 100, durationS: 10 }]]]);
       expect(
         trackOf(readMatchReplay(archive({ paths: deadToEnd, deathsBySlot: early })), SLOT).deaths,
-      ).toEqual([{ timeS: 100, respawnS: 280 }]);
+      ).toEqual([{ timeS: 100, respawnS: 280, killerSlot: 1 }]);
       const late = new Map([[SLOT, [{ timeS: 550, durationS: 10 }]]]);
       expect(
         trackOf(readMatchReplay(archive({ paths: deadToEnd, deathsBySlot: late })), SLOT).deaths,
-      ).toEqual([{ timeS: 550, respawnS: DURATION_S + 1 }]);
+      ).toEqual([{ timeS: 550, respawnS: DURATION_S + 1, killerSlot: 1 }]);
     });
   });
 
@@ -357,8 +429,8 @@ describe('readMatchReplay', () => {
 
 describe('isDeadAt', () => {
   const deaths = [
-    { timeS: 100, respawnS: 110 },
-    { timeS: 200, respawnS: null },
+    { timeS: 100, respawnS: 110, killerSlot: 1 },
+    { timeS: 200, respawnS: null, killerSlot: 1 },
   ];
 
   it('is dead at timeS and alive again at respawnS', () => {

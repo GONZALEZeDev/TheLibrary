@@ -39,12 +39,17 @@ function testView(): ReplayData {
     coverage: 'all',
     map: null,
     players: [
-      player({ slot: 1, side: 'ally', heroName: 'Haze', deaths: [{ timeS: 300, respawnS: 330 }] }),
+      player({
+        slot: 1,
+        side: 'ally',
+        heroName: 'Haze',
+        deaths: [{ timeS: 300, respawnS: 330, killerSlot: null }],
+      }),
       player({
         slot: 7,
         side: 'enemy',
         heroName: 'Abrams',
-        deaths: [{ timeS: 400, respawnS: 440 }],
+        deaths: [{ timeS: 400, respawnS: 440, killerSlot: null }],
       }),
     ],
     objectives: [

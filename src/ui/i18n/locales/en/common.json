@@ -145,7 +145,8 @@
         "waiting": "Waiting",
         "unavailable": "Unavailable",
         "invalid": "Invalid",
-        "evicted": "Archive removed"
+        "evicted": "Archive removed",
+        "inProgress": "In progress…"
       }
     },
     "sync": {
@@ -170,6 +171,7 @@
   "matchDetail": {
     "title": "Match {{matchId}}",
     "back": "Back to matches",
+    "loading": "Analysing the match…",
     "notEligible": "Match details are archived for your normal-mode Paige matches of the last 90 days.",
     "waiting": "Waiting for the match detail.",
     "nextAttempt": "Next attempt: {{time}}.",
@@ -480,6 +482,7 @@
   },
   "review": {
     "title": "Review",
+    "loading": "Analysing your matches…",
     "window_one": "Your last match, {{from}}",
     "window_other": "Your last {{count}} matches, {{from}} to {{to}}",
     "windowOneDay": "Your last {{count}} matches, on {{date}}",

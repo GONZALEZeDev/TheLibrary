@@ -145,7 +145,8 @@
         "waiting": "En attente",
         "unavailable": "Indisponible",
         "invalid": "Invalide",
-        "evicted": "Archive supprimée"
+        "evicted": "Archive supprimée",
+        "inProgress": "En cours…"
       }
     },
     "sync": {
@@ -170,6 +171,7 @@
   "matchDetail": {
     "title": "Partie {{matchId}}",
     "back": "Revenir aux parties",
+    "loading": "Analyse de la partie…",
     "notEligible": "Le détail est archivé pour tes parties Paige en mode normal des 90 derniers jours.",
     "waiting": "Détail en attente.",
     "nextAttempt": "Prochaine tentative : {{time}}.",
@@ -480,6 +482,7 @@
   },
   "review": {
     "title": "Bilan",
+    "loading": "Analyse de tes parties…",
     "window_one": "Ta dernière partie, le {{from}}",
     "window_other": "Tes {{count}} dernières parties, du {{from}} au {{to}}",
     "windowOneDay": "Tes {{count}} dernières parties, le {{date}}",

@@ -10,7 +10,16 @@
  * have to become a focus stop of its own, next to the link.
  *
  * **Navigation.** The time of each match links to the match page, and so does the rest of its row
- * for the mouse: the link stays the row's only link and the only stop of the keyboard.
+ * for the mouse: the link stays the row's only link and the only stop of the keyboard. While a
+ * synchronisation runs, a match the queue has never tried yet is locked: its link is disabled (it
+ * keeps its place and the focus of the keyboard, but opens nothing), the row takes no click, and its
+ * detail column says that it is in progress, until the queue has archived it or the synchronisation
+ * ends. Its page would only say that the detail is on its way.
+ *
+ * **Rows.** The match rows of a day alternate between a tinted background and none, the first match
+ * of each day tinted, so that each match reads as one line from the time to the detail. The tint is
+ * worked out from the place of the match in its day, not from the rows the window renders, so a row
+ * keeps its tint as the window moves.
  *
  * **Windowing.** A history holds hundreds or thousands of matches, so only the rows near the visible
  * part of `<main>` (the element that scrolls the pages) are rendered (`useWindowedRows`). The rows
@@ -36,6 +45,7 @@ import { OPENED_FROM_HISTORY_STATE } from '../../app/history-return';
 import { ResultBadge } from '../../components/ResultBadge';
 import { formatMediumDate, formatTime, localDayKey, relativeDay } from '../../format/date';
 import { formatDuration } from '../../format/duration';
+import { useSyncRunning } from './use-matches';
 import { useWindowedRows } from './use-windowed-rows';
 
 /**
@@ -70,6 +80,8 @@ type HistoryRow =
       readonly item: MatchListItem;
       /** The label of the day row the match sits under: part of the name of its link. */
       readonly dayLabel: string;
+      /** Whether the row is tinted: the first match of its day, then every other one. */
+      readonly striped: boolean;
     };
 
 /** Props of {@link HistoryList}. */
@@ -97,6 +109,35 @@ const DETAIL_STATUS_LABEL_KEYS = {
   invalid: 'matches.table.detailStatus.invalid',
   evicted: 'matches.table.detailStatus.evicted',
 } as const satisfies Record<DetailStatus, string>;
+
+/**
+ * Whether a match row is locked: a synchronisation runs and the queue has never tried the detail of
+ * the match (`pending`), which it takes in this run unless a pause or the budget stops it first. The
+ * row unlocks as soon as the queue has archived it (the list is read again as the queue goes) or the
+ * run ends. A `retry` match is not locked: it failed once and waits for a next attempt that may be
+ * hours away, so a running synchronisation says nothing of it, and its page explains the wait.
+ *
+ * @param status - Where the detail of the match stands; `null` for a match the app does not archive.
+ * @param syncRunning - Whether a synchronisation runs.
+ * @returns `true` when the row must not open its match.
+ */
+function isLocked(status: DetailStatus | null, syncRunning: boolean): boolean {
+  return syncRunning && status === 'pending';
+}
+
+/**
+ * The look of a match row by what it allows: an open row is clickable and lights up under the
+ * pointer and when its link has the focus; a locked row is muted and does neither. The tint of
+ * {@link MATCH_ROW_STRIPE} comes first in the class list, and the light of an open row takes over
+ * from it (Tailwind writes the variants after the plain utilities).
+ */
+const MATCH_ROW_LOOK = {
+  open: 'cursor-pointer hover:bg-surface-raised focus-within:bg-surface-raised',
+  locked: 'cursor-not-allowed text-fg-muted',
+} as const;
+
+/** The tint of every other match row of a day, see {@link HistoryRow}. */
+const MATCH_ROW_STRIPE = 'bg-surface';
 
 /**
  * The columns, in order: the key of the header and the width of the column. The table lays its
@@ -143,11 +184,14 @@ function toRows(
   const rows: HistoryRow[] = [];
   let currentDay: string | null = null;
   let dayLabel = '';
+  // The place of the match in its day, from 0: the even places are tinted.
+  let indexInDay = 0;
   for (const item of matches) {
     const key = localDayKey(item.startTime);
     // The matches come newest first, so the matches of one day follow each other.
     if (key !== currentDay) {
       currentDay = key;
+      indexInDay = 0;
       const relative = relativeDay(item.startTime, now);
       dayLabel =
         relative === null
@@ -155,7 +199,8 @@ function toRows(
           : t(`matches.day.${relative}`);
       rows.push({ kind: 'day', key, label: dayLabel });
     }
-    rows.push({ kind: 'match', item, dayLabel });
+    rows.push({ kind: 'match', item, dayLabel, striped: indexInDay % 2 === 0 });
+    indexInDay += 1;
   }
   return rows;
 }
@@ -194,6 +239,8 @@ function elementsAbove(element: Element, container: Element): Element[] {
 export function HistoryList({ matches, heroNames, now }: HistoryListProps) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
+  // A running synchronisation locks the rows whose detail it may still archive (see `isLocked`).
+  const syncRunning = useSyncRunning();
   const rows = useMemo(
     () => toRows(matches, now, i18n.language, t),
     [matches, now, i18n.language, t],
@@ -310,34 +357,58 @@ export function HistoryList({ matches, heroNames, now }: HistoryListProps) {
     const typeLabel = matchType === null ? undefined : t(`matchType.${matchType}`);
     const heroName =
       heroNames?.get(match.heroId) ?? t('matches.table.unknownHero', { id: match.heroId });
-    const detailLabel =
-      match.detailStatus === null ? undefined : t(DETAIL_STATUS_LABEL_KEYS[match.detailStatus]);
+    const locked = isLocked(match.detailStatus, syncRunning);
+    let detailLabel: string | undefined;
+    if (locked) {
+      detailLabel = t('matches.table.detailStatus.inProgress');
+    } else if (match.detailStatus !== null) {
+      detailLabel = t(DETAIL_STATUS_LABEL_KEYS[match.detailStatus]);
+    }
+    // The day is part of the name of the link, as a row header above is for the eye: a list of the
+    // links of the page, or the Tab key, never gives two matches the same bare time. The space stays
+    // outside the hidden text, where the name keeps it (a trailing space inside an element is
+    // dropped from the name), and the eye sees none: it starts the line.
+    const classes = [
+      row.striped ? MATCH_ROW_STRIPE : '',
+      MATCH_ROW_LOOK[locked ? 'locked' : 'open'],
+    ]
+      .filter(Boolean)
+      .join(' ');
     return (
       // The whole row opens the match with the mouse; the keyboard goes through the time link, the
       // only link and focus stop of the row, so the row is given no role, tab stop or key handler of
       // its own. The row has the same highlight when the focus is on its link (`focus-within`) as
-      // when the pointer is on it.
+      // when the pointer is on it. A locked row takes no click, and its link is disabled rather than
+      // removed: a synchronisation that starts while the keyboard is on it leaves the focus there.
       <tr
         key={match.matchId}
         aria-rowindex={rowIndex}
-        onClick={(event) => {
-          openMatch(event, match.matchId);
-        }}
+        onClick={
+          locked
+            ? undefined
+            : (event) => {
+                openMatch(event, match.matchId);
+              }
+        }
         style={ROW_STYLE}
-        className="cursor-pointer hover:bg-surface-raised focus-within:bg-surface-raised"
+        className={classes}
       >
         <td className={`${CELL} pl-3 tabular-nums`}>
           <Link
             to="/matches/$matchId"
             params={{ matchId: match.matchId }}
             state={OPENED_FROM_HISTORY_STATE}
-            className="hover:text-accent-bright"
+            aria-disabled={locked ? true : undefined}
+            onClick={
+              locked
+                ? (event) => {
+                    // The router's own handler, which runs after this one, then does nothing.
+                    event.preventDefault();
+                  }
+                : undefined
+            }
+            className={locked ? undefined : 'hover:text-accent-bright'}
           >
-            {/* The day is part of the name of the link, as a row header above is for the eye: a
-                list of the links of the page, or the Tab key, never gives two matches the same
-                bare time. The space stays outside the hidden text, where the name keeps it (a
-                trailing space inside an element is dropped from the name), and the eye sees none:
-                it starts the line. */}
             <span className="sr-only">{`${row.dayLabel},`}</span>{' '}
             {formatTime(match.startTime, i18n.language)}
           </Link>

@@ -1205,4 +1205,83 @@ describe('MatchesPage', () => {
       expect(readDetailRows(table)).toEqual(expected);
     });
   });
+
+  it('tints the first match of each day, then every other one', async () => {
+    // Three matches today and two yesterday, by the clock of the machine.
+    const times = [
+      localTimeDaysAgo(0, 11),
+      localTimeDaysAgo(0, 10),
+      localTimeDaysAgo(0, 9),
+      localTimeDaysAgo(1, 22),
+      localTimeDaysAgo(1, 21),
+    ];
+    serveHistory(
+      times.map((startTime, index) => ({
+        ...matchSummary({ matchId: FIRST_SEEDED_MATCH_ID + index, startTime }),
+        detailStatus: 'ready',
+      })),
+    );
+    await renderMatchesPage();
+    const table = await screen.findByRole('table', { name: EN.caption });
+
+    const tinted = within(table)
+      .getAllByRole('row')
+      .filter((row) => within(row).queryByRole('link') !== null)
+      .map((row) => row.classList.contains('bg-surface'));
+    // The tint starts again under the day row of yesterday.
+    expect(tinted).toEqual([true, false, true, true, false]);
+  });
+
+  it('locks the matches the queue has not tried yet while a synchronisation runs', async () => {
+    const user = userEvent.setup();
+    // The history request waits until the test releases it, then fails: the queue does not run on
+    // a network down, so the synchronisation ends with the list as it was.
+    const gate: { release?: () => void } = {};
+    const answered = new Promise<void>((resolve) => {
+      gate.release = resolve;
+    });
+    const untried = matchSummary({ matchId: 1, startTime: localTimeDaysAgo(0, 11) });
+    const retrying = matchSummary({ matchId: 2, startTime: localTimeDaysAgo(0, 10) });
+    const archived = matchSummary({ matchId: 3, startTime: localTimeDaysAgo(0, 9) });
+    serveHistory([
+      { ...untried, detailStatus: 'pending' },
+      { ...retrying, detailStatus: 'retry' },
+      { ...archived, detailStatus: 'ready' },
+    ]);
+    const { services, router } = await renderMatchesPage({
+      handler: async () => {
+        await answered;
+        throw new AppError('network', 'The network is down');
+      },
+    });
+    const table = await screen.findByRole('table', { name: EN.caption });
+    const [untriedLink, retryingLink, archivedLink] = within(table).getAllByRole('link');
+    // The keyboard is on the link of the match the queue has not tried yet.
+    untriedLink?.focus();
+
+    const sync = services.sync.syncNow('schedule');
+
+    // That match says it is in progress, and its link is disabled but stays, with the focus on it.
+    // The match waiting for a next attempt and the archived match keep their links.
+    const inProgress = await within(table).findByText('In progress…');
+    expect(untriedLink).toHaveAttribute('aria-disabled', 'true');
+    expect(untriedLink).toHaveFocus();
+    expect(retryingLink).not.toHaveAttribute('aria-disabled');
+    expect(archivedLink).not.toHaveAttribute('aria-disabled');
+    expect(within(table).getAllByText('Waiting')).toHaveLength(1);
+    // Neither a click on the row nor one on the link opens it.
+    const navigate = vi.spyOn(router, 'navigate');
+    await user.click(inProgress);
+    await user.click(untriedLink ?? expect.unreachable());
+    expect(navigate).not.toHaveBeenCalled();
+    expect(router.state.location.pathname).toBe('/matches');
+
+    gate.release?.();
+    await sync;
+    // The run is over: the match is waiting again, and can be opened.
+    await waitFor(() => {
+      expect(within(table).getAllByText('Waiting')).toHaveLength(2);
+    });
+    expect(untriedLink).not.toHaveAttribute('aria-disabled');
+  });
 });

@@ -27,6 +27,7 @@ function player(overrides: Partial<ReplayViewPlayer> = {}): ReplayViewPlayer {
   return {
     slot: 1,
     side: 'ally',
+    team: 'hidden_king',
     isTracked: false,
     heroId: 1,
     heroName: 'Haze',
@@ -34,6 +35,7 @@ function player(overrides: Partial<ReplayViewPlayer> = {}): ReplayViewPlayer {
     hasPath: true,
     // Ten seconds of a walk to the right, at the middle of the map.
     positions: Array.from({ length: 11 }, (_, second) => ({ left: 0.1 + second / 100, top: 0.5 })),
+    health: [],
     deaths: [],
     ...overrides,
   };
@@ -43,6 +45,7 @@ function player(overrides: Partial<ReplayViewPlayer> = {}): ReplayViewPlayer {
 function objective(overrides: Partial<ReplayViewObjective> = {}): ReplayViewObjective {
   return {
     side: 'enemy',
+    team: 'archmother',
     identity: { kind: 'walker', lane: 1, index: null },
     position: { left: 0.3, top: 0.3 },
     destroyedAtS: null,
@@ -72,6 +75,7 @@ function testView(overrides: Partial<ReplayData> = {}): ReplayData {
   return {
     kind: 'replay',
     durationS: 10,
+    trackedTeam: 'hidden_king',
     coverage: 'all',
     map,
     players: [

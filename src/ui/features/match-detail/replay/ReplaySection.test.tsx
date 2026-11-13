@@ -54,12 +54,14 @@ function player(overrides: Partial<ReplayViewPlayer> = {}): ReplayViewPlayer {
   return {
     slot: 1,
     side: 'ally',
+    team: 'hidden_king',
     isTracked: true,
     heroId: 1,
     heroName: 'Haze',
     iconUrl: null,
     hasPath: true,
     positions: Array.from({ length: 11 }, () => ({ left: 0.5, top: 0.5 })),
+    health: [],
     deaths: [],
     ...overrides,
   };
@@ -70,6 +72,7 @@ function replayView(overrides: Partial<ReplayData> = {}): ReplayData {
   return {
     kind: 'replay',
     durationS: 10,
+    trackedTeam: 'hidden_king',
     coverage: 'all',
     map: {
       imageUrl: 'https://assets-bucket.deadlock-api.com/map.png',

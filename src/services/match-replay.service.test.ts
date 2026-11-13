@@ -28,6 +28,7 @@ import type { ArchiveEnvelope } from '../core/match-detail/archive-envelope';
 import { worldToRelative } from '../core/match-map/map-geometry';
 import { MAP_OBJECTIVE_IDS, MID_BOSS_POSITION } from '../core/match-map/map-objectives';
 import { readMatchReplay } from '../core/match-map/match-replay';
+import { teamIdentityOf } from '../core/match-map/team-identity';
 import { createTestServices } from '../test/create-test-services';
 import { ARCHIVED_IDS, archived, MATCH_COUNT, NOW } from '../test/match-detail-page';
 import { testMatchId } from '../test/test-data';
@@ -328,13 +329,117 @@ describe('MatchReplayService', () => {
       expect(view.objectives.slice(13).every((objective) => objective.side !== allySide)).toBe(
         true,
       );
+      const trackedIdentity = teamIdentityOf(replay.trackedTeam);
+      const otherIdentity = teamIdentityOf(other);
       expect(view.midBossKills).toEqual([
-        { timeS: 60, killedBy: 'enemy', claimedBy: 'ally' },
-        { timeS: duration - 10, killedBy: 'ally', claimedBy: 'enemy' },
+        {
+          timeS: 60,
+          killedBy: 'enemy',
+          claimedBy: 'ally',
+          killedByTeam: otherIdentity,
+          claimedByTeam: trackedIdentity,
+        },
+        {
+          timeS: duration - 10,
+          killedBy: 'ally',
+          claimedBy: 'enemy',
+          killedByTeam: trackedIdentity,
+          claimedByTeam: otherIdentity,
+        },
       ]);
       // 420 s after the first kill; the return after the second one is past the end of the match.
       expect(duration).toBeGreaterThan(480);
       expect(view.midBossReturnsS).toEqual([480]);
+    });
+
+    it('players, objectives and mid boss kills carry their team identity', async () => {
+      const context = await setUp();
+      const matchId = firstMatch();
+      const replay = readMatchReplay(await envelopeOf(context, matchId));
+      await editArchive(context, matchId, (envelope) => {
+        envelope.payload.match_info.mid_boss = [
+          { team_killed: 0, team_claimed: 1, destroyed_time_s: 60 },
+        ];
+      });
+
+      const view = replayOf(await context.replay.getReplay(matchId));
+
+      // The identity is the one of the API team number, whichever side the owner played on.
+      expect(view.trackedTeam).toBe(teamIdentityOf(replay.trackedTeam));
+      for (const player of view.players) {
+        const track = replay.players.find((candidate) => candidate.slot === player.slot);
+        expect(player.team).toBe(teamIdentityOf(track?.team ?? -1));
+      }
+      expect(new Set(view.players.map((player) => player.team))).toEqual(
+        new Set(['hidden_king', 'archmother']),
+      );
+      // Team 0 comes first among the objectives, then team 1.
+      expect(view.objectives.slice(0, 13).every((o) => o.team === 'hidden_king')).toBe(true);
+      expect(view.objectives.slice(13).every((o) => o.team === 'archmother')).toBe(true);
+      expect(view.midBossKills[0]).toMatchObject({
+        killedByTeam: 'hidden_king',
+        claimedByTeam: 'archmother',
+      });
+    });
+
+    it('health is passed through, and kept when the map asset fails', async () => {
+      const matchId = firstMatch();
+      for (const down of [[], [mapRequest().url]]) {
+        const context = await setUp(handlerWith(down));
+        const view = replayOf(await context.replay.getReplay(matchId));
+        const replay = readMatchReplay(await envelopeOf(context, matchId));
+        let known = 0;
+        for (const [index, player] of view.players.entries()) {
+          const track = replay.players[index] ?? expect.unreachable('the players match');
+          expect(player.health).toEqual(track.health);
+          known += player.health.filter((value) => value !== null).length;
+        }
+        // The history holds paths with health, so the check above compared real values.
+        expect(known).toBeGreaterThan(0);
+      }
+    });
+
+    it('deaths carry their killer slot', async () => {
+      const context = await setUp();
+      const matchId = firstMatch();
+      const view = replayOf(await context.replay.getReplay(matchId));
+      const replay = readMatchReplay(await envelopeOf(context, matchId));
+      const deaths = replay.players.flatMap((track) => track.deaths);
+      expect(deaths.length).toBeGreaterThan(0);
+      for (const [index, player] of view.players.entries()) {
+        const track = replay.players[index] ?? expect.unreachable('the players match');
+        expect(player.deaths.map((death) => death.killerSlot)).toEqual(
+          track.deaths.map((death) => death.killerSlot),
+        );
+      }
+    });
+
+    it('answers unreadable when a team is neither 0 nor 1', async () => {
+      const context = await setUp();
+      const matchId = firstMatch();
+      // A mid boss killed by a team the API does not number 0 or 1 has no identity to colour it by.
+      await editArchive(context, matchId, (envelope) => {
+        envelope.payload.match_info.mid_boss = [
+          { team_killed: 2, team_claimed: 0, destroyed_time_s: 60 },
+        ];
+      });
+
+      await expect(context.replay.getReplay(matchId)).resolves.toEqual({ kind: 'unreadable' });
+      await expect(context.replay.getReplay(matchId)).resolves.toEqual({ kind: 'unreadable' });
+
+      // One warning with the problem, never a value of the payload or the account.
+      const lines = context.logger.entries.filter((entry) => entry.scope === LOG_SCOPE);
+      expect(lines).toEqual([
+        {
+          level: 'warn',
+          scope: LOG_SCOPE,
+          message: 'The replay of a match could not be read',
+          context: { matchId, issue: expect.any(String) as unknown },
+        },
+      ]);
+      expect(JSON.stringify(lines)).not.toContain(
+        String(context.accountId ?? expect.unreachable('the services have an account')),
+      );
     });
 
     it('has no map but the rest of the replay when the map asset fails', async () => {

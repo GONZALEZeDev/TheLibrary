@@ -13,6 +13,7 @@ import type { RelativePoint } from '../../../../core/match-map/map-geometry';
 import { isDeadAt } from '../../../../core/match-map/match-replay';
 import type {
   ReplayView,
+  ReplayViewMidBossKill,
   ReplayViewObjective,
   ReplayViewPlayer,
 } from '../../../../services/match-replay-view';
@@ -254,4 +255,131 @@ export function instantAt(view: ReplayData, timeS: number): InstantSummary {
   const second = Math.floor(timeS);
   const next = scheduleOccurrences(view.durationS).find((entry) => entry.timeS > second) ?? null;
   return { destroyed, dead, next };
+}
+
+/** What the players strip shows for one player at a moment. */
+export type PlayerStatus =
+  /** Alive: `healthPercent` is the health of the whole second, `null` without health data. */
+  | { readonly kind: 'alive'; readonly healthPercent: number | null }
+  /** Dead: `respawnInS` is the wait left in whole seconds, `null` when unknown. */
+  | { readonly kind: 'dead'; readonly respawnInS: number | null };
+
+/**
+ * The status of a player at a moment, for the players strip.
+ *
+ * @param player - The player.
+ * @param timeS - The moment, in seconds; may be fractional.
+ * @returns Dead (with the respawn countdown rounded up) when the core's dead rule says so, else
+ *   alive with the health of the whole second the moment sits in.
+ */
+export function playerStatusAt(player: ReplayViewPlayer, timeS: number): PlayerStatus {
+  if (isDeadAt(player.deaths, timeS)) {
+    // The death the core rule accepts tells when the player is back (no second rule here).
+    const death = player.deaths.find((entry) => isDeadAt([entry], timeS));
+    const respawnS = death?.respawnS ?? null;
+    return { kind: 'dead', respawnInS: respawnS === null ? null : Math.ceil(respawnS - timeS) };
+  }
+  return { kind: 'alive', healthPercent: player.health[Math.floor(timeS)] ?? null };
+}
+
+/** One line of the live feed: a death, a fallen objective or a mid boss kill. */
+export type FeedEvent =
+  | {
+      readonly kind: 'death';
+      readonly timeS: number;
+      readonly victim: ReplayViewPlayer;
+      /** The killer; `null` when the archive names none, or for a self-kill. */
+      readonly killer: ReplayViewPlayer | null;
+    }
+  | {
+      readonly kind: 'objective';
+      readonly timeS: number;
+      readonly objective: ReplayViewObjective;
+    }
+  | {
+      readonly kind: 'mid_boss';
+      readonly timeS: number;
+      readonly kill: ReplayViewMidBossKill;
+    };
+
+/** How many lines the live feed shows. */
+export const LIVE_FEED_SIZE = 5;
+
+/** Order of the kinds of event when several happen in the same second. */
+const FEED_KIND_RANK: Record<FeedEvent['kind'], number> = { objective: 0, mid_boss: 1, death: 2 };
+
+/**
+ * Every event of the match, for the live feed: each death, each fallen objective, each mid boss
+ * kill. Computed once per view; {@link liveFeedAt} then picks the lines for a moment.
+ *
+ * @param view - The replay.
+ * @returns The events sorted by time; ties by kind (objective, mid boss, death), then by victim
+ *   slot for deaths and by position in the view's list otherwise, so the order is stable.
+ */
+export function feedEvents(view: ReplayData): readonly FeedEvent[] {
+  // Each event carries its tie-break key: the victim slot, or the index in the view's list.
+  const keyed: { event: FeedEvent; key: number }[] = [];
+  for (const victim of view.players) {
+    for (const death of victim.deaths) {
+      // A self-kill names no killer, and neither does a slot that is not in the view.
+      const killer =
+        death.killerSlot === null || death.killerSlot === victim.slot
+          ? null
+          : (view.players.find((entry) => entry.slot === death.killerSlot) ?? null);
+      keyed.push({
+        event: { kind: 'death', timeS: death.timeS, victim, killer },
+        key: victim.slot,
+      });
+    }
+  }
+  view.objectives.forEach((objective, index) => {
+    if (objective.destroyedAtS !== null) {
+      keyed.push({
+        event: { kind: 'objective', timeS: objective.destroyedAtS, objective },
+        key: index,
+      });
+    }
+  });
+  view.midBossKills.forEach((kill, index) => {
+    keyed.push({ event: { kind: 'mid_boss', timeS: kill.timeS, kill }, key: index });
+  });
+  return keyed
+    .toSorted(
+      (first, second) =>
+        first.event.timeS - second.event.timeS ||
+        FEED_KIND_RANK[first.event.kind] - FEED_KIND_RANK[second.event.kind] ||
+        first.key - second.key,
+    )
+    .map((entry) => entry.event);
+}
+
+/**
+ * The lines of the live feed at a moment.
+ *
+ * @param events - The events of the match, as {@link feedEvents} sorts them.
+ * @param timeS - The moment, in seconds; may be fractional.
+ * @returns The last {@link LIVE_FEED_SIZE} events up to the whole second of the moment, newest
+ *   first.
+ */
+export function liveFeedAt(events: readonly FeedEvent[], timeS: number): readonly FeedEvent[] {
+  const second = Math.floor(timeS);
+  const happened = events.filter((event) => event.timeS <= second);
+  return happened.slice(-LIVE_FEED_SIZE).toReversed();
+}
+
+/**
+ * The objectives that fell, for the history card.
+ *
+ * @param view - The replay.
+ * @returns The destroyed objectives only, oldest first; ties keep the order of the view's list.
+ */
+export function objectiveHistory(
+  view: ReplayData,
+): readonly (ReplayViewObjective & { readonly destroyedAtS: number })[] {
+  return view.objectives
+    .filter(
+      (objective): objective is ReplayViewObjective & { destroyedAtS: number } =>
+        objective.destroyedAtS !== null,
+    )
+    .toSorted((first, second) => first.destroyedAtS - second.destroyedAtS);
 }

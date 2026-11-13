@@ -119,6 +119,7 @@ function replayView(): ReplayView {
   return {
     kind: 'replay',
     durationS: 1_934,
+    trackedTeam: 'hidden_king',
     coverage: 'all',
     map: {
       imageUrl: 'https://assets-bucket.deadlock-api.com/map.png',
@@ -129,12 +130,14 @@ function replayView(): ReplayView {
       {
         slot: 1,
         side: 'ally',
+        team: 'hidden_king',
         isTracked: true,
         heroId: 1,
         heroName: 'Paige',
         iconUrl: null,
         hasPath: true,
         positions: Array.from({ length: 1_935 }, () => ({ left: 0.5, top: 0.5 })),
+        health: [],
         deaths: [],
       },
     ],

@@ -18,12 +18,14 @@ function player(overrides: Partial<ReplayViewPlayer>): ReplayViewPlayer {
   return {
     slot: 1,
     side: 'ally',
+    team: 'hidden_king',
     isTracked: false,
     heroId: 1,
     heroName: 'Haze',
     iconUrl: null,
     hasPath: true,
     positions: [],
+    health: [],
     deaths: [],
     ...overrides,
   };
@@ -37,6 +39,7 @@ function testView(): ReplayData {
   return {
     kind: 'replay',
     durationS: 1200,
+    trackedTeam: 'hidden_king',
     coverage: 'tracked_only',
     map: null,
     players: [
@@ -56,6 +59,7 @@ function testView(): ReplayData {
     objectives: [
       {
         side: 'enemy',
+        team: 'archmother',
         identity: { kind: 'walker', lane: 1, index: null },
         position: null,
         destroyedAtS: 100,

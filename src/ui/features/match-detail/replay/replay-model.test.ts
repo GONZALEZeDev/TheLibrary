@@ -1,9 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import type { ReplayView, ReplayViewPlayer } from '../../../../services/match-replay-view';
+import { isDeadAt } from '../../../../core/match-map/match-replay';
+import type {
+  ReplayView,
+  ReplayViewObjective,
+  ReplayViewPlayer,
+} from '../../../../services/match-replay-view';
 import {
   DEATH_LEAD_S,
+  feedEvents,
   FULL_MAP,
   instantAt,
+  LIVE_FEED_SIZE,
+  liveFeedAt,
+  objectiveHistory,
+  playerStatusAt,
   nextEvent,
   panBy,
   positionBetween,
@@ -15,17 +25,23 @@ import {
 
 type Replay = ReplayView & { kind: 'replay' };
 
-/** Build a player with sensible defaults; each test overrides what it looks at. */
+/**
+ * Build a player with sensible defaults; each test overrides what it looks at. The team follows the
+ * side (allies are the Hidden King, enemies the Archmother) unless a test overrides it.
+ */
 function player(overrides: Partial<ReplayViewPlayer>): ReplayViewPlayer {
+  const side = overrides.side ?? 'ally';
   return {
     slot: 1,
-    side: 'ally',
+    side,
+    team: side === 'ally' ? 'hidden_king' : 'archmother',
     isTracked: false,
     heroId: 1,
     heroName: null,
     iconUrl: null,
     hasPath: true,
     positions: [],
+    health: [],
     deaths: [],
     ...overrides,
   };
@@ -36,6 +52,7 @@ function replay(overrides: Partial<Replay>): Replay {
   return {
     kind: 'replay',
     durationS: 1000,
+    trackedTeam: 'hidden_king',
     coverage: 'all',
     map: null,
     players: [],
@@ -138,18 +155,28 @@ describe('stepEvents, previousEvent and nextEvent', () => {
     objectives: [
       {
         side: 'ally',
+        team: 'hidden_king',
         identity: { kind: 'guardian', lane: 1, index: null },
         position: null,
         destroyedAtS: 400,
       },
       {
         side: 'enemy',
+        team: 'archmother',
         identity: { kind: 'core', lane: null, index: null },
         position: null,
         destroyedAtS: null,
       },
     ],
-    midBossKills: [{ timeS: 100, killedBy: 'ally', claimedBy: 'ally' }],
+    midBossKills: [
+      {
+        timeS: 100,
+        killedBy: 'ally',
+        claimedBy: 'ally',
+        killedByTeam: 'hidden_king',
+        claimedByTeam: 'hidden_king',
+      },
+    ],
   });
 
   it('merges objectives, mid boss, tracked deaths and kills, sorted and unique', () => {
@@ -194,18 +221,21 @@ describe('instantAt', () => {
     objectives: [
       {
         side: 'ally',
+        team: 'hidden_king',
         identity: { kind: 'walker', lane: 1, index: null },
         position: null,
         destroyedAtS: 50,
       },
       {
         side: 'enemy',
+        team: 'archmother',
         identity: { kind: 'walker', lane: 3, index: null },
         position: null,
         destroyedAtS: 90,
       },
       {
         side: 'enemy',
+        team: 'archmother',
         identity: { kind: 'core', lane: null, index: null },
         position: null,
         destroyedAtS: 500,
@@ -234,5 +264,166 @@ describe('instantAt', () => {
     expect(instantAt(view, 120).next?.timeS).toBe(180);
     expect(instantAt(view, 120.4).next?.timeS).toBe(180);
     expect(instantAt(replay({ durationS: 10 }), 5).next).toBeNull();
+  });
+});
+
+describe('playerStatusAt', () => {
+  const hero = player({
+    health: [100, 80, 60, null, null, 40],
+    deaths: [{ timeS: 3, respawnS: 5, killerSlot: null }],
+  });
+
+  it('a dead player shows the countdown, an alive one the health of the whole second', () => {
+    expect(playerStatusAt(hero, 3)).toEqual({ kind: 'dead', respawnInS: 2 });
+    expect(playerStatusAt(hero, 3.5)).toEqual({ kind: 'dead', respawnInS: 2 });
+    expect(playerStatusAt(hero, 1.9)).toEqual({ kind: 'alive', healthPercent: 80 });
+    expect(playerStatusAt(hero, 5)).toEqual({ kind: 'alive', healthPercent: 40 });
+  });
+
+  it('a dead player without a known respawn has a null countdown', () => {
+    const unknown = player({ deaths: [{ timeS: 3, respawnS: null, killerSlot: null }] });
+    expect(playerStatusAt(unknown, 3)).toEqual({ kind: 'dead', respawnInS: null });
+  });
+
+  it('picks the death the core rule accepts, whatever the order of the deaths', () => {
+    // Unsorted on purpose: the later death comes first in the array.
+    const twice = player({
+      deaths: [
+        { timeS: 50, respawnS: 60, killerSlot: null },
+        { timeS: 10, respawnS: 40, killerSlot: null },
+      ],
+    });
+    expect(playerStatusAt(twice, 20)).toEqual({ kind: 'dead', respawnInS: 20 });
+    expect(playerStatusAt(twice, 45)).toEqual({ kind: 'alive', healthPercent: null });
+    expect(playerStatusAt(twice, 55)).toEqual({ kind: 'dead', respawnInS: 5 });
+    // An overlapping second death still reports a countdown from a death that covers the moment.
+    const overlap = player({
+      deaths: [
+        { timeS: 10, respawnS: 40, killerSlot: null },
+        { timeS: 30, respawnS: 35, killerSlot: null },
+      ],
+    });
+    expect(playerStatusAt(overlap, 32)).toEqual({ kind: 'dead', respawnInS: 8 });
+  });
+
+  it('agrees with the core dead rule at every whole and fractional second', () => {
+    const many = player({
+      deaths: [
+        { timeS: 50, respawnS: null, killerSlot: null },
+        { timeS: 10, respawnS: 40, killerSlot: null },
+        { timeS: 30, respawnS: 35, killerSlot: null },
+      ],
+    });
+    for (let timeS = 0; timeS <= 60; timeS += 0.5) {
+      expect(playerStatusAt(many, timeS).kind === 'dead', `t=${String(timeS)}`).toBe(
+        isDeadAt(many.deaths, timeS),
+      );
+    }
+  });
+
+  it('no health data gives an alive status with a null percent', () => {
+    expect(playerStatusAt(player({}), 10)).toEqual({ kind: 'alive', healthPercent: null });
+  });
+});
+
+describe('the feed and the history', () => {
+  /** An objective of the Archmother with the given lane and fall time. */
+  function objective(lane: 1 | 3 | 4, destroyedAtS: number | null): ReplayViewObjective {
+    return {
+      side: 'enemy',
+      team: 'archmother',
+      identity: { kind: 'walker', lane, index: null },
+      position: null,
+      destroyedAtS,
+    };
+  }
+
+  it('the feed keeps the 5 latest events up to the second, newest first', () => {
+    const view = replay({
+      players: [
+        player({
+          slot: 1,
+          deaths: [10, 20, 30].map((timeS) => ({ timeS, respawnS: timeS + 5, killerSlot: null })),
+        }),
+      ],
+      objectives: [objective(1, 15), objective(3, null)],
+      midBossKills: [
+        {
+          timeS: 25,
+          killedBy: 'ally',
+          claimedBy: 'ally',
+          killedByTeam: 'hidden_king',
+          claimedByTeam: 'hidden_king',
+        },
+      ],
+    });
+    const events = feedEvents(view);
+    expect(events.map((event) => event.timeS)).toEqual([10, 15, 20, 25, 30]);
+    // Nothing after the second of the cursor; the fifth event is hidden at 29.9.
+    expect(liveFeedAt(events, 29.9).map((event) => event.timeS)).toEqual([25, 20, 15, 10]);
+    expect(liveFeedAt(events, 30).map((event) => event.timeS)).toEqual([30, 25, 20, 15, 10]);
+    // A tie inside one second is newest first too: the highest victim slot comes first.
+    const tie = feedEvents(
+      replay({
+        players: [1, 2, 3].map((slot) =>
+          player({ slot, deaths: [{ timeS: 7, respawnS: 9, killerSlot: null }] }),
+        ),
+      }),
+    );
+    expect(
+      liveFeedAt(tie, 7).map((event) => (event.kind === 'death' ? event.victim.slot : 0)),
+    ).toEqual([3, 2, 1]);
+    expect(LIVE_FEED_SIZE).toBe(5);
+    const more = feedEvents(
+      replay({
+        players: [
+          player({
+            deaths: [1, 2, 3, 4, 5, 6, 7].map((timeS) => ({
+              timeS,
+              respawnS: timeS + 1,
+              killerSlot: null,
+            })),
+          }),
+        ],
+      }),
+    );
+    expect(liveFeedAt(more, 100).map((event) => event.timeS)).toEqual([7, 6, 5, 4, 3]);
+  });
+
+  it('five deaths in one second keep a stable order by slot', () => {
+    const view = replay({
+      players: [5, 2, 4, 1, 3].map((slot) =>
+        player({ slot, deaths: [{ timeS: 40, respawnS: 60, killerSlot: null }] }),
+      ),
+      objectives: [objective(1, 40)],
+    });
+    const events = feedEvents(view);
+    // The objective comes first in a tie, then the deaths by victim slot.
+    expect(events.map((event) => (event.kind === 'death' ? event.victim.slot : 0))).toEqual([
+      0, 1, 2, 3, 4, 5,
+    ]);
+    expect(events[0]?.kind).toBe('objective');
+  });
+
+  it('a killer slot of null gives a death without killer', () => {
+    const view = replay({
+      players: [
+        player({ slot: 1, deaths: [{ timeS: 5, respawnS: 9, killerSlot: null }] }),
+        player({ slot: 2, side: 'enemy', deaths: [{ timeS: 6, respawnS: 9, killerSlot: 1 }] }),
+        player({ slot: 3, deaths: [{ timeS: 7, respawnS: 9, killerSlot: 99 }] }),
+        player({ slot: 4, deaths: [{ timeS: 8, respawnS: 9, killerSlot: 4 }] }),
+      ],
+    });
+    const killers = feedEvents(view).map((event) =>
+      event.kind === 'death' ? (event.killer?.slot ?? null) : -1,
+    );
+    expect(killers).toEqual([null, 1, null, null]);
+  });
+
+  it('the history lists destroyed objectives only, oldest first', () => {
+    const view = replay({
+      objectives: [objective(1, 300), objective(3, null), objective(3, 100), objective(4, 300)],
+    });
+    expect(objectiveHistory(view).map((entry) => entry.identity.lane)).toEqual([3, 1, 4]);
   });
 });

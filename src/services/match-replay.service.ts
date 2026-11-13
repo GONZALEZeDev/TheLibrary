@@ -34,6 +34,7 @@ import {
   objectivePosition,
 } from '../core/match-map/map-objectives';
 import { readMatchReplay, type MatchReplay } from '../core/match-map/match-replay';
+import { teamIdentityOf, type TeamIdentity } from '../core/match-map/team-identity';
 import type { AccountSource } from '../ports/account-source.port';
 import type { Logger } from '../ports/logger.port';
 import { archivedAccountOf } from './analysis-subject';
@@ -96,6 +97,30 @@ function sideOf(team: number, trackedTeam: number): Side {
 }
 
 /**
+ * Thrown by {@link identityOf} for a team number that names neither team. It never leaves this
+ * module: the service turns it into an `unreadable` view.
+ */
+class UnknownTeamError extends Error {}
+
+/**
+ * The in-game identity of a team, or a failure for a team that has none.
+ *
+ * Every team the view needs goes through here, so that a team the API numbers otherwise than 0 or 1
+ * makes the whole replay unreadable (see {@link viewOf}) instead of being coloured at random.
+ *
+ * @param team - A team, as the API numbers it.
+ * @returns The identity of the team.
+ * @throws UnknownTeamError when the team is neither 0 nor 1.
+ */
+function identityOf(team: number): TeamIdentity {
+  const identity = teamIdentityOf(team);
+  if (identity === null) {
+    throw new UnknownTeamError('A team has no in-game identity');
+  }
+  return identity;
+}
+
+/**
  * The map the replay is drawn with.
  *
  * @param layout - The map layout, or `null` when it could not be read.
@@ -122,6 +147,7 @@ function playersOf(replay: MatchReplay, catalogues: ReplayCatalogues): readonly 
     return {
       slot: player.slot,
       side: sideOf(player.team, replay.trackedTeam),
+      team: identityOf(player.team),
       isTracked: player.isTracked,
       heroId: player.heroId,
       heroName: hero?.name ?? null,
@@ -134,6 +160,8 @@ function playersOf(replay: MatchReplay, catalogues: ReplayCatalogues): readonly 
           : player.positions.map((point) =>
               point === null ? null : worldToRelative(point, layout.radius),
             ),
+      // The health needs no map: it is kept when the map is unavailable.
+      health: player.health,
       deaths: player.deaths,
     };
   });
@@ -164,6 +192,7 @@ function objectivesOf(
       return [
         {
           side: sideOf(team, replay.trackedTeam),
+          team: identityOf(team),
           identity,
           position: layout === null ? null : objectivePosition(team, identity, layout),
           destroyedAtS: fallen?.destroyedAtS ?? null,
@@ -171,6 +200,37 @@ function objectivesOf(
       ];
     }),
   );
+}
+
+/**
+ * The view of a replay read from an archive, decorated with what the catalogues gave.
+ *
+ * @param replay - The replay read from the archive.
+ * @param catalogues - What the catalogues gave.
+ * @returns The `replay` view.
+ * @throws UnknownTeamError when a team of the replay (a player, an objective, a mid boss kill or the
+ *   tracked team) is neither 0 nor 1.
+ */
+function viewOf(replay: MatchReplay, catalogues: ReplayCatalogues): ReplayView {
+  const killTimesS = replay.midBossKills.map((kill) => kill.timeS);
+  return {
+    kind: 'replay',
+    durationS: replay.durationS,
+    trackedTeam: identityOf(replay.trackedTeam),
+    coverage: replay.coverage,
+    map: mapOf(catalogues.layout),
+    players: playersOf(replay, catalogues),
+    objectives: objectivesOf(replay, catalogues.layout),
+    midBossKills: replay.midBossKills.map((kill) => ({
+      timeS: kill.timeS,
+      killedBy: sideOf(kill.teamKilled, replay.trackedTeam),
+      claimedBy: sideOf(kill.teamClaimed, replay.trackedTeam),
+      killedByTeam: identityOf(kill.teamKilled),
+      claimedByTeam: identityOf(kill.teamClaimed),
+    })),
+    // The mid boss that comes back after the match is over never came back.
+    midBossReturnsS: midBossReturns(killTimesS).filter((timeS) => timeS <= replay.durationS),
+  };
 }
 
 /** Tells the replay of a match: what the map replay of the timeline tab shows. */
@@ -241,22 +301,19 @@ export class MatchReplayService {
 
     // The catalogues are read last: a match that cannot be shown downloads nothing for them.
     const catalogues = await this.#readCatalogues(matchId);
-    const killTimesS = replay.midBossKills.map((kill) => kill.timeS);
-    return {
-      kind: 'replay',
-      durationS: replay.durationS,
-      coverage: replay.coverage,
-      map: mapOf(catalogues.layout),
-      players: playersOf(replay, catalogues),
-      objectives: objectivesOf(replay, catalogues.layout),
-      midBossKills: replay.midBossKills.map((kill) => ({
-        timeS: kill.timeS,
-        killedBy: sideOf(kill.teamKilled, replay.trackedTeam),
-        claimedBy: sideOf(kill.teamClaimed, replay.trackedTeam),
-      })),
-      // The mid boss that comes back after the match is over never came back.
-      midBossReturnsS: midBossReturns(killTimesS).filter((timeS) => timeS <= replay.durationS),
-    };
+    try {
+      return viewOf(replay, catalogues);
+    } catch (error) {
+      if (!(error instanceof UnknownTeamError)) {
+        throw error;
+      }
+      // A team that is neither 0 nor 1 is a field that cannot be read, like any malformed one: the
+      // same single warning, with no value of the payload.
+      this.#reports.warn(matchId, 'The replay of a match could not be read', {
+        issue: 'team: unknown',
+      });
+      return { kind: 'unreadable' };
+    }
   }
 
   /**

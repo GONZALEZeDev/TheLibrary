@@ -17,6 +17,7 @@ import type { MapLane } from '../core/deadlock-api/map.schema';
 import type { RelativePoint } from '../core/match-map/map-geometry';
 import type { ObjectiveIdentity } from '../core/match-map/map-objectives';
 import type { ReplayCoverage, ReplayDeath } from '../core/match-map/match-replay';
+import type { TeamIdentity } from '../core/match-map/team-identity';
 
 /** The team of a player or of an objective, relative to the tracked player. */
 export type Side = 'ally' | 'enemy';
@@ -27,6 +28,8 @@ export interface ReplayViewPlayer {
   readonly slot: number;
   /** Whether the player is on the team of the tracked player. */
   readonly side: Side;
+  /** The in-game identity of the team of the player (Hidden King or Archmother), which colours it. */
+  readonly team: TeamIdentity;
   /** Whether this is the tracked player. */
   readonly isTracked: boolean;
   /** The hero the player played, an id of the hero list. */
@@ -46,7 +49,16 @@ export interface ReplayViewPlayer {
    * since there is then nothing to place the players on.
    */
   readonly positions: readonly (RelativePoint | null)[];
-  /** The deaths of the player, sorted by time. */
+  /**
+   * The health of the player at each second, in percent (0 to 100): the index is the second, from 0
+   * to `durationS`. `null` while dead or unknown. Kept when the map is unavailable, since reading
+   * the health does not need the map.
+   */
+  readonly health: readonly (number | null)[];
+  /**
+   * The deaths of the player, sorted by time, each with the slot of its killer when the archive
+   * names one.
+   */
   readonly deaths: readonly ReplayDeath[];
 }
 
@@ -54,6 +66,8 @@ export interface ReplayViewPlayer {
 export interface ReplayViewObjective {
   /** Whether the objective belongs to the team of the tracked player. */
   readonly side: Side;
+  /** The in-game identity of the team the objective belongs to. */
+  readonly team: TeamIdentity;
   /** What the objective is (core, guardian, walker, titan, shrine or base guardian). */
   readonly identity: ObjectiveIdentity;
   /** Where it stands on the picture; `null` when the map is unavailable. */
@@ -80,6 +94,10 @@ export interface ReplayViewMidBossKill {
   readonly killedBy: Side;
   /** The side that claimed the reward. */
   readonly claimedBy: Side;
+  /** The in-game identity of the team that killed it. */
+  readonly killedByTeam: TeamIdentity;
+  /** The in-game identity of the team that claimed the reward. */
+  readonly claimedByTeam: TeamIdentity;
 }
 
 /**
@@ -97,6 +115,8 @@ export type ReplayView =
       readonly kind: 'replay';
       /** How long the match lasted, in seconds. */
       readonly durationS: number;
+      /** The in-game identity of the team of the tracked player. */
+      readonly trackedTeam: TeamIdentity;
       /** How many players can be placed on the map. */
       readonly coverage: ReplayCoverage;
       /** What the map is drawn with; `null` when the map asset could not be read. */

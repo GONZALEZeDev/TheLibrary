@@ -10,10 +10,17 @@ Fixed and Removed.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-13
+
+### Added
+
+- A replay of the match on the map, in the Timeline tab: the 12 heroes move second by second with the objectives, under a playback bar, next to an "At mm:ss" panel that lists the objectives destroyed and the dead players, and the events of the match.
+
 ### Changed
 
+- The review summary sets your weak and strong points side by side when the window is wide.
 - The match list alternates the background of its rows, so each match reads as one line.
-- Opening a match or the review shows a short "Analysing…" step before the page, every time, even when the data is already there.
+- Opening a match or the review shows a short "Analysing…" step before the page, even when the data is already there; going back to a page skips it, so the page returns where you left it.
 - While a sync runs, a match still waiting for its detail cannot be opened: its row says "In progress…" until the sync has archived it.
 
 ### Removed

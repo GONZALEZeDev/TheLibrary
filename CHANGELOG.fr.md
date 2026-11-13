@@ -10,10 +10,17 @@ Ajouts, Modifications, Corrections et Suppressions.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-13
+
+### Ajouts
+
+- Un replay de la partie sur la carte, dans l'onglet Chronologie : les 12 héros se déplacent seconde par seconde avec les objectifs, sous une barre de lecture, à côté d'un panneau « À mm:ss » qui liste les objectifs détruits et les joueurs morts, et des événements de la partie.
+
 ### Modifications
 
+- Le résumé du Bilan place tes points faibles et tes points forts côte à côte quand la fenêtre est large.
 - La liste des parties alterne le fond de ses lignes : chaque partie se lit d'un seul trait.
-- L'ouverture d'une partie ou du Bilan passe par une courte étape « Analyse… » avant la page, à chaque fois, même quand les données sont déjà là.
+- L'ouverture d'une partie ou du Bilan passe par une courte étape « Analyse… » avant la page, même quand les données sont déjà là ; revenir en arrière la saute, pour retrouver la page là où tu l'avais laissée.
 - Pendant une synchronisation, une partie dont le détail est encore attendu ne peut pas être ouverte : sa ligne indique « En cours… » jusqu'à ce que la synchronisation l'ait archivée.
 
 ### Suppressions

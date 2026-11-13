@@ -127,11 +127,14 @@ export function scheduleOccurrences(durationS: number): readonly ScheduleOccurre
   return expanded.map((item) => item.occurrence);
 }
 
-/** How long the mid boss takes to return after its first and second kills, in seconds. */
-const MID_BOSS_RETURN_DELAYS_S: readonly number[] = [420, 360];
+/**
+ * How long the mid boss takes to return after its first and second kills, in seconds. Exported so
+ * the rules reminder states the very same delays that {@link midBossReturns} applies.
+ */
+export const MID_BOSS_RETURN_DELAYS_S: readonly number[] = [420, 360];
 
 /** The delay that applies from the third kill on, in seconds. */
-const MID_BOSS_LATER_RETURN_DELAY_S = 300;
+export const MID_BOSS_LATER_RETURN_DELAY_S = 300;
 
 /**
  * Tell when the mid boss comes back after each of its kills: 420 s after the first, 360 s after the

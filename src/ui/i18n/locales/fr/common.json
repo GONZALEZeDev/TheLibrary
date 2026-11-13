@@ -319,12 +319,13 @@
       "empty": "Rien ne s'est encore passé.",
       "death": "{{victim}} tué par {{killer}}",
       "deathNoKiller": "{{victim}} est mort",
-      "objective": "{{team}} a perdu {{objective}}",
-      "midBoss": "Mid Boss tué par {{team}} · Rejuvenator pris par {{claimer}}"
+      "objective": "<team>{{team}}</team> a perdu {{objective}}",
+      "midBoss": "Mid Boss tué par <team>{{team}}</team> · Rejuvenator pris par <claimer>{{claimer}}</claimer>"
     },
     "history": {
       "title": "Historique des objectifs",
-      "empty": "Aucun objectif n'a été détruit dans cette partie."
+      "empty": "Aucun objectif n'a été détruit dans cette partie.",
+      "pending": "pas encore tombé"
     },
     "rules": {
       "title": "Règles du jeu",

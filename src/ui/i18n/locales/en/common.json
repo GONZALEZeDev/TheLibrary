@@ -319,12 +319,13 @@
       "empty": "Nothing has happened yet.",
       "death": "{{victim}} killed by {{killer}}",
       "deathNoKiller": "{{victim}} died",
-      "objective": "{{team}} lost {{objective}}",
-      "midBoss": "Mid Boss killed by {{team}} · Rejuvenator taken by {{claimer}}"
+      "objective": "<team>{{team}}</team> lost {{objective}}",
+      "midBoss": "Mid Boss killed by <team>{{team}}</team> · Rejuvenator taken by <claimer>{{claimer}}</claimer>"
     },
     "history": {
       "title": "Objectives history",
-      "empty": "No objective has been destroyed in this match."
+      "empty": "No objective has been destroyed in this match.",
+      "pending": "not fallen yet"
     },
     "rules": {
       "title": "Game rules",

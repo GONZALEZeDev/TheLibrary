@@ -5,7 +5,7 @@
  *
  * @packageDocumentation
  */
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import { describe, expect, it, vi } from 'vitest';
@@ -15,12 +15,13 @@ import { PlaybackBar } from './PlaybackBar';
 import type { ReplayData } from './replay-model';
 import type { Playback } from './use-playback';
 
-/** A player of the replay, with deaths and no path needed. */
+/** A player of the replay, with deaths and no path needed; the team follows the side. */
 function player(overrides: Partial<ReplayViewPlayer>): ReplayViewPlayer {
+  const side = overrides.side ?? 'ally';
   return {
     slot: 1,
-    side: 'ally',
-    team: 'hidden_king',
+    side,
+    team: side === 'ally' ? 'hidden_king' : 'archmother',
     isTracked: false,
     heroId: 1,
     heroName: 'Haze',
@@ -152,19 +153,70 @@ describe('PlaybackBar', () => {
     expect(playback.setSpeed).toHaveBeenCalledWith(10);
   });
 
-  it("every player's death is a tick, coloured by side", async () => {
+  it("every player's death is a tick, coloured by team and shaped by side", async () => {
     const user = userEvent.setup();
     const playback = testPlayback();
     await renderBar(playback);
     const ally = screen.getByTitle('Haze · ally · 5:00');
     const enemy = screen.getByTitle('Abrams · enemy · 6:40');
-    expect(ally).toHaveClass('bg-accent-bright');
-    expect(enemy).toHaveClass('bg-loss');
+    // The team identity colours the tick (Hidden King for the ally here), never ally / enemy.
+    expect(ally).toHaveClass('bg-team-hidden-king');
+    expect(enemy).toHaveClass('bg-team-archmother');
     // The enemy tick has another shape, so the side is not told by the colour alone.
     expect(enemy).toHaveAttribute('data-shape', 'diamond');
-    expect(ally).toHaveAttribute('data-shape', 'round');
+    expect(ally).toHaveAttribute('data-shape', 'tick');
     await user.click(enemy);
     expect(playback.seek).toHaveBeenCalledWith(400);
+  });
+
+  it('markers use the team colour classes, not ally/enemy', async () => {
+    await renderBar(testPlayback());
+    const track = document.querySelector('[data-track="objectives"]');
+    expect(track?.querySelector('.bg-team-archmother')).not.toBeNull();
+    expect(document.querySelector('.bg-accent-bright, .bg-loss')).toBeNull();
+    // The Mid Boss kill takes the colour of the team that killed it; the return is hollow.
+    expect(
+      screen.getByTitle('Mid Boss killed by your team, claimed by the enemy team · 15:00'),
+    ).toHaveClass('bg-team-hidden-king');
+    expect(screen.getByTitle('Mid Boss is back · 18:20')).toHaveAttribute('data-shape', 'hollow');
+  });
+
+  it('track titles sit in their own column, never over a marker', async () => {
+    await renderBar(testPlayback());
+    const grid = document.querySelector('[data-track="objectives"]')?.parentElement;
+    expect(grid).toHaveClass('grid');
+    for (const id of ['objectives', 'midBoss', 'deaths', 'schedule']) {
+      const title = document.querySelector(`[data-track-title="${id}"]`);
+      const track = document.querySelector(`[data-track="${id}"]`);
+      expect(title).not.toBeNull();
+      // Separate cells of the same grid: the title holds no marker and is not inside the track.
+      expect(title?.parentElement).toBe(grid);
+      expect(track?.parentElement).toBe(grid);
+      expect(title?.querySelector('button')).toBeNull();
+      expect(track?.contains(title)).toBe(false);
+    }
+    expect(document.querySelector('[data-track-title="midBoss"]')).toHaveTextContent('Mid Boss');
+  });
+
+  it('the cursor line spans the tracks and follows the clock', async () => {
+    await renderBar(testPlayback({ timeS: 300 }));
+    expect(screen.getByTestId('playback-cursor')).toHaveStyle({ left: '25%' });
+  });
+
+  it('the legend lists every marker kind', async () => {
+    await renderBar(testPlayback());
+    const legend = screen.getByRole('group', { name: 'Legend' });
+    for (const label of [
+      'Objective destroyed (colour and shape show the team that lost it)',
+      'Mid Boss killed',
+      'Mid Boss returns',
+      'Death',
+      'Scheduled event',
+      'Unstable Rift window',
+      'Trooper waves',
+    ]) {
+      expect(within(legend).getByText(label)).toBeInTheDocument();
+    }
   });
 
   it('draws objectives and the Mid Boss kill and return', async () => {

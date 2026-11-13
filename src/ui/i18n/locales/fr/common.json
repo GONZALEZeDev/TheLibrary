@@ -301,6 +301,55 @@
       "titan": "Titan",
       "shrine": "Shrine",
       "base_guardian": "Base Guardian"
+    },
+    "teams": {
+      "hidden_king": "Hidden King",
+      "archmother": "Archmother",
+      "yours": "Ton équipe"
+    },
+    "strip": {
+      "title": "Joueurs",
+      "respawnsIn": "{{s}} s",
+      "dead": "Mort",
+      "health": "Vie {{percent}} %",
+      "noHealth": "La santé n'est pas dans l'archive de cette partie."
+    },
+    "feed": {
+      "title": "Fil en direct",
+      "empty": "Rien ne s'est encore passé.",
+      "death": "{{victim}} tué par {{killer}}",
+      "deathNoKiller": "{{victim}} est mort",
+      "objective": "{{team}} a perdu {{objective}}",
+      "midBoss": "Mid Boss tué par {{team}} · Rejuvenator pris par {{claimer}}"
+    },
+    "history": {
+      "title": "Historique des objectifs",
+      "empty": "Aucun objectif n'a été détruit dans cette partie."
+    },
+    "rules": {
+      "title": "Règles du jeu",
+      "once": "{{name}} : {{time}}",
+      "repeat": "{{name}} : {{first}}, puis toutes les {{every}}",
+      "window": "{{name}} : entre {{from}} et {{to}}",
+      "midBossReturns": "Le Mid Boss revient {{delays}} après chaque mort",
+      "troopers": "Vagues de troupes : toutes les {{every}} à partir de {{from}}",
+      "build": "Délais de la version {{build}} du jeu"
+    },
+    "tracks": {
+      "objectives": "Objectifs",
+      "midBoss": "Mid Boss",
+      "deaths": "Morts",
+      "schedule": "Calendrier"
+    },
+    "legend": {
+      "title": "Légende",
+      "objectiveDestroyed": "Objectif détruit (la couleur et la forme indiquent l'équipe qui l'a perdu)",
+      "midBossKill": "Mid Boss tué",
+      "midBossReturn": "Retour du Mid Boss",
+      "death": "Mort",
+      "scheduleEvent": "Événement prévu",
+      "riftWindow": "Fenêtre de l'Unstable Rift",
+      "trooperWaves": "Vagues de troupes"
     }
   },
   "matchType": {

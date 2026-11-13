@@ -301,6 +301,55 @@
       "titan": "Titan",
       "shrine": "Shrine",
       "base_guardian": "Base Guardian"
+    },
+    "teams": {
+      "hidden_king": "Hidden King",
+      "archmother": "Archmother",
+      "yours": "Your team"
+    },
+    "strip": {
+      "title": "Players",
+      "respawnsIn": "{{s}} s",
+      "dead": "Dead",
+      "health": "Health {{percent}} %",
+      "noHealth": "Health is not in this match's archive."
+    },
+    "feed": {
+      "title": "Live feed",
+      "empty": "Nothing has happened yet.",
+      "death": "{{victim}} killed by {{killer}}",
+      "deathNoKiller": "{{victim}} died",
+      "objective": "{{team}} lost {{objective}}",
+      "midBoss": "Mid Boss killed by {{team}} · Rejuvenator taken by {{claimer}}"
+    },
+    "history": {
+      "title": "Objectives history",
+      "empty": "No objective has been destroyed in this match."
+    },
+    "rules": {
+      "title": "Game rules",
+      "once": "{{name}}: {{time}}",
+      "repeat": "{{name}}: {{first}}, then every {{every}}",
+      "window": "{{name}}: between {{from}} and {{to}}",
+      "midBossReturns": "Mid Boss returns {{delays}} after each kill",
+      "troopers": "Trooper waves: every {{every}} from {{from}}",
+      "build": "Timings of game build {{build}}"
+    },
+    "tracks": {
+      "objectives": "Objectives",
+      "midBoss": "Mid Boss",
+      "deaths": "Deaths",
+      "schedule": "Schedule"
+    },
+    "legend": {
+      "title": "Legend",
+      "objectiveDestroyed": "Objective destroyed (colour and shape show the team that lost it)",
+      "midBossKill": "Mid Boss killed",
+      "midBossReturn": "Mid Boss returns",
+      "death": "Death",
+      "scheduleEvent": "Scheduled event",
+      "riftWindow": "Unstable Rift window",
+      "trooperWaves": "Trooper waves"
     }
   },
   "matchType": {

@@ -13,9 +13,9 @@ export type TeamIdentity = 'hidden_king' | 'archmother';
 /**
  * Which identity each API team number stands for.
  *
- * The match data does not name the teams. This mapping is the current belief (team 0's base is at
- * the bottom of the minimap), to be confirmed by the owner in the app. If it turns out to be the
- * other way round, flipping it is this one constant.
+ * The match data does not name the teams. Team 0's base is at the bottom of the minimap, and that
+ * base is the Hidden King's, as checked against real matches in the game. If a patch ever swaps
+ * them, flipping this one constant fixes the whole replay.
  */
 export const TEAM_IDENTITY_BY_API_TEAM: Readonly<Record<0 | 1, TeamIdentity>> = {
   0: 'hidden_king',

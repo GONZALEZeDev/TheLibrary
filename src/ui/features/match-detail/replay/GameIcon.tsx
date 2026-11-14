@@ -87,7 +87,8 @@ export function GameIcon({ icon, label, size, fallback, decorative = false, tint
     probe.onerror = () => {
       setFailedIcon(icon);
     };
-    // A CSS mask is fetched in CORS mode, so the probe is too: it fails exactly when the mask would.
+    // A CSS mask is fetched in CORS mode, so the probe is too: it fails exactly when the mask
+    // would.
     probe.crossOrigin = 'anonymous';
     probe.src = GAME_ICONS[icon];
     return () => {

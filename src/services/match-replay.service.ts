@@ -97,25 +97,35 @@ function sideOf(team: number, trackedTeam: number): Side {
 }
 
 /**
- * Thrown by {@link identityOf} for a team number that names neither team. It never leaves this
- * module: the service turns it into an `unreadable` view.
+ * Whether every team of a replay (the tracked team, the players, the objectives and the mid boss
+ * kills) is one of the two the game has, 0 or 1. A replay with any other team is `unreadable`:
+ * `MatchReplayService.getReplay` checks it before anything is fetched, so {@link identityOf} never
+ * fails.
+ *
+ * @param replay - The replay read from the archive.
+ * @returns `false` when a team has no in-game identity.
  */
-class UnknownTeamError extends Error {}
+function hasOnlyKnownTeams(replay: MatchReplay): boolean {
+  const teams = [
+    replay.trackedTeam,
+    ...replay.players.map((player) => player.team),
+    ...replay.objectives.map((objective) => objective.team),
+    ...replay.midBossKills.flatMap((kill) => [kill.teamKilled, kill.teamClaimed]),
+  ];
+  return teams.every((team) => teamIdentityOf(team) !== null);
+}
 
 /**
- * The in-game identity of a team, or a failure for a team that has none.
- *
- * Every team the view needs goes through here, so that a team the API numbers otherwise than 0 or 1
- * makes the whole replay unreadable (see {@link viewOf}) instead of being coloured at random.
+ * The in-game identity of a team of a replay that passed {@link hasOnlyKnownTeams}.
  *
  * @param team - A team, as the API numbers it.
  * @returns The identity of the team.
- * @throws UnknownTeamError when the team is neither 0 nor 1.
+ * @throws Error when the team is neither 0 nor 1, which the check of the replay rules out.
  */
 function identityOf(team: number): TeamIdentity {
   const identity = teamIdentityOf(team);
   if (identity === null) {
-    throw new UnknownTeamError('A team has no in-game identity');
+    throw new Error('A team has no in-game identity');
   }
   return identity;
 }
@@ -207,9 +217,8 @@ function objectivesOf(
  *
  * @param replay - The replay read from the archive.
  * @param catalogues - What the catalogues gave.
- * @returns The `replay` view.
- * @throws UnknownTeamError when a team of the replay (a player, an objective, a mid boss kill or the
- *   tracked team) is neither 0 nor 1.
+ * @returns The `replay` view; every team of the replay must be known (see
+ *   {@link hasOnlyKnownTeams}).
  */
 function viewOf(replay: MatchReplay, catalogues: ReplayCatalogues): ReplayView {
   const killTimesS = replay.midBossKills.map((kill) => kill.timeS);
@@ -223,8 +232,6 @@ function viewOf(replay: MatchReplay, catalogues: ReplayCatalogues): ReplayView {
     objectives: objectivesOf(replay, catalogues.layout),
     midBossKills: replay.midBossKills.map((kill) => ({
       timeS: kill.timeS,
-      killedBy: sideOf(kill.teamKilled, replay.trackedTeam),
-      claimedBy: sideOf(kill.teamClaimed, replay.trackedTeam),
       killedByTeam: identityOf(kill.teamKilled),
       claimedByTeam: identityOf(kill.teamClaimed),
     })),
@@ -299,21 +306,19 @@ export class MatchReplayService {
       return { kind: 'unreadable' };
     }
 
-    // The catalogues are read last: a match that cannot be shown downloads nothing for them.
-    const catalogues = await this.#readCatalogues(matchId);
-    try {
-      return viewOf(replay, catalogues);
-    } catch (error) {
-      if (!(error instanceof UnknownTeamError)) {
-        throw error;
-      }
-      // A team that is neither 0 nor 1 is a field that cannot be read, like any malformed one: the
-      // same single warning, with no value of the payload.
+    // A team that is neither 0 nor 1 is a field that cannot be read, like any malformed one: the
+    // same single warning, with no value of the payload. It is checked before the catalogues, so
+    // that a match that cannot be shown downloads nothing for them.
+    if (!hasOnlyKnownTeams(replay)) {
       this.#reports.warn(matchId, 'The replay of a match could not be read', {
         issue: 'team: unknown',
       });
       return { kind: 'unreadable' };
     }
+
+    // The catalogues are read last, for a replay that can be shown.
+    const catalogues = await this.#readCatalogues(matchId);
+    return viewOf(replay, catalogues);
   }
 
   /**

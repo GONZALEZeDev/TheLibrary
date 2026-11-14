@@ -90,11 +90,16 @@ describe('LiveFeed', () => {
 
   it('a death line names the killer, or none for an unknown killer', async () => {
     await renderFeed('en', withDeaths([10]), 12);
-    expect(screen.getByText('Paige killed by Wraith')).toBeTruthy();
+    const line = screen.getByText('Paige').closest('li');
+    expect(line?.textContent).toBe('0:10Paige killed by Wraith');
+    // Each hero name wears the colour of its own team (Paige: Hidden King, Wraith: Archmother).
+    expect(screen.getByText('Paige').className).toContain('text-team-hidden-king');
+    expect(screen.getByText('Wraith').className).toContain('text-team-archmother');
     cleanup();
 
     await renderFeed('en', withDeaths([10], null), 12);
-    expect(screen.getByText('Paige died')).toBeTruthy();
+    expect(screen.getByText('Paige').closest('li')?.textContent).toBe('0:10Paige died');
+    expect(screen.getByText('Paige').className).toContain('text-team-hidden-king');
     cleanup();
 
     // A hero without a name falls back to the generic one.
@@ -106,7 +111,7 @@ describe('LiveFeed', () => {
       ),
     };
     await renderFeed('en', unnamed, 12);
-    expect(screen.getByText(/^a hero died$/i)).toBeTruthy();
+    expect(screen.getByText('a hero').closest('li')?.textContent).toBe('0:10a hero died');
   });
 
   it('an objective line names the owner team in its colour, with the lane dot', async () => {
@@ -146,8 +151,6 @@ describe('LiveFeed', () => {
       midBossKills: [
         {
           timeS: 20,
-          killedBy: 'ally',
-          claimedBy: 'enemy',
           killedByTeam: 'hidden_king',
           claimedByTeam: 'archmother',
         },
@@ -163,7 +166,7 @@ describe('LiveFeed', () => {
   });
 
   it('colours team names from the data, not from a hero named like a team', async () => {
-    // A hero named like a team dies: nothing on a death line is coloured.
+    // Paige (Hidden King) is now named "Archmother": her name keeps her own team's colour.
     const base = withDeaths([10]);
     const view: ReplayData = {
       ...base,
@@ -173,13 +176,13 @@ describe('LiveFeed', () => {
     };
     await renderFeed('en', view, 12);
 
-    const line = screen.getByText('Archmother killed by Wraith');
-    expect(line.querySelector('[class*="text-team"]')).toBeNull();
+    expect(screen.getByText('Archmother').className).toContain('text-team-hidden-king');
+    expect(screen.getByText('Archmother').className).not.toContain('text-team-archmother');
   });
 
   it('renders in French', async () => {
     await renderFeed('fr', withDeaths([10]), 12);
 
-    expect(screen.getByText('Paige tué par Wraith')).toBeTruthy();
+    expect(screen.getByText('Paige').closest('li')?.textContent).toBe('0:10Paige tué par Wraith');
   });
 });

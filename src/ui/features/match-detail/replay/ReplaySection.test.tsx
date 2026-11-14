@@ -152,7 +152,7 @@ describe('ReplaySection', () => {
     expect(screen.queryByRole('slider')).not.toBeInTheDocument();
   });
 
-  it.each(LANGUAGES)('shows the map, the chart, the panel and the bar, in %s', async (language) => {
+  it.each(LANGUAGES)('shows the map, the chart and the playback bar, in %s', async (language) => {
     const strings = STRINGS[language];
     await renderSection(replayView(), language);
 
@@ -160,9 +160,6 @@ describe('ReplaySection', () => {
     expect(screen.getByRole('img', { name: strings.mapTitle })).toBeInTheDocument();
     expect(screen.getByTestId('chart')).toBeInTheDocument();
     expect(screen.getByRole('slider', { name: strings.slider })).toBeInTheDocument();
-    // The panel is titled by the moment of the cursor.
-    // The v1 "At 14:05" panel is gone; the cards of layout A stand in its place.
-    expect(screen.queryByText(/^At 0:03$/)).not.toBeInTheDocument();
     expect(screen.queryByText(strings.mapUnavailable)).not.toBeInTheDocument();
     expect(screen.queryByText(strings.trackedOnly)).not.toBeInTheDocument();
   });
@@ -344,6 +341,8 @@ describe('ReplaySection layout A', () => {
     const history = screen.getByRole('region', { name: 'Objectives history' });
     await user.click(within(history).getAllByRole('button').at(0) ?? history);
     expect(playback.seek).toHaveBeenCalledTimes(1);
+    // The history line of the walker that fell at 0:30 seeks there.
+    expect(playback.seek).toHaveBeenCalledWith(30);
   });
 
   it('the map-unavailable sentence keeps every other card', async () => {

@@ -1,7 +1,6 @@
 /**
  * The map of the replay: the minimap picture with the zip lines, the objectives (standing or
- * fallen)
- * and every player as the icon of their hero, at the moment the shared cursor shows.
+ * fallen) and every player as the icon of their hero, at the moment the shared cursor shows.
  *
  * The map is drawn by hand in SVG. Its `viewBox` is told in a fixed frame of {@link MAP_SIZE} units
  * (the relative positions of the data times that size) and follows a {@link MapViewport} held by
@@ -12,12 +11,12 @@
  * The picture and the lanes never change while the cursor moves, so they are a memoised layer of
  * their own; each frame only re-renders the objectives, the trails and the players. For assistive
  * technologies the map is one image named by its title; each icon and marker carries a title the
- * pointer shows over it ("Walker · Archmother"). Everything is coloured by the game's team identity
- * (Hidden King or Archmother), never by ally or enemy, and a team is never told by its colour
- * alone: an enemy player has a dashed ring (an ally a solid one). Objectives are logos in the colour
- * of their team: guardians and walkers are their game icon tinted by a mask, titans, cores and
- * shrines are the glyphs of the tracks, and the mid boss pit carries its own golden icon; an icon
- * that fails to load leaves a drawn shape. A fallen objective is faded and dashed.
+ * pointer shows over it ("Walker · Archmother"). Everything is coloured by the game's team
+ * identity (Hidden King or Archmother), never by ally or enemy, and a team is never told by its
+ * colour alone: an enemy player has a dashed ring (an ally a solid one). Objectives are logos in
+ * the colour of their team: guardians and walkers are their game icon tinted by a mask, titans,
+ * cores and shrines are the glyphs of the tracks, and the mid boss pit carries its own golden
+ * icon; an icon that fails to load leaves a drawn shape. A fallen objective is faded and dashed.
  *
  * @packageDocumentation
  */
@@ -220,7 +219,7 @@ const ObjectiveMarker = memo(function ObjectiveMarker({
   const glyph =
     kind in OBJECTIVE_GLYPH ? OBJECTIVE_GLYPH[kind as keyof typeof OBJECTIVE_GLYPH] : null;
 
-  // A thin disc of the background colour behind a standing marker, as the old squares had.
+  // A thin disc of the background colour behind a standing marker, so the icon reads on the map.
   const halo = (
     <circle data-halo="" r={size / 2 + HALO_WIDTH / scale} className="fill-bg" fillOpacity={0.7} />
   );

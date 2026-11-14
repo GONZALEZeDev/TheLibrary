@@ -3,7 +3,7 @@
  * the Unstable Rift and the mid boss show up, and how often the trooper waves spawn.
  *
  * These timings are the same in every match, so they live in a plain table that the map replay
- * draws as a "Game schedule" row under the time slider.
+ * lists in its rules reminder.
  *
  * The table was checked against game build {@link SCHEDULE_GAME_BUILD}. A game patch may change
  * these timings; they are not read from any API and are updated by hand.
@@ -74,58 +74,14 @@ export const GAME_SCHEDULE: readonly ScheduleEntry[] = [
 
 /**
  * How often a trooper wave spawns, by stretch of the match: every 30 s from the start, every 25 s
- * from 20:00 and every 20 s from 35:00. A wave is a span, not a point event, so it is not part of
- * {@link scheduleOccurrences}.
+ * from 20:00 and every 20 s from 35:00. A wave is a span, not a point event, so it is not an entry
+ * of {@link GAME_SCHEDULE}.
  */
 export const TROOPER_WAVES: readonly { readonly fromS: number; readonly everyS: number }[] = [
   { fromS: 0, everyS: 30 },
   { fromS: 1200, everyS: 25 },
   { fromS: 2100, everyS: 20 },
 ];
-
-/** One dated event of the schedule, ready to be drawn on the slider. */
-export interface ScheduleOccurrence {
-  /** What happens. */
-  readonly kind: ScheduleEventKind;
-  /** When it happens, in seconds since the match start. */
-  readonly timeS: number;
-  /** When it ends for a window event (the rift); `null` for a point event. */
-  readonly untilS: number | null;
-}
-
-/**
- * List every scheduled event that starts during a match: once-entries, every repeat of a repeating
- * entry and the rift window, expanded to dated occurrences.
- *
- * A window keeps its full end time even when the match ends inside it; the caller clips it.
- * Trooper waves are not included (see {@link TROOPER_WAVES}).
- *
- * @param durationS - The match length in seconds; later events are left out.
- * @returns The occurrences sorted by time, ties keeping the order of {@link GAME_SCHEDULE}.
- */
-export function scheduleOccurrences(durationS: number): readonly ScheduleOccurrence[] {
-  // Expand each entry, remembering its schedule position to break ties.
-  const expanded: { occurrence: ScheduleOccurrence; order: number }[] = [];
-  GAME_SCHEDULE.forEach((entry, order) => {
-    if (entry.type === 'once') {
-      if (entry.atS <= durationS) {
-        expanded.push({ occurrence: { kind: entry.kind, timeS: entry.atS, untilS: null }, order });
-      }
-    } else if (entry.type === 'repeat') {
-      for (let timeS = entry.firstS; timeS <= durationS; timeS += entry.everyS) {
-        expanded.push({ occurrence: { kind: entry.kind, timeS, untilS: null }, order });
-      }
-    } else if (entry.fromS <= durationS) {
-      expanded.push({
-        occurrence: { kind: entry.kind, timeS: entry.fromS, untilS: entry.toS },
-        order,
-      });
-    }
-  });
-  // Sort by time, then by schedule order for events that share a time.
-  expanded.sort((a, b) => a.occurrence.timeS - b.occurrence.timeS || a.order - b.order);
-  return expanded.map((item) => item.occurrence);
-}
 
 /**
  * How long the mid boss takes to return after its first and second kills, in seconds. Exported so

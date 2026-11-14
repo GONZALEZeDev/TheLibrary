@@ -27,7 +27,7 @@ export interface ObjectiveGlyphPathProps {
   readonly className?: string | undefined;
   /** Whether the objective is destroyed: same outline, no fill, dashed and faded. */
   readonly destroyed: boolean;
-  /** Whether the opening of a Titan half-ring faces down (towards a base at the bottom of the map). */
+  /** Whether the opening of a Titan half-ring faces down (towards a base at the map's bottom). */
   readonly opensDown: boolean;
 }
 

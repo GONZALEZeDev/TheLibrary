@@ -16,17 +16,13 @@ export type GameIconId =
   | 'walker'
   | 'mid_boss'
   | 'death'
-  | 'rejuvenator'
   | 'soul_urn'
   | 'camp_small'
   | 'camp_medium'
   | 'camp_large'
   | 'patron_hidden_king'
   | 'patron_archmother'
-  | 'powerup_weapon'
-  | 'powerup_spirit'
-  | 'powerup_movement'
-  | 'powerup_survival';
+  | 'powerup_weapon';
 
 /** The folder of the bucket that holds the game's own resources. */
 const GAME_RESOURCE_ROOT = `${ASSET_IMAGE_ORIGIN}assets-api-res/`;
@@ -34,16 +30,15 @@ const GAME_RESOURCE_ROOT = `${ASSET_IMAGE_ORIGIN}assets-api-res/`;
 /**
  * The absolute bucket URL of every game icon.
  *
- * This table is maintained by hand: deadlock-api does not list these files anywhere. If it renames
- * one, that icon fails to load and the UI falls back to a drawn shape until the path is updated
- * here.
+ * This table is maintained by hand, from the files the asset listings of deadlock-api name
+ * (`/v1/assets/icons` and `/v1/assets/images`). If it renames one, that icon fails to load and the
+ * UI falls back to a drawn shape until the path is updated here.
  */
 export const GAME_ICONS: Readonly<Record<GameIconId, string>> = {
   guardian: `${GAME_RESOURCE_ROOT}icons/minimap/objective_icon_t1.svg`,
   walker: `${GAME_RESOURCE_ROOT}icons/minimap/objective_icon_t2.svg`,
   mid_boss: `${GAME_RESOURCE_ROOT}icons/new_boss_marker.png`,
   death: `${GAME_RESOURCE_ROOT}icons/replay/icon_death.svg`,
-  rejuvenator: `${GAME_RESOURCE_ROOT}icons/hud/icons/rejuvenator.svg`,
   soul_urn: `${GAME_RESOURCE_ROOT}icons/minimap/soul_jar_marker_psd.png`,
   camp_small: `${GAME_RESOURCE_ROOT}icons/neutral_small.png`,
   camp_medium: `${GAME_RESOURCE_ROOT}icons/neutral_medium.png`,
@@ -51,9 +46,6 @@ export const GAME_ICONS: Readonly<Record<GameIconId, string>> = {
   patron_hidden_king: `${GAME_RESOURCE_ROOT}images/npcs/patron_hiddenking.png`,
   patron_archmother: `${GAME_RESOURCE_ROOT}images/npcs/patron_archmother.png`,
   powerup_weapon: `${GAME_RESOURCE_ROOT}icons/hud/icons/powerup_gun.svg`,
-  powerup_spirit: `${GAME_RESOURCE_ROOT}icons/hud/icons/powerup_spirit.svg`,
-  powerup_movement: `${GAME_RESOURCE_ROOT}icons/hud/icons/powerup_movement.svg`,
-  powerup_survival: `${GAME_RESOURCE_ROOT}icons/hud/icons/powerup_survival.svg`,
 };
 
 /**

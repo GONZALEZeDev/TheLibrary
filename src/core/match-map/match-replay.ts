@@ -126,7 +126,8 @@ const replayPlayerSchema = z.looseObject({
         game_time_s: z.number().nonnegative(),
         // A negative wait is nonsense: it is read as absent (see `readMatchReplay`), not rejected.
         death_duration_s: z.number().nullish(),
-        // Who killed the player: a value that cannot be read is no killer, it never fails the replay.
+        // Who killed the player: a value that cannot be read is no killer and never fails the
+        // replay.
         killer_player_slot: archiveCount.nullish().catch(null),
       }),
     )

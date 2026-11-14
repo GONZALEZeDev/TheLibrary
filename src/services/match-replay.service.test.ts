@@ -334,15 +334,11 @@ describe('MatchReplayService', () => {
       expect(view.midBossKills).toEqual([
         {
           timeS: 60,
-          killedBy: 'enemy',
-          claimedBy: 'ally',
           killedByTeam: otherIdentity,
           claimedByTeam: trackedIdentity,
         },
         {
           timeS: duration - 10,
-          killedBy: 'ally',
-          claimedBy: 'enemy',
           killedByTeam: trackedIdentity,
           claimedByTeam: otherIdentity,
         },
@@ -424,8 +420,11 @@ describe('MatchReplayService', () => {
         ];
       });
 
+      const sent = context.http.requests.length;
       await expect(context.replay.getReplay(matchId)).resolves.toEqual({ kind: 'unreadable' });
       await expect(context.replay.getReplay(matchId)).resolves.toEqual({ kind: 'unreadable' });
+      // The unreadable replay fetched no catalogue.
+      expect(context.http.requests).toHaveLength(sent);
 
       // One warning with the problem, never a value of the payload or the account.
       const lines = context.logger.entries.filter((entry) => entry.scope === LOG_SCOPE);

@@ -75,9 +75,14 @@ describe('positionBetween', () => {
     expect(point?.top).toBeCloseTo(0.2);
   });
 
-  it('is null when either neighbour is null, or out of range', () => {
-    expect(positionBetween(positions, 1.5)).toBeNull();
+  it('stays on the current sample while only the next second is null (a death)', () => {
+    // The player dies at second 2: until then the map keeps them where the strip shows them alive.
+    expect(positionBetween(positions, 1.5)).toEqual({ left: 0.2, top: 0.4 });
+  });
+
+  it('is null when the current second is null, or out of range', () => {
     expect(positionBetween(positions, 2)).toBeNull();
+    expect(positionBetween(positions, 2.5)).toBeNull();
     expect(positionBetween(positions, 9)).toBeNull();
     expect(positionBetween(positions, -1)).toBeNull();
   });
@@ -170,8 +175,6 @@ describe('stepEvents, previousEvent and nextEvent', () => {
     midBossKills: [
       {
         timeS: 100,
-        killedBy: 'ally',
-        claimedBy: 'ally',
         killedByTeam: 'hidden_king',
         claimedByTeam: 'hidden_king',
       },
@@ -287,8 +290,6 @@ describe('the feed and the history', () => {
       midBossKills: [
         {
           timeS: 25,
-          killedBy: 'ally',
-          claimedBy: 'ally',
           killedByTeam: 'hidden_king',
           claimedByTeam: 'hidden_king',
         },

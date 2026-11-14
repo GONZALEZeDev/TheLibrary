@@ -13,9 +13,25 @@ import { GAME_ICONS } from '../../../../core/match-map/game-icons';
 import type { ObjectiveKind } from '../../../../core/match-map/map-objectives';
 import type { ReplayViewPlayer } from '../../../../services/match-replay-view';
 import { createI18n } from '../../../i18n/i18n';
+import type { GameIconProps } from './GameIcon';
 import { PlaybackBar } from './PlaybackBar';
 import type { ReplayData } from './replay-model';
 import type { Playback } from './use-playback';
+
+/** Counts the renders of every `GameIcon`, which only the memoised tracks and legend draw. */
+const iconRenders = vi.hoisted(() => vi.fn());
+
+// Wrap the real `GameIcon` so that each render of it is counted; it behaves as usual.
+vi.mock('./GameIcon', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./GameIcon')>();
+  return {
+    ...actual,
+    GameIcon: (props: GameIconProps) => {
+      iconRenders();
+      return actual.GameIcon(props);
+    },
+  };
+});
 
 /** A player of the replay, with deaths and no path needed; the team follows the side. */
 function player(overrides: Partial<ReplayViewPlayer>): ReplayViewPlayer {
@@ -51,7 +67,7 @@ function objective(
   };
 }
 
-/** A replay of 20 minutes: two deaths, one of each kind of objective, a Mid Boss kill and return. */
+/** A replay of 20 minutes: two deaths, each kind of objective, a Mid Boss kill and its return. */
 function testView(): ReplayData {
   return {
     kind: 'replay',
@@ -84,8 +100,6 @@ function testView(): ReplayData {
     midBossKills: [
       {
         timeS: 900,
-        killedBy: 'ally',
-        claimedBy: 'enemy',
         killedByTeam: 'hidden_king',
         claimedByTeam: 'archmother',
       },
@@ -142,6 +156,40 @@ describe('PlaybackBar', () => {
     expect(playback.seek).toHaveBeenCalledWith(250);
   });
 
+  it('the slider lives in the track column, on the scale of the tracks', async () => {
+    await renderBar(testPlayback());
+    const slider = screen.getByRole('slider', { name: 'Time in the match' });
+    const tracksGrid = document.querySelector('[data-track="objectives"]')?.parentElement;
+    // The slider is in a grid with the very same column template as the tracks...
+    expect(slider.parentElement?.className).toBe(tracksGrid?.className);
+    // ...and in its second column, so the title column stays empty beside it.
+    expect(slider).toHaveClass('col-start-2');
+    // The cursor overlay starts after the same column, read from the same variable.
+    const overlay = screen.getByTestId('playback-cursor').parentElement;
+    expect(overlay?.style.left).toBe('var(--replay-title-col)');
+  });
+
+  it('does not draw the tracks and the legend again when only the clock changes', async () => {
+    const i18n = await createI18n('en');
+    const view = testView();
+    // The real `seek` is stable between frames, so the spies are made once and only the clock
+    // moves.
+    const controls = testPlayback();
+    const bar = (timeS: number) => (
+      <I18nextProvider i18n={i18n}>
+        <PlaybackBar view={view} playback={{ ...controls, timeS }} stepTimes={[50]} />
+      </I18nextProvider>
+    );
+    const { rerender } = render(bar(100));
+    const drawn = iconRenders.mock.calls.length;
+    expect(drawn).toBeGreaterThan(0);
+
+    // The clock moves: the cursor line follows it, but no icon is drawn again.
+    rerender(bar(101.5));
+    expect(screen.getByTestId('playback-cursor').style.left).not.toBe('0%');
+    expect(iconRenders.mock.calls.length).toBe(drawn);
+  });
+
   it('⏭ jumps to the next step event, ⏮ to the previous', async () => {
     const user = userEvent.setup();
     const playback = testPlayback({ timeS: 100 });
@@ -180,8 +228,8 @@ describe('PlaybackBar', () => {
     const user = userEvent.setup();
     const playback = testPlayback();
     await renderBar(playback);
-    const ally = screen.getByTitle('Haze · ally · 5:00');
-    const enemy = screen.getByTitle('Abrams · enemy · 6:40');
+    const ally = screen.getByTitle('Haze · Hidden King · 5:00');
+    const enemy = screen.getByTitle('Abrams · Archmother · 6:40');
     // The skull is masked and filled with the team colour; the side no longer changes the shape.
     expect(maskOf(ally).style.maskImage).toContain(GAME_ICONS.death);
     expect(maskOf(ally)).toHaveClass('bg-team-hidden-king');
@@ -194,8 +242,8 @@ describe('PlaybackBar', () => {
 
   it('an objective and a death of the same team do not share an icon', async () => {
     await renderBar(testPlayback());
-    const walker = maskOf(screen.getByTitle('Walker · enemy · 12:34'));
-    const death = maskOf(screen.getByTitle('Abrams · enemy · 6:40'));
+    const walker = maskOf(screen.getByTitle('Walker · Archmother · 12:34'));
+    const death = maskOf(screen.getByTitle('Abrams · Archmother · 6:40'));
     expect(walker).toHaveClass('bg-team-archmother');
     expect(death).toHaveClass('bg-team-archmother');
     expect(walker.style.maskImage).toContain(GAME_ICONS.walker);
@@ -205,27 +253,25 @@ describe('PlaybackBar', () => {
   it('draws the icon of each objective kind in the colour of its team', async () => {
     await renderBar(testPlayback());
     // Guardians and base guardians use the guardian icon; walkers the walker icon.
-    const guardian = maskOf(screen.getByTitle('Guardian · ally · 4:10'));
+    const guardian = maskOf(screen.getByTitle('Guardian · Hidden King · 4:10'));
     expect(guardian.style.maskImage).toContain(GAME_ICONS.guardian);
     expect(guardian).toHaveClass('bg-team-hidden-king');
-    const baseGuardian = maskOf(screen.getByTitle('Base Guardian · enemy · 14:00'));
+    const baseGuardian = maskOf(screen.getByTitle('Base Guardian · Archmother · 14:00'));
     expect(baseGuardian.style.maskImage).toContain(GAME_ICONS.guardian);
     expect(baseGuardian).toHaveClass('bg-team-archmother');
     // The Titan, the Core and the Shrine are drawn glyphs, outlined or filled by team.
-    const titan = screen.getByTitle('Titan · enemy · 15:00').querySelector('path');
+    const titan = screen.getByTitle('Titan · Archmother · 15:00').querySelector('path');
     expect(titan?.getAttribute('class')).toContain('stroke-team-archmother');
-    const core = screen.getByTitle('Patron · ally · 16:00').querySelector('polygon');
+    const core = screen.getByTitle('Patron · Hidden King · 16:00').querySelector('polygon');
     expect(core?.getAttribute('class')).toContain('fill-team-hidden-king');
-    const shrine = screen.getByTitle('Shrine · ally · 17:00').querySelector('polygon');
+    const shrine = screen.getByTitle('Shrine · Hidden King · 17:00').querySelector('polygon');
     expect(shrine?.getAttribute('fill')).toBe('none');
     expect(shrine?.getAttribute('class')).toContain('stroke-team-hidden-king');
   });
 
   it('the Mid Boss kill takes the killer team colour, the return is neutral and faded', async () => {
     await renderBar(testPlayback());
-    const kill = screen.getByTitle(
-      'Mid Boss killed by your team, claimed by the enemy team · 15:00',
-    );
+    const kill = screen.getByTitle('Mid Boss killed by Hidden King, claimed by Archmother · 15:00');
     expect(maskOf(kill).style.maskImage).toContain(GAME_ICONS.mid_boss);
     expect(maskOf(kill)).toHaveClass('bg-team-hidden-king');
     const back = screen.getByTitle('Mid Boss is back · 18:20');
@@ -308,10 +354,10 @@ describe('PlaybackBar', () => {
     const user = userEvent.setup();
     const playback = testPlayback();
     await renderBar(playback);
-    await user.click(screen.getByTitle('Walker · enemy · 12:34'));
+    await user.click(screen.getByTitle('Walker · Archmother · 12:34'));
     expect(playback.seek).toHaveBeenLastCalledWith(754);
     await user.click(
-      screen.getByTitle('Mid Boss killed by your team, claimed by the enemy team · 15:00'),
+      screen.getByTitle('Mid Boss killed by Hidden King, claimed by Archmother · 15:00'),
     );
     expect(playback.seek).toHaveBeenLastCalledWith(900);
     await user.click(screen.getByTitle('Mid Boss is back · 18:20'));
@@ -322,8 +368,8 @@ describe('PlaybackBar', () => {
     await renderBar(testPlayback());
     // Mouse only: the keyboard uses the event buttons, the slider and the section keys.
     for (const title of [
-      'Walker · enemy · 12:34',
-      'Haze · ally · 5:00',
+      'Walker · Archmother · 12:34',
+      'Haze · Hidden King · 5:00',
       'Mid Boss is back · 18:20',
     ]) {
       expect(screen.getByTitle(title)).toHaveAttribute('tabindex', '-1');

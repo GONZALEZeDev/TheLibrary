@@ -11,7 +11,7 @@
  * @packageDocumentation
  */
 import { memo } from 'react';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ObjectiveKind } from '../../../../core/match-map/map-objectives';
 import type { TeamIdentity } from '../../../../core/match-map/team-identity';
@@ -46,8 +46,18 @@ const LEGEND_OBJECTIVES: readonly ObjectiveKind[] = [
 /** The side of the icon of a marker and of the legend, in pixels: large enough to be read. */
 const ICON_SIZE = 16;
 
-/** The width of the title column of the tracks (7 rem); the cursor overlay starts after it. */
-const TITLE_COLUMN_CLASS = 'grid-cols-[7rem_1fr]';
+/**
+ * The name of the CSS custom property that holds the width of the title column. The slider and the
+ * tracks are laid out in the same two-column grid and the cursor overlay starts after the same
+ * column, so all three read their width from this one variable.
+ */
+const TITLE_COLUMN_VAR = '--replay-title-col';
+
+/** The width of the title column (7 rem), set once as {@link TITLE_COLUMN_VAR} on the bar. */
+const TITLE_COLUMN_WIDTH = '7rem';
+
+/** The two-column grid (titles, then the time scale) shared by the slider and the tracks. */
+const TITLE_GRID_CLASS = 'grid grid-cols-[var(--replay-title-col)_1fr]';
 
 /** The height of a track: a little more than its icons, which are centred in it. */
 const TRACK_HEIGHT_CLASS = 'h-7';
@@ -72,7 +82,8 @@ interface ObjectiveIconProps {
  */
 function ObjectiveIcon({ kind, team }: ObjectiveIconProps) {
   if (kind === 'titan' || kind === 'core' || kind === 'shrine') {
-    // The Titan opens up, as on the map.
+    // The Titan opens up here (the tracks have no base side), unlike the map, where it opens
+    // towards its own base.
     return <ObjectiveGlyph kind={kind} size={ICON_SIZE} team={team} opensDown={false} decorative />;
   }
   return (
@@ -81,7 +92,7 @@ function ObjectiveIcon({ kind, team }: ObjectiveIconProps) {
       icon={kind === 'walker' ? 'walker' : 'guardian'}
       label={kind}
       size={ICON_SIZE}
-      fallback="diamond"
+      fallback="square"
       tint={team}
       decorative
     />
@@ -216,7 +227,7 @@ const Tracks = memo(function Tracks({ view, onSeek }: TracksProps) {
   const { t } = useTranslation();
   const { durationS } = view;
   return (
-    <div className={`grid ${TITLE_COLUMN_CLASS}`}>
+    <div className={TITLE_GRID_CLASS}>
       <Track id="objectives" title={t('replay.tracks.objectives')}>
         {view.objectives.map((objective, index) =>
           objective.destroyedAtS === null ? null : (
@@ -227,7 +238,7 @@ const Tracks = memo(function Tracks({ view, onSeek }: TracksProps) {
               durationS={durationS}
               title={[
                 t(`replay.objective.${objective.identity.kind}`),
-                t(`replay.side.${objective.side}`),
+                t(`replay.teams.${objective.team}`),
                 formatGameTime(objective.destroyedAtS),
               ].join(TITLE_SEPARATOR)}
               onSeek={onSeek}
@@ -248,8 +259,8 @@ const Tracks = memo(function Tracks({ view, onSeek }: TracksProps) {
             durationS={durationS}
             title={[
               t('replay.midBoss.kill', {
-                killer: t(`replay.team.${kill.killedBy}`),
-                claimer: t(`replay.team.${kill.claimedBy}`),
+                killer: t(`replay.teams.${kill.killedByTeam}`),
+                claimer: t(`replay.teams.${kill.claimedByTeam}`),
               }),
               formatGameTime(kill.timeS),
             ].join(TITLE_SEPARATOR)}
@@ -258,7 +269,7 @@ const Tracks = memo(function Tracks({ view, onSeek }: TracksProps) {
             <TrackIcon icon="mid_boss" tint={kill.killedByTeam} />
           </Marker>
         ))}
-        {/* The return of the Mid Boss: the same icon, neutral and faded, to tell it from a kill. */}
+        {/* The return of the Mid Boss: the same icon, neutral and faded, unlike a kill. */}
         {view.midBossReturnsS.map((returnS) => (
           <Marker
             key={`return-${String(returnS)}`}
@@ -283,7 +294,7 @@ const Tracks = memo(function Tracks({ view, onSeek }: TracksProps) {
               durationS={durationS}
               title={[
                 player.heroName ?? t('timeline.deaths.unknownHero'),
-                t(`replay.side.${player.side}`),
+                t(`replay.teams.${player.team}`),
                 formatGameTime(death.timeS),
               ].join(TITLE_SEPARATOR)}
               onSeek={onSeek}
@@ -399,7 +410,7 @@ export function PlaybackBar({ view, playback, stepTimes }: PlaybackBarProps) {
   const next = nextEvent(stepTimes, timeS);
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" style={{ [TITLE_COLUMN_VAR]: TITLE_COLUMN_WIDTH } as CSSProperties}>
       <div className="flex flex-wrap items-center gap-2">
         <Button
           look="subtle"
@@ -449,25 +460,34 @@ export function PlaybackBar({ view, playback, stepTimes }: PlaybackBarProps) {
         </span>
       </div>
 
-      <input
-        type="range"
-        min={0}
-        max={view.durationS}
-        step={1}
-        value={second}
-        aria-label={t('replay.controls.slider')}
-        className="w-full accent-accent-bright"
-        onChange={(event) => {
-          seek(Number(event.target.value));
-        }}
-      />
+      {/* The slider sits in the track column of the same grid as the tracks, so the thumb, the
+          markers and the cursor line share one time scale; the title cell beside it stays
+          empty. */}
+      <div className={TITLE_GRID_CLASS}>
+        <input
+          type="range"
+          min={0}
+          max={view.durationS}
+          step={1}
+          value={second}
+          aria-label={t('replay.controls.slider')}
+          className="col-start-2 w-full accent-accent-bright"
+          onChange={(event) => {
+            seek(Number(event.target.value));
+          }}
+        />
+      </div>
 
       {/* The tracks share the scale of the slider; only the cursor line moves. */}
       <div className="relative">
         <Tracks view={view} onSeek={seek} />
-        {/* An overlay over the track column only (the title column is 7 rem wide), so the cursor
-            line runs across the three tracks and never over a title. */}
-        <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 left-28">
+        {/* An overlay over the track column only (it starts after the title column), so the
+            cursor line runs across the three tracks and never over a title. */}
+        <div
+          aria-hidden="true"
+          style={{ left: `var(${TITLE_COLUMN_VAR})` }}
+          className="pointer-events-none absolute inset-y-0 right-0"
+        >
           <div
             data-testid="playback-cursor"
             style={{ left: percentOf(timeS, view.durationS) }}

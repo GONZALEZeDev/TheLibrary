@@ -55,11 +55,11 @@
   --color-stat-vitality: #7ed35a;
   --color-stat-spirit: #c18cf0;
 
-  /* The game's two teams, used only inside the match replay (never for ally/enemy elsewhere). Hidden
-     King is a warm gold, Archmother a sapphire blue; neither is the weapon amber, the loss red or
-     the secondary light blue. Contrast: Hidden King 10.5:1 on --color-surface and 9.7:1 on
-     --color-surface-raised, Archmother 6.3:1 and 5.8:1, so both pass 4.5:1 for text. The team is
-     never told by colour alone: the replay always keeps a non-colour cue (ring, diamond, label). */
+  /* The game's two teams, used only inside the match replay (never for ally/enemy elsewhere).
+     Hidden King is a warm gold, Archmother a sapphire blue; neither is the weapon amber, the loss
+     red or the secondary light blue. Contrast: Hidden King 10.5:1 on --color-surface and 9.7:1 on
+     --color-surface-raised, Archmother 6.3:1 and 5.8:1, so both pass 4.5:1 for text. The names of
+     the teams are always written out beside the colour (legend, tooltips, feed). */
   --color-team-hidden-king: #f2c14e;
   --color-team-archmother: #5b9cf2;
 }

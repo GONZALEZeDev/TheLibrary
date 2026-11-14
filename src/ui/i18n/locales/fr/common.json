@@ -240,14 +240,6 @@
       "trailsOn": "Traînées : oui",
       "trailsOff": "Traînées : non"
     },
-    "side": {
-      "ally": "allié",
-      "enemy": "ennemi"
-    },
-    "team": {
-      "ally": "ton équipe",
-      "enemy": "l'équipe ennemie"
-    },
     "notice": {
       "mapUnavailable": "La carte n'est pas disponible pour le moment, mais le reste du replay l'est.",
       "trackedOnly": "Seul ton trajet est dans l'archive de cette partie : tu es le seul dessiné sur la carte.",
@@ -262,10 +254,6 @@
       "slider": "Moment de la partie",
       "time": "{{current}} / {{total}}"
     },
-    "rows": {
-      "inMatch": "Dans cette partie",
-      "schedule": "Calendrier du jeu"
-    },
     "schedule": {
       "mid_boss": "Mid Boss",
       "small_camps": "Petits camps (T1)",
@@ -276,7 +264,6 @@
       "sinners_sacrifice": "Sinner's Sacrifice",
       "soul_urn": "Soul Urn",
       "unstable_rift": "Unstable Rift",
-      "troopers": "Vagues de troupes toutes les {{s}} s",
       "respawn": "réapparition {{time}}"
     },
     "midBoss": {
@@ -300,14 +287,13 @@
       "title": "Joueurs",
       "respawnsIn": "{{s}} s",
       "dead": "Mort",
-      "health": "Vie {{percent}} %",
-      "noHealth": "La santé n'est pas dans l'archive de cette partie."
+      "health": "Vie {{percent}} %"
     },
     "feed": {
       "title": "Fil en direct",
       "empty": "Rien ne s'est encore passé.",
-      "death": "{{victim}} tué par {{killer}}",
-      "deathNoKiller": "{{victim}} est mort",
+      "death": "<victim>{{victim}}</victim> tué par <killer>{{killer}}</killer>",
+      "deathNoKiller": "<victim>{{victim}}</victim> est mort",
       "objective": "<team>{{team}}</team> a perdu {{objective}}",
       "midBoss": "Mid Boss tué par <team>{{team}}</team> · Rejuvenator pris par <claimer>{{claimer}}</claimer>"
     },
@@ -321,7 +307,7 @@
       "once": "{{name}} : {{time}}",
       "repeat": "{{name}} : {{first}}, puis toutes les {{every}}",
       "window": "{{name}} : entre {{from}} et {{to}}",
-      "midBossReturns": "Le Mid Boss revient {{delays}} après chaque mort",
+      "midBossReturns": "Le Mid Boss revient {{delays}} après chaque élimination",
       "troopers": "Vagues de troupes : toutes les {{every}} à partir de {{from}}",
       "build": "Délais de la version {{build}} du jeu"
     },

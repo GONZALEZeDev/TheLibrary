@@ -240,14 +240,6 @@
       "trailsOn": "Trails: on",
       "trailsOff": "Trails: off"
     },
-    "side": {
-      "ally": "ally",
-      "enemy": "enemy"
-    },
-    "team": {
-      "ally": "your team",
-      "enemy": "the enemy team"
-    },
     "notice": {
       "mapUnavailable": "The map is not available right now, but the rest of the replay is.",
       "trackedOnly": "Only your path is in this match's archive, so only you are drawn on the map.",
@@ -262,10 +254,6 @@
       "slider": "Time in the match",
       "time": "{{current}} / {{total}}"
     },
-    "rows": {
-      "inMatch": "In this match",
-      "schedule": "Game schedule"
-    },
     "schedule": {
       "mid_boss": "Mid Boss",
       "small_camps": "Small camps (T1)",
@@ -276,7 +264,6 @@
       "sinners_sacrifice": "Sinner's Sacrifice",
       "soul_urn": "Soul Urn",
       "unstable_rift": "Unstable Rift",
-      "troopers": "Trooper waves every {{s}} s",
       "respawn": "respawn {{time}}"
     },
     "midBoss": {
@@ -300,14 +287,13 @@
       "title": "Players",
       "respawnsIn": "{{s}} s",
       "dead": "Dead",
-      "health": "Health {{percent}} %",
-      "noHealth": "Health is not in this match's archive."
+      "health": "Health {{percent}} %"
     },
     "feed": {
       "title": "Live feed",
       "empty": "Nothing has happened yet.",
-      "death": "{{victim}} killed by {{killer}}",
-      "deathNoKiller": "{{victim}} died",
+      "death": "<victim>{{victim}}</victim> killed by <killer>{{killer}}</killer>",
+      "deathNoKiller": "<victim>{{victim}}</victim> died",
       "objective": "<team>{{team}}</team> lost {{objective}}",
       "midBoss": "Mid Boss killed by <team>{{team}}</team> · Rejuvenator taken by <claimer>{{claimer}}</claimer>"
     },

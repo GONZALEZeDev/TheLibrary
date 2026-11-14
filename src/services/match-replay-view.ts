@@ -6,10 +6,11 @@
  * the match and the map and hero catalogues. This module only holds the types of what it answers, so
  * that they are the one contract with the page.
  *
- * Every time is in seconds since the start of the match. Teams are told relative to the tracked
- * player (`ally` / `enemy`), never by the numbers of the API, and every position is on the minimap
- * picture (see `../core/match-map/map-geometry`), so the interface never deals in world units. What a
- * catalogue cannot tell is `null` and never replaced by a made-up value.
+ * Every time is in seconds since the start of the match. Teams are never told by the numbers of the
+ * API: each player and objective carries its in-game identity (Hidden King or Archmother, which
+ * colours it) and its side relative to the tracked player (`ally` / `enemy`). Every position is on
+ * the minimap picture (see `../core/match-map/map-geometry`), so the interface never deals in world
+ * units. What a catalogue cannot tell is `null` and never replaced by a made-up value.
  *
  * @packageDocumentation
  */
@@ -28,7 +29,7 @@ export interface ReplayViewPlayer {
   readonly slot: number;
   /** Whether the player is on the team of the tracked player. */
   readonly side: Side;
-  /** The in-game identity of the team of the player (Hidden King or Archmother), which colours it. */
+  /** The in-game identity of the team of the player (Hidden King or Archmother): its colour. */
   readonly team: TeamIdentity;
   /** Whether this is the tracked player. */
   readonly isTracked: boolean;
@@ -90,10 +91,6 @@ export interface ReplayMap {
 export interface ReplayViewMidBossKill {
   /** The second of the match the mid boss was killed at. */
   readonly timeS: number;
-  /** The side that killed it. */
-  readonly killedBy: Side;
-  /** The side that claimed the reward. */
-  readonly claimedBy: Side;
   /** The in-game identity of the team that killed it. */
   readonly killedByTeam: TeamIdentity;
   /** The in-game identity of the team that claimed the reward. */

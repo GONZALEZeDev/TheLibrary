@@ -33,8 +33,9 @@ const MAX_SCALE = 8;
  *   unknown.
  * @param timeS - The moment, in seconds; fractional while playing.
  * @returns The sample at an integer second; the linear interpolation between the two neighbouring
- *   seconds otherwise; `null` when the player has no position at either of them or the moment is
- *   outside the replay.
+ *   seconds otherwise. When only the next second has no position (the player dies at it), the
+ *   sample of the current second: the map then hides the player on the same whole-second rule as
+ *   the strip. `null` when the current second has no position, or the moment is outside the replay.
  */
 export function positionBetween(
   positions: readonly (RelativePoint | null)[],
@@ -43,8 +44,12 @@ export function positionBetween(
   const before = positions[Math.floor(timeS)] ?? null;
   if (Number.isInteger(timeS)) return before;
   const after = positions[Math.ceil(timeS)] ?? null;
-  // A death (or a gap) on either side means there is nothing to draw in between.
-  if (before === null || after === null) return null;
+  // A gap at the current second means there is nothing to draw in between (a respawn shows from
+  // its own second on).
+  if (before === null) return null;
+  // The next second has none (a death): the player stays where they are until that second, as in
+  // the strip, which reads the whole second.
+  if (after === null) return before;
   const ratio = timeS - Math.floor(timeS);
   return {
     left: before.left + (after.left - before.left) * ratio,

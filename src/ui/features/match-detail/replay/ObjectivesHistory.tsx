@@ -12,8 +12,7 @@
 
 import { memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { MapLaneId } from '../../../../core/match-map/map-objectives';
-import type { ObjectiveKind } from '../../../../core/match-map/map-objectives';
+import type { MapLaneId, ObjectiveKind } from '../../../../core/match-map/map-objectives';
 import type { TeamIdentity } from '../../../../core/match-map/team-identity';
 import { formatGameTime } from '../analysis-format';
 import { objectiveHistory, type ReplayData } from './replay-model';

@@ -183,8 +183,8 @@ export function ReplaySection({ matchId, playback, chart, trackedKills }: Replay
     >
       {/* The twelve players, centred. */}
       <PlayersStrip view={view} timeS={playback.timeS} />
-      {/* The transport controls, full width, right under the strip so the whole replay can be driven
-          without scrolling. */}
+      {/* The transport controls, full width, right under the strip so the whole replay can be
+          driven without scrolling. */}
       <PlaybackBar view={view} playback={playback} stepTimes={stepTimes} />
       {/* Wide: the map and the history on the left (45 %), the chart, the feed and the reminder on
           the right (55 %); narrow: the columns stack. */}

@@ -28,7 +28,7 @@ import { ReplayMap } from './ReplayMap';
 /** The map as the component needs it (never `null` here). */
 type Map = NonNullable<ReplayData['map']>;
 
-/** The team of a side in these fixtures: the tracked player is Hidden King, the other side Archmother. */
+/** The team of a side in these fixtures: the tracked player is Hidden King, the rest Archmother. */
 function teamOfSide(side: Side): TeamIdentity {
   return side === 'ally' ? 'hidden_king' : 'archmother';
 }

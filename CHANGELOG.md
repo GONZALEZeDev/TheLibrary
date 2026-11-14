@@ -14,7 +14,7 @@ Fixed and Removed.
 
 - The match replay shows the 12 players in a strip above the map, with their health or the seconds left before they respawn.
 - A live feed of the last five events (deaths with their killer, objectives lost, the Mid Boss and who took the Rejuvenator), a fixed history of the objectives destroyed with the colour of their lane, and a reminder of the game's timings.
-- A legend under the replay's tracks. Each kind of event has one icon (the objective's own, the Mid Boss, a skull for deaths) whose colour tells the team, and the map shows the game's icons for the objectives and the official Mid Boss icon.
+- A legend under the replay's tracks. Each kind of event has one icon (the objective's own, the Mid Boss, a skull for deaths) whose colour tells the team, and the map shows the objectives as icons in their team's colour and the official Mid Boss icon.
 
 ### Changed
 
@@ -25,6 +25,7 @@ Fixed and Removed.
 ### Removed
 
 - The replay's "At mm:ss" panel, replaced by the live feed and the players strip.
+- The "Game schedule" row under the time bar; its timings are now in the rules reminder.
 
 ## [0.1.3] - 2026-11-13
 

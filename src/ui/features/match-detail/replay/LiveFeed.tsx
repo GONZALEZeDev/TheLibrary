@@ -32,9 +32,9 @@ export interface LiveFeedProps {
 }
 
 /**
- * The sentence of an event. The team names of an objective or a mid boss line are coloured from
- * the data of the event (the `<team>` and `<claimer>` tags of the translation), never from the
- * translated text; a death line is plain.
+ * The sentence of an event. The team names of an objective or a mid boss line, and the hero names
+ * of a death line, are coloured from the data of the event (the `<team>`, `<claimer>`, `<victim>`
+ * and `<killer>` tags of the translation), never from the translated text.
  *
  * @param props - The props.
  * @param props.event - The event.
@@ -45,12 +45,28 @@ function Sentence({ event }: { readonly event: FeedEvent }) {
   switch (event.kind) {
     case 'death': {
       const victim = event.victim.heroName ?? t('timeline.deaths.unknownHero');
-      return event.killer === null
-        ? t('replay.feed.deathNoKiller', { victim })
-        : t('replay.feed.death', {
+      // The victim's hero name wears the colour of its own team.
+      const victimTag = <span className={TEAM_TEXT[event.victim.team]} />;
+      return event.killer === null ? (
+        <Trans
+          i18nKey="replay.feed.deathNoKiller"
+          values={{ victim }}
+          components={{ victim: victimTag }}
+        />
+      ) : (
+        <Trans
+          i18nKey="replay.feed.death"
+          values={{
             victim,
             killer: event.killer.heroName ?? t('timeline.deaths.unknownHero'),
-          });
+          }}
+          // The killer's hero name wears the colour of the killer's team.
+          components={{
+            victim: victimTag,
+            killer: <span className={TEAM_TEXT[event.killer.team]} />,
+          }}
+        />
+      );
     }
     case 'objective':
       return (

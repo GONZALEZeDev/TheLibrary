@@ -14,7 +14,6 @@ const ALL_ICON_IDS: readonly GameIconId[] = [
   'walker',
   'mid_boss',
   'death',
-  'rejuvenator',
   'soul_urn',
   'camp_small',
   'camp_medium',
@@ -22,9 +21,6 @@ const ALL_ICON_IDS: readonly GameIconId[] = [
   'patron_hidden_king',
   'patron_archmother',
   'powerup_weapon',
-  'powerup_spirit',
-  'powerup_movement',
-  'powerup_survival',
 ];
 
 describe('GAME_ICONS', () => {
@@ -35,7 +31,7 @@ describe('GAME_ICONS', () => {
     }
   });
 
-  it('holds exactly the 15 ids of GameIconId', () => {
+  it('holds exactly the 11 ids of GameIconId', () => {
     expect(Object.keys(GAME_ICONS).sort()).toEqual([...ALL_ICON_IDS].sort());
   });
 

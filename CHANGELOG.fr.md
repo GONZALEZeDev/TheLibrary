@@ -10,6 +10,8 @@ Ajouts, Modifications, Corrections et Suppressions.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-14
+
 ### Ajouts
 
 - Le replay de la partie montre les 12 joueurs dans une bande au-dessus de la carte, avec leur vie ou les secondes avant leur réapparition.

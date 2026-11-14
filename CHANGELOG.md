@@ -10,6 +10,8 @@ Fixed and Removed.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-14
+
 ### Added
 
 - The match replay shows the 12 players in a strip above the map, with their health or the seconds left before they respawn.

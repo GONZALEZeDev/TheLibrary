@@ -10,6 +10,22 @@ Ajouts, Modifications, Corrections et Suppressions.
 
 ## [Unreleased]
 
+### Ajouts
+
+- Le replay de la partie montre les 12 joueurs dans une bande au-dessus de la carte, avec leur vie ou les secondes avant leur réapparition.
+- Un fil des cinq derniers événements (morts avec leur tueur, objectifs perdus, le Mid Boss et l'équipe qui a pris le Rejuvenator), un historique fixe des objectifs détruits avec la couleur de leur lane, et un rappel des timings du jeu.
+- Une légende sous les pistes du replay. Chaque type d'événement a une seule icône (celle de l'objectif, le Mid Boss, une tête de mort pour les morts) dont la couleur indique l'équipe, et la carte montre les icônes du jeu pour les objectifs ainsi que l'icône officielle du Mid Boss.
+
+### Modifications
+
+- Le replay utilise les équipes du jeu, Hidden King et Archmother, avec leurs couleurs et leurs logos, sur la carte et tout autour.
+- La barre de temps et ses pistes sont juste sous les deux équipes : on pilote le replay sans faire défiler la page ; les équipes sont centrées.
+- Les événements sous la barre de temps sont répartis en trois pistes titrées (objectifs, Mid Boss, morts), séparées par un liseré et qui ne chevauchent plus leurs titres.
+
+### Suppressions
+
+- Le panneau « À mm:ss » du replay, remplacé par le fil des événements et la bande des joueurs.
+
 ## [0.1.3] - 2026-11-13
 
 ### Ajouts

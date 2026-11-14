@@ -114,6 +114,14 @@ function slotOf(hero: string): HTMLElement {
 }
 
 describe('PlayersStrip', () => {
+  it('centres its two groups horizontally and lets them wrap', async () => {
+    await renderStrip('en', testView());
+    const strip = screen.getByRole('region', { name: STRINGS.en.title });
+    expect(strip).toHaveClass('flex', 'flex-wrap', 'justify-center');
+    // The two groups are the direct children of the centred container.
+    expect(strip.children).toHaveLength(2);
+  });
+
   it('shows 12 slots, the tracked team first, with its tag', async () => {
     // The tracked player (slot 7) is on the Archmother: that group must come first.
     const base = testView({ trackedTeam: 'archmother' });

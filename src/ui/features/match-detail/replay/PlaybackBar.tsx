@@ -1,27 +1,25 @@
 /**
- * The playback bar of the map replay: the play / step / speed controls, the time slider, the four
- * titled tracks under the slider that put the match on the same time scale (objectives, Mid Boss,
- * deaths and the fixed game schedule) and the legend that explains every marker. Every marker of
- * the tracks seeks the replay to its moment.
+ * The playback bar of the map replay: the play / step / speed controls, the time slider, the three
+ * titled tracks under the slider that put the match on the same time scale (objectives, Mid Boss
+ * and deaths) and the legend that explains every icon. Every marker of the tracks seeks the replay
+ * to its moment.
  *
- * The tracks and the legend are built once per replay and never re-render while it plays: only the
- * cursor line that runs across the tracks moves with the clock.
+ * Each kind of event has its own icon, and the colour of the icon is the colour of the team: the
+ * shape never depends on the side. The tracks and the legend are built once per replay and never
+ * re-render while it plays: only the cursor line that runs across the tracks moves with the clock.
  *
  * @packageDocumentation
  */
-import type { TFunction } from 'i18next';
 import { memo } from 'react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import {
-  GAME_SCHEDULE,
-  scheduleOccurrences,
-  TROOPER_WAVES,
-} from '../../../../core/match-map/game-schedule';
-import type { ScheduleOccurrence } from '../../../../core/match-map/game-schedule';
+import type { ObjectiveKind } from '../../../../core/match-map/map-objectives';
 import type { TeamIdentity } from '../../../../core/match-map/team-identity';
 import { Button } from '../../../components/Button';
 import { formatGameTime } from '../analysis-format';
+import { GameIcon } from './GameIcon';
+import type { GameIconProps } from './GameIcon';
+import { ObjectiveGlyph } from './ObjectiveGlyphs';
 import { nextEvent, previousEvent } from './replay-model';
 import type { ReplayData } from './replay-model';
 import { TEAM_FILL } from './team-style';
@@ -36,29 +34,69 @@ const TITLE_SEPARATOR = ' · ';
 /** The two teams, in the order the legend shows them. */
 const TEAMS: readonly TeamIdentity[] = ['hidden_king', 'archmother'];
 
-/** The shape of a marker. The side is also told by the shape, never by the colour alone. */
-type MarkerShape = 'round' | 'diamond' | 'square' | 'tick' | 'hollow';
+/** The objective kinds of the legend, one entry each (a Base Guardian shares the Guardian's). */
+const LEGEND_OBJECTIVES: readonly ObjectiveKind[] = [
+  'guardian',
+  'walker',
+  'titan',
+  'core',
+  'shrine',
+];
 
-/**
- * The classes that draw each shape, on the tracks and in the legend alike. A diamond is a turned
- * square; a tick is a thin bar; a hollow marker is a ring that the colour classes only outline.
- */
-const SHAPE_CLASS: Readonly<Record<MarkerShape, string>> = {
-  round: 'size-2.5 rounded-full',
-  diamond: 'size-2.5 rotate-45',
-  square: 'size-2.5',
-  tick: 'h-3.5 w-1 rounded-sm',
-  hollow: 'size-2.5 rounded-full border-2',
-};
-
-/** The colour of the neutral markers (the scheduled events, the return of the Mid Boss). */
-const NEUTRAL_FILL = 'bg-fg-muted';
-
-/** The outline of the hollow marker of the Mid Boss return. */
-const NEUTRAL_RING = 'border-fg-muted';
+/** The side of the icon of a marker and of the legend, in pixels: large enough to be read. */
+const ICON_SIZE = 16;
 
 /** The width of the title column of the tracks (7 rem); the cursor overlay starts after it. */
 const TITLE_COLUMN_CLASS = 'grid-cols-[7rem_1fr]';
+
+/** The height of a track: a little more than its icons, which are centred in it. */
+const TRACK_HEIGHT_CLASS = 'h-7';
+
+/** The thin line under a track (both of its cells), which separates it from the next one. */
+const TRACK_SEPARATOR_CLASS = 'border-b border-border';
+
+/** Props of {@link ObjectiveIcon}. */
+interface ObjectiveIconProps {
+  /** The kind of objective. */
+  readonly kind: ObjectiveKind;
+  /** The team that owns it, or `'neutral'` for the legend. */
+  readonly team: TeamIdentity | 'neutral';
+}
+
+/**
+ * The icon of one kind of objective: the picture of the game tinted by the team for a Guardian or
+ * a Walker, a drawn glyph for a Titan, a Core or a Shrine. It is never drawn as destroyed: on the
+ * tracks the marker stands for the moment the objective fell.
+ *
+ * @returns The icon, decorative (the button or the legend label names it).
+ */
+function ObjectiveIcon({ kind, team }: ObjectiveIconProps) {
+  if (kind === 'titan' || kind === 'core' || kind === 'shrine') {
+    // The Titan opens up, as on the map.
+    return <ObjectiveGlyph kind={kind} size={ICON_SIZE} team={team} opensDown={false} decorative />;
+  }
+  return (
+    <GameIcon
+      // Guardians and base guardians share an icon.
+      icon={kind === 'walker' ? 'walker' : 'guardian'}
+      label={kind}
+      size={ICON_SIZE}
+      fallback="diamond"
+      tint={team}
+      decorative
+    />
+  );
+}
+
+/**
+ * A decorative game icon of the tracks and the legend, at their size and tinted.
+ *
+ * @param props - The icon, the fallback shape and the tint.
+ * @returns The icon.
+ */
+function TrackIcon(props: Pick<GameIconProps, 'icon' | 'tint'>) {
+  return <GameIcon {...props} label="" size={ICON_SIZE} fallback="circle" decorative />;
+}
 
 /** Props of {@link PlaybackBar}. */
 export interface PlaybackBarProps {
@@ -90,21 +128,21 @@ interface MarkerProps {
   readonly durationS: number;
   /** The tooltip, which is also the accessible name. */
   readonly title: string;
-  /** The shape of the marker. */
-  readonly shape: MarkerShape;
-  /** The colour classes that draw the marker. */
-  readonly colorClass: string;
+  /** Extra classes (the fade of the return of the Mid Boss). */
+  readonly className?: string;
+  /** The icon of the marker. */
+  readonly children: ReactNode;
   /** Seek the replay. */
   readonly onSeek: (timeS: number) => void;
 }
 
 /**
- * One marker of a track: a small button placed at its moment and centred in the height of its
- * track.
+ * One marker of a track: a small button holding an icon, placed at its moment and centred in the
+ * height of its track.
  *
  * @returns The button.
  */
-function Marker({ timeS, durationS, title, shape, colorClass, onSeek }: MarkerProps) {
+function Marker({ timeS, durationS, title, className = '', children, onSeek }: MarkerProps) {
   return (
     <button
       type="button"
@@ -113,88 +151,48 @@ function Marker({ timeS, durationS, title, shape, colorClass, onSeek }: MarkerPr
       tabIndex={-1}
       title={title}
       aria-label={title}
-      data-shape={shape}
       style={{ left: percentOf(timeS, durationS) }}
       className={[
-        'absolute top-1/2 -translate-x-1/2 -translate-y-1/2 p-0 focus-visible:outline-2',
-        SHAPE_CLASS[shape],
-        colorClass,
+        'absolute top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center p-0',
+        'focus-visible:outline-2',
+        className,
       ].join(' ')}
       onClick={() => {
         onSeek(timeS);
       }}
-    />
-  );
-}
-
-/** Props of {@link Span}. */
-interface SpanProps {
-  /** Where the span starts, in seconds; a click seeks there. */
-  readonly fromS: number;
-  /** Where the span ends, in seconds; clipped to the match. */
-  readonly toS: number;
-  /** The length of the match. */
-  readonly durationS: number;
-  /** The tooltip, which is also the accessible name. */
-  readonly title: string;
-  /** Which edge of its track the span stands on, so it never covers the markers in the middle. */
-  readonly edge: 'top' | 'bottom';
-  /** The classes that draw the span. */
-  readonly className: string;
-  /** Seek the replay. */
-  readonly onSeek: (timeS: number) => void;
-}
-
-/**
- * A stretch of the match (the rift, a stretch of trooper waves): a thin bar between two moments.
- *
- * @returns The button.
- */
-function Span({ fromS, toS, durationS, title, edge, className, onSeek }: SpanProps) {
-  const endS = Math.min(toS, durationS);
-  const widthRatio = durationS > 0 ? Math.max(endS - fromS, 0) / durationS : 0;
-  return (
-    <button
-      type="button"
-      // Markers are mouse targets: the keyboard uses the event buttons, the slider and the section
-      // keys.
-      tabIndex={-1}
-      title={title}
-      aria-label={title}
-      style={{ left: percentOf(fromS, durationS), width: `${String(widthRatio * 100)}%` }}
-      className={['absolute h-1.5 p-0', edge === 'top' ? 'top-0' : 'bottom-0', className].join(' ')}
-      onClick={() => {
-        onSeek(fromS);
-      }}
-    />
+    >
+      {children}
+    </button>
   );
 }
 
 /** Props of {@link Track}. */
 interface TrackProps {
   /** Which track it is, for the tests and the styles. */
-  readonly id: 'objectives' | 'midBoss' | 'deaths' | 'schedule';
+  readonly id: 'objectives' | 'midBoss' | 'deaths';
   /** The translated title, written in its own cell of the grid. */
   readonly title: string;
-  /** The height class of the track, large enough for its markers. */
-  readonly heightClass: string;
   /** The markers of the track. */
   readonly children: ReactNode;
 }
 
 /**
  * One track: its title in the fixed column and, beside it, the area its markers are placed in. Both
- * are cells of the grid of the tracks, so a title can never lie over a marker.
+ * are cells of the grid of the tracks, so a title can never lie over a marker. Both carry the thin
+ * line under the track, so that it runs the full width.
  *
  * @returns The two cells.
  */
-function Track({ id, title, heightClass, children }: TrackProps) {
+function Track({ id, title, children }: TrackProps) {
   return (
     <>
-      <p data-track-title={id} className="self-center truncate pr-2 text-xs text-fg-muted">
+      <p
+        data-track-title={id}
+        className={`flex items-center truncate pr-2 text-xs text-fg-muted ${TRACK_HEIGHT_CLASS} ${TRACK_SEPARATOR_CLASS}`}
+      >
         {title}
       </p>
-      <div data-track={id} className={`relative ${heightClass}`}>
+      <div data-track={id} className={`relative ${TRACK_HEIGHT_CLASS} ${TRACK_SEPARATOR_CLASS}`}>
         {children}
       </div>
     </>
@@ -210,36 +208,16 @@ interface TracksProps {
 }
 
 /**
- * The tooltip of a scheduled event: its name, its time and, when it comes back by itself, how long
- * it takes.
- *
- * @param occurrence - The occurrence.
- * @param t - Translation function.
- * @returns The tooltip.
- */
-function scheduleTitle(occurrence: ScheduleOccurrence, t: TFunction): string {
-  const parts = [t(`replay.schedule.${occurrence.kind}`), formatGameTime(occurrence.timeS)];
-  // Only a one-off entry has a respawn; the table holds it, so the tooltip never invents one.
-  const entry = GAME_SCHEDULE.find(
-    (candidate) => candidate.type === 'once' && candidate.kind === occurrence.kind,
-  );
-  if (entry?.type === 'once' && entry.respawnS !== null) {
-    parts.push(t('replay.schedule.respawn', { time: formatGameTime(entry.respawnS) }));
-  }
-  return parts.join(TITLE_SEPARATOR);
-}
-
-/**
- * The four tracks in a two-column grid (titles, then markers): the objectives that fell, the Mid
- * Boss kills and returns, the deaths of every player and the game schedule. Memoised on the replay,
- * so it does not draw again at every frame.
+ * The three tracks in a two-column grid (titles, then markers): the objectives that fell, the Mid
+ * Boss kills and returns and the deaths of every player. Memoised on the replay, so it does not
+ * draw again at every frame.
  */
 const Tracks = memo(function Tracks({ view, onSeek }: TracksProps) {
   const { t } = useTranslation();
   const { durationS } = view;
   return (
-    <div className={`grid gap-y-1 ${TITLE_COLUMN_CLASS}`}>
-      <Track id="objectives" title={t('replay.tracks.objectives')} heightClass="h-6">
+    <div className={`grid ${TITLE_COLUMN_CLASS}`}>
+      <Track id="objectives" title={t('replay.tracks.objectives')}>
         {view.objectives.map((objective, index) =>
           objective.destroyedAtS === null ? null : (
             <Marker
@@ -252,17 +230,17 @@ const Tracks = memo(function Tracks({ view, onSeek }: TracksProps) {
                 t(`replay.side.${objective.side}`),
                 formatGameTime(objective.destroyedAtS),
               ].join(TITLE_SEPARATOR)}
-              // The colour is the team's; the diamond is the non-colour cue of the other side.
-              shape={objective.side === 'enemy' ? 'diamond' : 'square'}
-              colorClass={TEAM_FILL[objective.team]}
               onSeek={onSeek}
-            />
+            >
+              {/* The icon of the kind, in the colour of the team that lost it. */}
+              <ObjectiveIcon kind={objective.identity.kind} team={objective.team} />
+            </Marker>
           ),
         )}
       </Track>
 
-      <Track id="midBoss" title={t('replay.tracks.midBoss')} heightClass="h-6">
-        {/* A kill is filled with the colour of the team that killed the Mid Boss. */}
+      <Track id="midBoss" title={t('replay.tracks.midBoss')}>
+        {/* A kill: the Mid Boss icon in the colour of the team that killed it. */}
         {view.midBossKills.map((kill) => (
           <Marker
             key={`kill-${String(kill.timeS)}`}
@@ -275,27 +253,28 @@ const Tracks = memo(function Tracks({ view, onSeek }: TracksProps) {
               }),
               formatGameTime(kill.timeS),
             ].join(TITLE_SEPARATOR)}
-            shape="round"
-            colorClass={TEAM_FILL[kill.killedByTeam]}
             onSeek={onSeek}
-          />
+          >
+            <TrackIcon icon="mid_boss" tint={kill.killedByTeam} />
+          </Marker>
         ))}
-        {/* The return of the Mid Boss: a hollow neutral ring, to tell it from the kill. */}
+        {/* The return of the Mid Boss: the same icon, neutral and faded, to tell it from a kill. */}
         {view.midBossReturnsS.map((returnS) => (
           <Marker
             key={`return-${String(returnS)}`}
             timeS={returnS}
             durationS={durationS}
             title={[t('replay.midBoss.returns'), formatGameTime(returnS)].join(TITLE_SEPARATOR)}
-            shape="hollow"
-            colorClass={NEUTRAL_RING}
+            className="opacity-50"
             onSeek={onSeek}
-          />
+          >
+            <TrackIcon icon="mid_boss" tint="neutral" />
+          </Marker>
         ))}
       </Track>
 
-      <Track id="deaths" title={t('replay.tracks.deaths')} heightClass="h-6">
-        {/* Every death of every player: a thin tick for an ally, a diamond for an enemy. */}
+      <Track id="deaths" title={t('replay.tracks.deaths')}>
+        {/* Every death of every player: a skull in the colour of the team of the victim. */}
         {view.players.flatMap((player) =>
           player.deaths.map((death) => (
             <Marker
@@ -307,56 +286,11 @@ const Tracks = memo(function Tracks({ view, onSeek }: TracksProps) {
                 t(`replay.side.${player.side}`),
                 formatGameTime(death.timeS),
               ].join(TITLE_SEPARATOR)}
-              shape={player.side === 'enemy' ? 'diamond' : 'tick'}
-              colorClass={TEAM_FILL[player.team]}
               onSeek={onSeek}
-            />
+            >
+              <TrackIcon icon="death" tint={player.team} />
+            </Marker>
           )),
-        )}
-      </Track>
-
-      {/* Taller than the others: the rift and the waves are bars on its edges, the events between. */}
-      <Track id="schedule" title={t('replay.tracks.schedule')} heightClass="h-9">
-        {scheduleOccurrences(durationS).map((occurrence) =>
-          occurrence.untilS === null ? (
-            <Marker
-              key={`${occurrence.kind}-${String(occurrence.timeS)}`}
-              timeS={occurrence.timeS}
-              durationS={durationS}
-              title={scheduleTitle(occurrence, t)}
-              shape="square"
-              colorClass={NEUTRAL_FILL}
-              onSeek={onSeek}
-            />
-          ) : (
-            // A window (the rift) is a span, clipped when the match ends inside it.
-            <Span
-              key={`${occurrence.kind}-${String(occurrence.timeS)}`}
-              fromS={occurrence.timeS}
-              toS={occurrence.untilS}
-              durationS={durationS}
-              title={scheduleTitle(occurrence, t)}
-              edge="top"
-              className="bg-secondary"
-              onSeek={onSeek}
-            />
-          ),
-        )}
-        {/* The trooper waves: a stretch lasts until the next one starts, or until the match ends. */}
-        {TROOPER_WAVES.map((stretch, index) =>
-          stretch.fromS >= durationS ? null : (
-            <Span
-              key={`troopers-${String(stretch.fromS)}`}
-              fromS={stretch.fromS}
-              toS={TROOPER_WAVES[index + 1]?.fromS ?? durationS}
-              durationS={durationS}
-              title={t('replay.schedule.troopers', { s: stretch.everyS })}
-              edge="bottom"
-              // The stretches alternate in shade, so that two neighbours do not merge into one.
-              className={index % 2 === 0 ? 'bg-border' : 'bg-fg-muted/40'}
-              onSeek={onSeek}
-            />
-          ),
         )}
       </Track>
     </div>
@@ -365,21 +299,21 @@ const Tracks = memo(function Tracks({ view, onSeek }: TracksProps) {
 
 /** Props of {@link LegendEntry}. */
 interface LegendEntryProps {
-  /** The swatches that show the marker, drawn with the same shape and colour as on the track. */
+  /** The icon the entry shows, drawn in the neutral colour. */
   readonly children: ReactNode;
-  /** What the marker means. */
+  /** What the icon means. */
   readonly label: string;
 }
 
 /**
- * One entry of the legend: the swatches of a marker and its label.
+ * One entry of the legend: an icon and its label.
  *
  * @returns The list item.
  */
 function LegendEntry({ children, label }: LegendEntryProps) {
   return (
     <li className="flex items-center gap-1.5">
-      <span aria-hidden="true" className="flex items-center gap-1">
+      <span aria-hidden="true" className="flex items-center">
         {children}
       </span>
       <span>{label}</span>
@@ -387,76 +321,65 @@ function LegendEntry({ children, label }: LegendEntryProps) {
   );
 }
 
-/** Props of {@link Swatch}. */
-interface SwatchProps {
-  /** The shape of the marker it stands for. */
-  readonly shape: MarkerShape;
-  /** The colour classes of the marker. */
-  readonly colorClass: string;
+/** Props of {@link TeamSwatch}. */
+interface TeamSwatchProps {
+  /** The team whose colour it shows. */
+  readonly team: TeamIdentity;
+  /** The name of the team. */
+  readonly label: string;
 }
 
 /**
- * A marker of the legend: the same classes as on the tracks, without position or click.
+ * A colour swatch of the legend: the colour of a team and its name.
  *
- * @returns The swatch.
+ * @returns The swatch and the name.
  */
-function Swatch({ shape, colorClass }: SwatchProps) {
-  return <span className={`inline-block ${SHAPE_CLASS[shape]} ${colorClass}`} />;
-}
-
-/**
- * Both shapes in both team colours, for the markers whose colour is the team and whose shape is
- * the side.
- *
- * @param props - The props.
- * @param props.shapes - The two shapes (ally, enemy) the marker takes.
- * @returns The swatches.
- */
-function TeamSwatches(props: { readonly shapes: readonly [MarkerShape, MarkerShape] }) {
+function TeamSwatch({ team, label }: TeamSwatchProps) {
   return (
-    <>
-      {props.shapes.map((shape) =>
-        TEAMS.map((team) => (
-          <Swatch key={`${shape}-${team}`} shape={shape} colorClass={TEAM_FILL[team]} />
-        )),
-      )}
-    </>
+    <span className="flex items-center gap-1">
+      <span
+        aria-hidden="true"
+        className={`inline-block size-2.5 rounded-full ${TEAM_FILL[team]}`}
+      />
+      <span>{label}</span>
+    </span>
   );
 }
 
 /**
- * The legend under the tracks: one entry per kind of marker that is drawn. Memoised, it only draws
- * again when the language changes.
+ * The legend under the tracks: each icon once, in the neutral colour, then the line that says the
+ * colour tells the team, with the two team colours. Memoised, it only draws again when the language
+ * changes.
  */
 const Legend = memo(function Legend() {
   const { t } = useTranslation();
   return (
     <div role="group" aria-label={t('replay.legend.title')}>
-      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-fg-muted">
-        <LegendEntry label={t('replay.legend.objectiveDestroyed')}>
-          <TeamSwatches shapes={['square', 'diamond']} />
-        </LegendEntry>
+      <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-muted">
+        {LEGEND_OBJECTIVES.map((kind) => (
+          <LegendEntry key={kind} label={t(`replay.objective.${kind}`)}>
+            <ObjectiveIcon kind={kind} team="neutral" />
+          </LegendEntry>
+        ))}
         <LegendEntry label={t('replay.legend.midBossKill')}>
-          {TEAMS.map((team) => (
-            <Swatch key={team} shape="round" colorClass={TEAM_FILL[team]} />
-          ))}
+          <TrackIcon icon="mid_boss" tint="neutral" />
         </LegendEntry>
         <LegendEntry label={t('replay.legend.midBossReturn')}>
-          <Swatch shape="hollow" colorClass={NEUTRAL_RING} />
+          {/* Faded, as on the track. */}
+          <span className="opacity-50">
+            <TrackIcon icon="mid_boss" tint="neutral" />
+          </span>
         </LegendEntry>
         <LegendEntry label={t('replay.legend.death')}>
-          <TeamSwatches shapes={['tick', 'diamond']} />
+          <TrackIcon icon="death" tint="neutral" />
         </LegendEntry>
-        <LegendEntry label={t('replay.legend.scheduleEvent')}>
-          <Swatch shape="square" colorClass={NEUTRAL_FILL} />
-        </LegendEntry>
-        <LegendEntry label={t('replay.legend.riftWindow')}>
-          <span className="inline-block h-1.5 w-5 bg-secondary" />
-        </LegendEntry>
-        <LegendEntry label={t('replay.legend.trooperWaves')}>
-          <span className="inline-block h-1.5 w-5 bg-border" />
-          <span className="inline-block h-1.5 w-5 bg-fg-muted/40" />
-        </LegendEntry>
+        {/* The colour of an icon is the team's: one line, with both team colours. */}
+        <li className="flex items-center gap-2">
+          <span>{t('replay.legend.teamColour')}</span>
+          {TEAMS.map((team) => (
+            <TeamSwatch key={team} team={team} label={t(`replay.teams.${team}`)} />
+          ))}
+        </li>
       </ul>
     </div>
   );
@@ -465,7 +388,7 @@ const Legend = memo(function Legend() {
 /**
  * The playback bar.
  *
- * @returns The controls, the slider, the four tracks with the cursor line across them and the
+ * @returns The controls, the slider, the three tracks with the cursor line across them and the
  * legend.
  */
 export function PlaybackBar({ view, playback, stepTimes }: PlaybackBarProps) {
@@ -543,7 +466,7 @@ export function PlaybackBar({ view, playback, stepTimes }: PlaybackBarProps) {
       <div className="relative">
         <Tracks view={view} onSeek={seek} />
         {/* An overlay over the track column only (the title column is 7 rem wide), so the cursor
-            line runs across the four tracks and never over a title. */}
+            line runs across the three tracks and never over a title. */}
         <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 left-28">
           <div
             data-testid="playback-cursor"

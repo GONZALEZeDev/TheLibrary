@@ -10,11 +10,12 @@
 
 import { ASSET_IMAGE_ORIGIN } from '../deadlock-api/assets.schema';
 
-/** What an icon shows: an objective, a neutral camp, a boss or pickup, a patron or a power-up. */
+/** What an icon shows: an objective, a camp, a boss, a death, a pickup, a patron or a power-up. */
 export type GameIconId =
   | 'guardian'
   | 'walker'
   | 'mid_boss'
+  | 'death'
   | 'rejuvenator'
   | 'soul_urn'
   | 'camp_small'
@@ -40,7 +41,8 @@ const GAME_RESOURCE_ROOT = `${ASSET_IMAGE_ORIGIN}assets-api-res/`;
 export const GAME_ICONS: Readonly<Record<GameIconId, string>> = {
   guardian: `${GAME_RESOURCE_ROOT}icons/minimap/objective_icon_t1.svg`,
   walker: `${GAME_RESOURCE_ROOT}icons/minimap/objective_icon_t2.svg`,
-  mid_boss: `${GAME_RESOURCE_ROOT}icons/minimap/boss_marker_neutral_psd.png`,
+  mid_boss: `${GAME_RESOURCE_ROOT}icons/new_boss_marker.png`,
+  death: `${GAME_RESOURCE_ROOT}icons/replay/icon_death.svg`,
   rejuvenator: `${GAME_RESOURCE_ROOT}icons/hud/icons/rejuvenator.svg`,
   soul_urn: `${GAME_RESOURCE_ROOT}icons/minimap/soul_jar_marker_psd.png`,
   camp_small: `${GAME_RESOURCE_ROOT}icons/neutral_small.png`,
@@ -53,3 +55,25 @@ export const GAME_ICONS: Readonly<Record<GameIconId, string>> = {
   powerup_movement: `${GAME_RESOURCE_ROOT}icons/hud/icons/powerup_movement.svg`,
   powerup_survival: `${GAME_RESOURCE_ROOT}icons/hud/icons/powerup_survival.svg`,
 };
+
+/**
+ * The factor by which an icon must be enlarged so that its visible drawing fills its box.
+ *
+ * Some files carry a wide transparent margin around the drawing (the Mid Boss marker fills only
+ * the middle of its picture), so at a small box size the drawing would look tiny. An icon missing
+ * from this table needs no enlargement (factor 1). Like {@link GAME_ICONS}, it is maintained by
+ * hand, from a look at the file.
+ */
+export const GAME_ICON_CONTENT_SCALE: Readonly<Partial<Record<GameIconId, number>>> = {
+  mid_boss: 1.7,
+};
+
+/**
+ * The enlargement an icon needs so that its visible drawing fills its box.
+ *
+ * @param id - The icon.
+ * @returns The factor of {@link GAME_ICON_CONTENT_SCALE}, or 1 when the icon has none.
+ */
+export function gameIconContentScale(id: GameIconId): number {
+  return GAME_ICON_CONTENT_SCALE[id] ?? 1;
+}

@@ -314,16 +314,16 @@ describe('ReplaySection layout A', () => {
     const rules = within(section).getByRole('heading', { name: 'Game rules' });
     const slider = within(section).getByRole('slider', { name: STRINGS.en.slider });
 
-    // Order in the document: strip, then the map column (map, history), then the right column
-    // (chart, feed, reminder), then the bar.
+    // Order in the document: strip, then the bar, then the map column (map, history), then the
+    // right column (chart, feed, reminder).
     const follows = (first: Element, second: Element) =>
       Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(follows(strip, map)).toBe(true);
+    expect(follows(strip, slider)).toBe(true);
+    expect(follows(slider, map)).toBe(true);
     expect(follows(map, history)).toBe(true);
     expect(follows(history, chart)).toBe(true);
     expect(follows(chart, feed)).toBe(true);
     expect(follows(feed, rules)).toBe(true);
-    expect(follows(rules, slider)).toBe(true);
   });
 
   it('wires the objectives history to the playback seek', async () => {

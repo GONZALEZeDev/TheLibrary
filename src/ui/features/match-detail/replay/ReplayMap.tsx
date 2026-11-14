@@ -14,12 +14,10 @@
  * technologies the map is one image named by its title; each icon and marker carries a title the
  * pointer shows over it ("Walker · Archmother"). Everything is coloured by the game's team identity
  * (Hidden King or Archmother), never by ally or enemy, and a team is never told by its colour
- * alone: an enemy player has a dashed ring (an ally a solid one), and an enemy objective is a
- * diamond (an ally one a rounded square). Standing guardians, walkers and the mid boss pit carry
- * their game icon; an icon that fails to load leaves the drawn shape. A fallen objective is told by
- * its dashed,
- * unfilled outline, a cue that no team shares with the shapes, so a fallen one is never taken for
- * an enemy one.
+ * alone: an enemy player has a dashed ring (an ally a solid one). Objectives are logos in the colour
+ * of their team: guardians and walkers are their game icon tinted by a mask, titans, cores and
+ * shrines are the glyphs of the tracks, and the mid boss pit carries its own golden icon; an icon
+ * that fails to load leaves a drawn shape. A fallen objective is faded and dashed.
  *
  * @packageDocumentation
  */
@@ -35,7 +33,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { GAME_ICONS, type GameIconId } from '../../../../core/match-map/game-icons';
+import { GAME_ICONS, gameIconContentScale } from '../../../../core/match-map/game-icons';
 import type { RelativePoint } from '../../../../core/match-map/map-geometry';
 import type { TeamIdentity } from '../../../../core/match-map/team-identity';
 import type { ReplayViewObjective, ReplayViewPlayer } from '../../../../services/match-replay-view';
@@ -49,6 +47,7 @@ import {
   type MapViewport,
   type ReplayData,
 } from './replay-model';
+import { ObjectiveGlyphPath, type GlyphKind } from './ObjectiveGlyphs';
 import { TEAM_FILL, TEAM_STROKE } from './team-style';
 
 /** The size of the frame the map is drawn in: the relative units (0 to 1) of the data times it. */
@@ -95,14 +94,32 @@ const OBJECTIVE_RADIUS = {
 /** The half size of the marker of the mid boss pit, in frame units at zoom 1. */
 const MID_BOSS_RADIUS = 14;
 
-/** The game icon a standing objective carries inside its shape; the other kinds have none. */
-const OBJECTIVE_ICON: Partial<Record<ReplayViewObjective['identity']['kind'], GameIconId>> = {
-  guardian: 'guardian',
-  walker: 'walker',
-};
+/** The API icon of the objectives that are told by one: tinted in the colour of their team. */
+const OBJECTIVE_ICON = {
+  guardian: GAME_ICONS.guardian,
+  base_guardian: GAME_ICONS.guardian,
+  walker: GAME_ICONS.walker,
+} as const satisfies Partial<Record<ReplayViewObjective['identity']['kind'], string>>;
 
-/** How big the icon of an objective is next to the half size of its shape. */
-const OBJECTIVE_ICON_RATIO = 1.5;
+/** The generic glyph of the objectives that are told by one. */
+const OBJECTIVE_GLYPH = {
+  titan: 'titan',
+  core: 'core',
+  shrine: 'shrine',
+} as const satisfies Partial<Record<ReplayViewObjective['identity']['kind'], GlyphKind>>;
+
+/** How big the tinted icon or the glyph of an objective is next to its half size. */
+const OBJECTIVE_ICON_RATIO = 2.6;
+
+/** The opacity of the tinted icon of a fallen objective. */
+const DESTROYED_ICON_OPACITY = 0.45;
+
+/** The extra radius of the background halo behind a standing marker, in frame units at zoom 1. */
+const HALO_WIDTH = 2;
+
+/** The dash and the gap of the ring around a fallen icon, in frame units at zoom 1. */
+const DESTROYED_DASH = 4;
+const DESTROYED_GAP = 3;
 
 /** Props of {@link ReplayMap}. */
 export interface ReplayMapProps {
@@ -175,11 +192,11 @@ interface ObjectiveMarkerProps {
 }
 
 /**
- * The marker of one objective: a square in the colour of its team while it stands (with the game
- * icon of a guardian or a walker inside), a dashed outline once it has fallen (with no icon, so a
- * fallen one reads as empty).
- * It is memoised, so only an objective that falls (or a zoom) redraws it; whether its icon failed
- * to load is its own state.
+ * The marker of one objective, in the colour of its team (never changed by its side): a guardian or
+ * a walker is its API icon tinted by a mask, a titan, a core or a shrine is its glyph. A fallen
+ * glyph uses its own destroyed state; a fallen icon is faded and surrounded by a dashed ring of its
+ * team colour. It is memoised, so only an objective that falls (or a zoom) redraws it; whether its
+ * icon failed to load is its own state, and the plain disc of its team takes its place.
  *
  * @returns The marker, or nothing when the objective has no position on the picture.
  */
@@ -189,49 +206,111 @@ const ObjectiveMarker = memo(function ObjectiveMarker({
   scale,
   label,
 }: ObjectiveMarkerProps) {
-  // Set once the icon failed to load: the plain shape stays.
+  // Set once the icon failed to load: a drawn disc takes its place.
   const [iconFailed, setIconFailed] = useState(false);
+  // One mask per marker: the ids must not collide inside the one SVG.
+  const maskId = useId();
   if (objective.position === null) return null;
   const { x, y } = frameOf(objective.position);
-  const radius = OBJECTIVE_RADIUS[objective.identity.kind] / scale;
-  const iconId = OBJECTIVE_ICON[objective.identity.kind];
-  const iconSize = radius * OBJECTIVE_ICON_RATIO;
+  const { kind } = objective.identity;
+  const radius = OBJECTIVE_RADIUS[kind] / scale;
+  const size = radius * OBJECTIVE_ICON_RATIO;
+  const iconUrl =
+    kind in OBJECTIVE_ICON ? OBJECTIVE_ICON[kind as keyof typeof OBJECTIVE_ICON] : null;
+  const glyph =
+    kind in OBJECTIVE_GLYPH ? OBJECTIVE_GLYPH[kind as keyof typeof OBJECTIVE_GLYPH] : null;
+
+  // A thin disc of the background colour behind a standing marker, as the old squares had.
+  const halo = (
+    <circle data-halo="" r={size / 2 + HALO_WIDTH / scale} className="fill-bg" fillOpacity={0.7} />
+  );
+  let body;
+  if (glyph !== null) {
+    body = (
+      <ObjectiveGlyphPath
+        kind={glyph}
+        size={size}
+        team={objective.team}
+        destroyed={!standing}
+        // The titan opens towards its own base (the map edge) and bulges towards the centre: in
+        // the bottom half it is a dome opening down, in the top half a cup opening up.
+        opensDown={objective.position.top >= 0.5}
+      />
+    );
+    // A standing glyph gets the halo of the map colour, so that it never blends into the picture.
+    if (standing)
+      body = (
+        <>
+          {halo}
+          {body}
+        </>
+      );
+  } else if (iconUrl === null || iconFailed) {
+    // Without an icon (or when it failed to load): a plain disc of the team, dashed once fallen.
+    body = (
+      <circle
+        r={size / 2}
+        className={
+          standing
+            ? `${TEAM_FILL[objective.team]} stroke-bg`
+            : `fill-none ${TEAM_STROKE[objective.team]}`
+        }
+        strokeWidth={standing ? 1 : RING_WIDTH / scale}
+        strokeDasharray={
+          standing
+            ? undefined
+            : `${String(DESTROYED_DASH / scale)} ${String(DESTROYED_GAP / scale)}`
+        }
+      />
+    );
+  } else {
+    body = (
+      <>
+        <defs>
+          {/* The icon as a stencil: only its opaque parts let the team colour through. */}
+          <mask id={maskId} style={{ maskType: 'alpha' }}>
+            <image
+              href={iconUrl}
+              x={-size / 2}
+              y={-size / 2}
+              width={size}
+              height={size}
+              onError={() => {
+                setIconFailed(true);
+              }}
+            />
+          </mask>
+        </defs>
+        {standing && halo}
+        <g opacity={standing ? undefined : DESTROYED_ICON_OPACITY}>
+          <rect
+            x={-size / 2}
+            y={-size / 2}
+            width={size}
+            height={size}
+            mask={`url(#${maskId})`}
+            className={TEAM_FILL[objective.team]}
+          />
+        </g>
+        {!standing && (
+          <circle
+            r={size / 2}
+            className={`fill-none ${TEAM_STROKE[objective.team]}`}
+            strokeWidth={RING_WIDTH / scale}
+            strokeDasharray={`${String(DESTROYED_DASH / scale)} ${String(DESTROYED_GAP / scale)}`}
+          />
+        )}
+      </>
+    );
+  }
+
   return (
     <g
       data-state={standing ? 'standing' : 'destroyed'}
       transform={`translate(${String(x)} ${String(y)})`}
     >
       <title>{label}</title>
-      <rect
-        x={-radius}
-        y={-radius}
-        width={radius * 2}
-        height={radius * 2}
-        rx={radius / 4}
-        // An enemy objective is turned into a diamond: a shape cue that is not the dashes of a
-        // fallen one.
-        transform={objective.side === 'enemy' ? 'rotate(45)' : undefined}
-        className={
-          standing
-            ? `${TEAM_FILL[objective.team]} stroke-bg`
-            : `fill-none ${TEAM_STROKE[objective.team]}`
-        }
-        strokeWidth={standing ? 1 : RING_WIDTH}
-        vectorEffect="non-scaling-stroke"
-        strokeDasharray={standing ? undefined : '4 3'}
-      />
-      {standing && iconId !== undefined && !iconFailed && (
-        <image
-          href={GAME_ICONS[iconId]}
-          x={-iconSize / 2}
-          y={-iconSize / 2}
-          width={iconSize}
-          height={iconSize}
-          onError={() => {
-            setIconFailed(true);
-          }}
-        />
-      )}
+      {body}
     </g>
   );
 });
@@ -258,6 +337,9 @@ const MidBossMarker = memo(function MidBossMarker({ x, y, scale, label }: MidBos
   // Set once the icon failed to load: the drawn disc takes its place.
   const [iconFailed, setIconFailed] = useState(false);
   const radius = MID_BOSS_RADIUS / scale;
+  // The picture is mostly transparent margin: it is enlarged around the same centre so that the
+  // drawing fills the radius (the fallback disc keeps the plain radius).
+  const imageRadius = radius * gameIconContentScale('mid_boss');
   return (
     <g transform={`translate(${String(x)} ${String(y)})`}>
       <title>{label}</title>
@@ -270,10 +352,10 @@ const MidBossMarker = memo(function MidBossMarker({ x, y, scale, label }: MidBos
       ) : (
         <image
           href={GAME_ICONS.mid_boss}
-          x={-radius}
-          y={-radius}
-          width={radius * 2}
-          height={radius * 2}
+          x={-imageRadius}
+          y={-imageRadius}
+          width={imageRadius * 2}
+          height={imageRadius * 2}
           onError={() => {
             setIconFailed(true);
           }}

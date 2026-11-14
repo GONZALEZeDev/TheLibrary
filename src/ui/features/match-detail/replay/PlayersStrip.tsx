@@ -197,7 +197,10 @@ export function PlayersStrip({ view, timeS }: PlayersStripProps) {
   );
   const otherTeam: TeamIdentity = view.trackedTeam === 'hidden_king' ? 'archmother' : 'hidden_king';
   return (
-    <section aria-label={t('replay.strip.title')} className="flex flex-wrap gap-x-8 gap-y-4">
+    <section
+      aria-label={t('replay.strip.title')}
+      className="flex flex-wrap justify-center gap-x-8 gap-y-4"
+    >
       {[view.trackedTeam, otherTeam].map((team) => (
         <TeamGroup
           key={team}

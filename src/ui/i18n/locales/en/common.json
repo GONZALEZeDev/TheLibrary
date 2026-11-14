@@ -328,18 +328,14 @@
     "tracks": {
       "objectives": "Objectives",
       "midBoss": "Mid Boss",
-      "deaths": "Deaths",
-      "schedule": "Schedule"
+      "deaths": "Deaths"
     },
     "legend": {
       "title": "Legend",
-      "objectiveDestroyed": "Objective destroyed (colour and shape show the team that lost it)",
       "midBossKill": "Mid Boss killed",
       "midBossReturn": "Mid Boss returns",
       "death": "Death",
-      "scheduleEvent": "Scheduled event",
-      "riftWindow": "Unstable Rift window",
-      "trooperWaves": "Trooper waves"
+      "teamColour": "The colour tells the team"
     }
   },
   "matchType": {

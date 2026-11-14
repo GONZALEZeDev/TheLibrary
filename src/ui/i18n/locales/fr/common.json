@@ -328,18 +328,14 @@
     "tracks": {
       "objectives": "Objectifs",
       "midBoss": "Mid Boss",
-      "deaths": "Morts",
-      "schedule": "Calendrier"
+      "deaths": "Morts"
     },
     "legend": {
       "title": "Légende",
-      "objectiveDestroyed": "Objectif détruit (la couleur et la forme indiquent l'équipe qui l'a perdu)",
       "midBossKill": "Mid Boss tué",
       "midBossReturn": "Retour du Mid Boss",
       "death": "Mort",
-      "scheduleEvent": "Événement prévu",
-      "riftWindow": "Fenêtre de l'Unstable Rift",
-      "trooperWaves": "Vagues de troupes"
+      "teamColour": "La couleur indique l'équipe"
     }
   },
   "matchType": {

@@ -1,7 +1,7 @@
 /**
  * Tests of the playback bar of the replay, rendered on its own with a replay built by hand and a
  * playback whose controls are spies: the slider, the previous / next event buttons, the speeds, the
- * ticks of the deaths, the span of the rift and the click on a marker.
+ * icons of the three tracks, their separators, the legend and the click on a marker.
  *
  * @packageDocumentation
  */
@@ -9,6 +9,8 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import { describe, expect, it, vi } from 'vitest';
+import { GAME_ICONS } from '../../../../core/match-map/game-icons';
+import type { ObjectiveKind } from '../../../../core/match-map/map-objectives';
 import type { ReplayViewPlayer } from '../../../../services/match-replay-view';
 import { createI18n } from '../../../i18n/i18n';
 import { PlaybackBar } from './PlaybackBar';
@@ -34,7 +36,22 @@ function player(overrides: Partial<ReplayViewPlayer>): ReplayViewPlayer {
   };
 }
 
-/** A replay of 20 minutes: two deaths, one fallen walker, one mid boss kill and its return. */
+/** A fallen objective of a kind; the team follows the side. */
+function objective(
+  side: 'ally' | 'enemy',
+  kind: ObjectiveKind,
+  destroyedAtS: number,
+): ReplayData['objectives'][number] {
+  return {
+    side,
+    team: side === 'ally' ? 'hidden_king' : 'archmother',
+    identity: { kind, lane: null, index: null },
+    position: null,
+    destroyedAtS,
+  };
+}
+
+/** A replay of 20 minutes: two deaths, one of each kind of objective, a Mid Boss kill and return. */
 function testView(): ReplayData {
   return {
     kind: 'replay',
@@ -57,13 +74,12 @@ function testView(): ReplayData {
       }),
     ],
     objectives: [
-      {
-        side: 'enemy',
-        team: 'archmother',
-        identity: { kind: 'walker', lane: 1, index: null },
-        position: null,
-        destroyedAtS: 754,
-      },
+      objective('enemy', 'walker', 754),
+      objective('ally', 'guardian', 250),
+      objective('enemy', 'base_guardian', 840),
+      objective('enemy', 'titan', 900),
+      objective('ally', 'core', 960),
+      objective('ally', 'shrine', 1020),
     ],
     midBossKills: [
       {
@@ -76,6 +92,13 @@ function testView(): ReplayData {
     ],
     midBossReturnsS: [1100],
   };
+}
+
+/** The masked icon span (a tinted `GameIcon`) inside a marker button. */
+function maskOf(marker: HTMLElement): HTMLElement {
+  const span = marker.querySelector<HTMLElement>('span');
+  if (span === null) throw new Error('the marker has no masked icon');
+  return span;
 }
 
 /** A playback whose controls are spies. */
@@ -153,39 +176,70 @@ describe('PlaybackBar', () => {
     expect(playback.setSpeed).toHaveBeenCalledWith(10);
   });
 
-  it("every player's death is a tick, coloured by team and shaped by side", async () => {
+  it('a death is a skull tinted by the team of the victim, whatever the side', async () => {
     const user = userEvent.setup();
     const playback = testPlayback();
     await renderBar(playback);
     const ally = screen.getByTitle('Haze · ally · 5:00');
     const enemy = screen.getByTitle('Abrams · enemy · 6:40');
-    // The team identity colours the tick (Hidden King for the ally here), never ally / enemy.
-    expect(ally).toHaveClass('bg-team-hidden-king');
-    expect(enemy).toHaveClass('bg-team-archmother');
-    // The enemy tick has another shape, so the side is not told by the colour alone.
-    expect(enemy).toHaveAttribute('data-shape', 'diamond');
-    expect(ally).toHaveAttribute('data-shape', 'tick');
+    // The skull is masked and filled with the team colour; the side no longer changes the shape.
+    expect(maskOf(ally).style.maskImage).toContain(GAME_ICONS.death);
+    expect(maskOf(ally)).toHaveClass('bg-team-hidden-king');
+    expect(maskOf(enemy).style.maskImage).toContain(GAME_ICONS.death);
+    expect(maskOf(enemy)).toHaveClass('bg-team-archmother');
+    expect(ally).not.toHaveAttribute('data-shape');
     await user.click(enemy);
     expect(playback.seek).toHaveBeenCalledWith(400);
   });
 
-  it('markers use the team colour classes, not ally/enemy', async () => {
+  it('an objective and a death of the same team do not share an icon', async () => {
     await renderBar(testPlayback());
-    const track = document.querySelector('[data-track="objectives"]');
-    expect(track?.querySelector('.bg-team-archmother')).not.toBeNull();
+    const walker = maskOf(screen.getByTitle('Walker · enemy · 12:34'));
+    const death = maskOf(screen.getByTitle('Abrams · enemy · 6:40'));
+    expect(walker).toHaveClass('bg-team-archmother');
+    expect(death).toHaveClass('bg-team-archmother');
+    expect(walker.style.maskImage).toContain(GAME_ICONS.walker);
+    expect(walker.style.maskImage).not.toBe(death.style.maskImage);
+  });
+
+  it('draws the icon of each objective kind in the colour of its team', async () => {
+    await renderBar(testPlayback());
+    // Guardians and base guardians use the guardian icon; walkers the walker icon.
+    const guardian = maskOf(screen.getByTitle('Guardian · ally · 4:10'));
+    expect(guardian.style.maskImage).toContain(GAME_ICONS.guardian);
+    expect(guardian).toHaveClass('bg-team-hidden-king');
+    const baseGuardian = maskOf(screen.getByTitle('Base Guardian · enemy · 14:00'));
+    expect(baseGuardian.style.maskImage).toContain(GAME_ICONS.guardian);
+    expect(baseGuardian).toHaveClass('bg-team-archmother');
+    // The Titan, the Core and the Shrine are drawn glyphs, outlined or filled by team.
+    const titan = screen.getByTitle('Titan · enemy · 15:00').querySelector('path');
+    expect(titan?.getAttribute('class')).toContain('stroke-team-archmother');
+    const core = screen.getByTitle('Patron · ally · 16:00').querySelector('polygon');
+    expect(core?.getAttribute('class')).toContain('fill-team-hidden-king');
+    const shrine = screen.getByTitle('Shrine · ally · 17:00').querySelector('polygon');
+    expect(shrine?.getAttribute('fill')).toBe('none');
+    expect(shrine?.getAttribute('class')).toContain('stroke-team-hidden-king');
+  });
+
+  it('the Mid Boss kill takes the killer team colour, the return is neutral and faded', async () => {
+    await renderBar(testPlayback());
+    const kill = screen.getByTitle(
+      'Mid Boss killed by your team, claimed by the enemy team · 15:00',
+    );
+    expect(maskOf(kill).style.maskImage).toContain(GAME_ICONS.mid_boss);
+    expect(maskOf(kill)).toHaveClass('bg-team-hidden-king');
+    const back = screen.getByTitle('Mid Boss is back · 18:20');
+    expect(maskOf(back).style.maskImage).toContain(GAME_ICONS.mid_boss);
+    expect(maskOf(back)).toHaveClass('bg-fg-muted');
+    expect(back).toHaveClass('opacity-50');
     expect(document.querySelector('.bg-accent-bright, .bg-loss')).toBeNull();
-    // The Mid Boss kill takes the colour of the team that killed it; the return is hollow.
-    expect(
-      screen.getByTitle('Mid Boss killed by your team, claimed by the enemy team · 15:00'),
-    ).toHaveClass('bg-team-hidden-king');
-    expect(screen.getByTitle('Mid Boss is back · 18:20')).toHaveAttribute('data-shape', 'hollow');
   });
 
   it('track titles sit in their own column, never over a marker', async () => {
     await renderBar(testPlayback());
     const grid = document.querySelector('[data-track="objectives"]')?.parentElement;
     expect(grid).toHaveClass('grid');
-    for (const id of ['objectives', 'midBoss', 'deaths', 'schedule']) {
+    for (const id of ['objectives', 'midBoss', 'deaths']) {
       const title = document.querySelector(`[data-track-title="${id}"]`);
       const track = document.querySelector(`[data-track="${id}"]`);
       expect(title).not.toBeNull();
@@ -198,25 +252,56 @@ describe('PlaybackBar', () => {
     expect(document.querySelector('[data-track-title="midBoss"]')).toHaveTextContent('Mid Boss');
   });
 
+  it('has no schedule track', async () => {
+    await renderBar(testPlayback());
+    expect(document.querySelector('[data-track="schedule"]')).toBeNull();
+    expect(document.querySelector('[data-track-title="schedule"]')).toBeNull();
+    expect(screen.queryByTitle(/Unstable Rift/)).toBeNull();
+    expect(screen.queryByTitle(/Trooper waves/)).toBeNull();
+  });
+
+  it('separates the tracks with a thin border line', async () => {
+    await renderBar(testPlayback());
+    for (const id of ['objectives', 'midBoss', 'deaths']) {
+      expect(document.querySelector(`[data-track-title="${id}"]`)).toHaveClass(
+        'border-b',
+        'border-border',
+      );
+      expect(document.querySelector(`[data-track="${id}"]`)).toHaveClass(
+        'border-b',
+        'border-border',
+      );
+    }
+  });
+
   it('the cursor line spans the tracks and follows the clock', async () => {
     await renderBar(testPlayback({ timeS: 300 }));
     expect(screen.getByTestId('playback-cursor')).toHaveStyle({ left: '25%' });
   });
 
-  it('the legend lists every marker kind', async () => {
+  it('the legend lists each kind once and the two team swatches', async () => {
     await renderBar(testPlayback());
     const legend = screen.getByRole('group', { name: 'Legend' });
     for (const label of [
-      'Objective destroyed (colour and shape show the team that lost it)',
+      'Guardian',
+      'Walker',
+      'Titan',
+      'Patron',
+      'Shrine',
       'Mid Boss killed',
       'Mid Boss returns',
       'Death',
-      'Scheduled event',
-      'Unstable Rift window',
-      'Trooper waves',
+      'The colour tells the team',
+      'Hidden King',
+      'Archmother',
     ]) {
-      expect(within(legend).getByText(label)).toBeInTheDocument();
+      expect(within(legend).getAllByText(label)).toHaveLength(1);
     }
+    // The kind icons are neutral: the only team colours are the two swatches.
+    expect(legend.querySelectorAll('.bg-team-hidden-king')).toHaveLength(1);
+    expect(legend.querySelectorAll('.bg-team-archmother')).toHaveLength(1);
+    expect(legend.querySelector('[class*="team-"][class*="stroke"]')).toBeNull();
+    expect(within(legend).queryByText(/Scheduled event|Rift window|Trooper/)).toBeNull();
   });
 
   it('draws objectives and the Mid Boss kill and return', async () => {
@@ -233,32 +318,16 @@ describe('PlaybackBar', () => {
     expect(playback.seek).toHaveBeenLastCalledWith(1100);
   });
 
-  it('the rift is drawn as a span, clipped to the match', async () => {
-    const user = userEvent.setup();
-    const playback = testPlayback();
-    await renderBar(playback);
-    const rift = screen.getByTitle('Unstable Rift · 10:00');
-    // 600 s to 720 s of 1200 s: starts at 50 %, 10 % wide.
-    expect(rift).toHaveStyle({ left: '50%', width: '10%' });
-    await user.click(rift);
-    expect(playback.seek).toHaveBeenCalledWith(600);
-    // A 20-minute match only reaches the first stretch of trooper waves.
-    expect(screen.getByTitle('Trooper waves every 30 s')).toBeInTheDocument();
-  });
-
-  it('shows the respawn duration in the tooltip of a scheduled event', async () => {
-    await renderBar(testPlayback());
-    expect(screen.getByTitle('Small camps (T1) · 2:00 · respawn 1:25')).toBeInTheDocument();
-  });
-
   it('keeps the markers of the rows out of the tab order', async () => {
     await renderBar(testPlayback());
     // Mouse only: the keyboard uses the event buttons, the slider and the section keys.
-    expect(screen.getByTitle('Unstable Rift · 10:00')).toHaveAttribute('tabindex', '-1');
-    expect(screen.getByTitle('Mid Boss is back · 18:20')).toHaveAttribute('tabindex', '-1');
-    expect(screen.getByTitle('Small camps (T1) · 2:00 · respawn 1:25')).toHaveAttribute(
-      'tabindex',
-      '-1',
-    );
+    for (const title of [
+      'Walker · enemy · 12:34',
+      'Haze · ally · 5:00',
+      'Mid Boss is back · 18:20',
+    ]) {
+      expect(screen.getByTitle(title)).toHaveAttribute('tabindex', '-1');
+      expect(screen.getByTitle(title)).toHaveAttribute('aria-label', title);
+    }
   });
 });

@@ -207,7 +207,7 @@ describe('ReplayMap', () => {
     expect(paige).toBeGreaterThan(titles.indexOf('Seven · Archmother'));
   });
 
-  it('a destroyed objective is dashed from its second on', async () => {
+  it('a destroyed objective is told by its state from its second on', async () => {
     await renderMap('en', { timeS: 4.5 });
     const standing = marked('en', 'Walker')[0];
     expect(standing?.getAttribute('data-state')).toBe('standing');
@@ -218,7 +218,11 @@ describe('ReplayMap', () => {
     await renderMap('en', { timeS: 5 });
     const fallen = marked('en', 'Walker')[0];
     expect(fallen?.getAttribute('data-state')).toBe('destroyed');
-    expect(fallen?.querySelector('[stroke-dasharray]')).not.toBeNull();
+    // The icon stays (faded) and a dashed ring in the colour of its team surrounds it.
+    expect(fallen?.querySelector('mask image')?.getAttribute('href')).toBe(GAME_ICONS.walker);
+    expect(fallen?.querySelector('g[opacity]')).not.toBeNull();
+    const ring = fallen?.querySelector('circle[stroke-dasharray]');
+    expect(ring?.getAttribute('class')).toContain('stroke-team-archmother');
     // Whatever the state, the titan stands and an objective without a position is not drawn.
     expect(marked('en', 'Titan')[0]?.getAttribute('data-state')).toBe('standing');
     expect(marked('en', 'Shrine')).toHaveLength(0);
@@ -286,13 +290,8 @@ describe('ReplayMap', () => {
     // The enemy ring is dashed, the ally ring solid.
     expect(ring('Seven · Archmother')?.getAttribute('stroke-dasharray')).toMatch(/\d/);
     expect(ring('Haze · Hidden King')?.hasAttribute('stroke-dasharray')).toBe(false);
-    // An enemy objective is a diamond, an ally one is not; a standing one is never dashed.
-    const walker = marked('en', 'Walker · Archmother')[0]?.querySelector('rect');
-    expect(walker?.getAttribute('transform')).toBe('rotate(45)');
-    expect(walker?.hasAttribute('stroke-dasharray')).toBe(false);
-    expect(
-      marked('en', 'Titan · Hidden King')[0]?.querySelector('rect')?.hasAttribute('transform'),
-    ).toBe(false);
+    // An objective no longer changes shape with its side: no diamond turn, whatever the side.
+    expect(picture('en').querySelector('[transform="rotate(45)"]')).toBeNull();
   });
 
   it('a player is ringed in the colour of their team, whatever their side', async () => {
@@ -321,49 +320,127 @@ describe('ReplayMap', () => {
     expect(trails.filter((c) => c?.includes('stroke-team-hidden-king'))).toHaveLength(2);
   });
 
-  it('an objective is filled in the colour of its team and ringed when fallen', async () => {
-    await renderMap('en', { timeS: 4.5 });
-    expect(
-      marked('en', 'Walker · Archmother')[0]?.querySelector('rect')?.getAttribute('class'),
-    ).toContain('fill-team-archmother');
-    expect(
-      marked('en', 'Titan · Hidden King')[0]?.querySelector('rect')?.getAttribute('class'),
-    ).toContain('fill-team-hidden-king');
+  it('a guardian or a walker is its API icon tinted in the colour of its team', async () => {
+    const view = testView({
+      objectives: [
+        objective({ identity: { kind: 'walker', lane: 1, index: null } }),
+        objective({ side: 'ally', identity: { kind: 'guardian', lane: 1, index: null } }),
+        // Crossed on purpose: an enemy-side objective that belongs to the Hidden King.
+        objective({
+          side: 'enemy',
+          team: 'hidden_king',
+          identity: { kind: 'base_guardian', lane: null, index: 1 },
+        }),
+      ],
+    });
+    await renderMap('en', { view });
 
-    cleanup();
-    await renderMap('en', { timeS: 5 });
-    const fallen = marked('en', 'Walker · Archmother')[0]?.querySelector('rect');
-    expect(fallen?.getAttribute('class')).toContain('stroke-team-archmother');
-    expect(fallen?.getAttribute('class')).toContain('fill-none');
+    const walker = marked('en', 'Walker · Archmother')[0];
+    const mask = walker?.querySelector('mask');
+    expect(mask?.querySelector('image')?.getAttribute('href')).toBe(GAME_ICONS.walker);
+    expect(mask?.getAttribute('style')).toContain('alpha');
+    const tint = walker?.querySelector('rect');
+    expect(tint?.getAttribute('class')).toContain('fill-team-archmother');
+    expect(tint?.getAttribute('mask')).toBe(`url(#${mask?.id ?? ''})`);
+
+    const guardian = marked('en', 'Guardian · Hidden King')[0];
+    expect(guardian?.querySelector('mask image')?.getAttribute('href')).toBe(GAME_ICONS.guardian);
+    expect(guardian?.querySelector('rect')?.getAttribute('class')).toContain(
+      'fill-team-hidden-king',
+    );
+    // The colour follows the team, not the side.
+    const base = marked('en', 'Base Guardian · Hidden King')[0];
+    expect(base?.querySelector('mask image')?.getAttribute('href')).toBe(GAME_ICONS.guardian);
+    expect(base?.querySelector('rect')?.getAttribute('class')).toContain('fill-team-hidden-king');
+    // Every marker has its own mask id.
+    const ids = [...picture('en').querySelectorAll('mask')].map((m) => m.id);
+    expect(new Set(ids).size).toBe(3);
   });
 
-  it('the guardian and walker icons show while standing and not once fallen', async () => {
-    await renderMap('en', { timeS: 4.5 });
-    expect(
-      marked('en', 'Walker · Archmother')[0]?.querySelector('image')?.getAttribute('href'),
-    ).toBe(GAME_ICONS.walker);
-    // A titan has no icon of its own.
-    expect(marked('en', 'Titan · Hidden King')[0]?.querySelector('image')).toBeNull();
+  it('a titan, a core and a shrine are their glyph in the colour of their team', async () => {
+    const view = testView({
+      objectives: [
+        objective({ side: 'ally', identity: { kind: 'titan', lane: null, index: null } }),
+        objective({ identity: { kind: 'core', lane: null, index: null } }),
+        objective({
+          side: 'ally',
+          identity: { kind: 'shrine', lane: null, index: 1 },
+          destroyedAtS: 2,
+        }),
+      ],
+    });
+    await renderMap('en', { view });
 
-    cleanup();
-    await renderMap('en', { timeS: 5 });
-    expect(marked('en', 'Walker · Archmother')[0]?.querySelector('image')).toBeNull();
+    const titan = marked('en', 'Titan · Hidden King')[0];
+    expect(titan?.querySelector('path')?.getAttribute('class')).toContain(
+      'stroke-team-hidden-king',
+    );
+    expect(titan?.querySelector('image')).toBeNull();
+    const core = marked('en', 'Patron · Archmother')[0];
+    expect(core?.querySelector('polygon')?.getAttribute('class')).toContain('fill-team-archmother');
+    // A fallen shrine keeps its glyph in its destroyed state: dashed, unfilled, in its team colour.
+    const shrine = marked('en', 'Shrine · Hidden King')[0];
+    expect(shrine?.getAttribute('data-state')).toBe('destroyed');
+    const outline = shrine?.querySelector('polygon');
+    expect(outline?.getAttribute('class')).toContain('stroke-team-hidden-king');
+    expect(outline?.getAttribute('stroke-dasharray')).toMatch(/\d/);
   });
 
-  it('a walker icon that fails to load leaves the plain shape', async () => {
+  it('a standing objective has a background halo, a fallen one has none', async () => {
+    await renderMap('en', { timeS: 4.5 });
+    expect(marked('en', 'Walker · Archmother')[0]?.querySelector('[data-halo]')).not.toBeNull();
+    expect(marked('en', 'Titan · Hidden King')[0]?.querySelector('[data-halo]')).not.toBeNull();
+    cleanup();
+    await renderMap('en', { timeS: 5 });
+    expect(marked('en', 'Walker · Archmother')[0]?.querySelector('[data-halo]')).toBeNull();
+  });
+
+  it('a titan opens towards its own base', async () => {
+    const view = testView({
+      objectives: [
+        // Base at the top of the map: a cup opening up towards the edge (sweep flag 0).
+        objective({
+          side: 'ally',
+          identity: { kind: 'titan', lane: null, index: null },
+          position: { left: 0.5, top: 0.2 },
+        }),
+        // Base at the bottom: a dome opening down towards the edge (sweep flag 1).
+        objective({
+          side: 'enemy',
+          identity: { kind: 'titan', lane: null, index: null },
+          position: { left: 0.5, top: 0.8 },
+        }),
+      ],
+    });
+    await renderMap('en', { view });
+
+    const sweep = (label: string) =>
+      /A [\d.]+ [\d.]+ 0 0 (\d)/.exec(
+        marked('en', label)[0]?.querySelector('path')?.getAttribute('d') ?? '',
+      )?.[1];
+    expect(sweep('Titan · Hidden King')).toBe('0');
+    expect(sweep('Titan · Archmother')).toBe('1');
+  });
+
+  it('a walker icon that fails to load leaves a drawn shape in the team colour', async () => {
     await renderMap('en', { timeS: 4.5 });
     const walker = marked('en', 'Walker · Archmother')[0];
-    const icon = walker?.querySelector('image');
+    const icon = walker?.querySelector('mask image');
     expect(icon).not.toBeNull();
     if (icon) fireEvent.error(icon);
-    expect(walker?.querySelector('image')).toBeNull();
-    expect(walker?.querySelector('rect')).not.toBeNull();
+    expect(walker?.querySelector('mask')).toBeNull();
+    expect(walker?.querySelector('circle')?.getAttribute('class')).toContain(
+      'fill-team-archmother',
+    );
   });
 
   it('the mid boss shows its icon, or a drawn disc when the icon fails', async () => {
     await renderMap('en');
     const pit = marked('en', 'Mid Boss')[0];
     expect(pit?.querySelector('image')?.getAttribute('href')).toBe(GAME_ICONS.mid_boss);
+    // The official golden icon, drawn untinted (no mask).
+    expect(GAME_ICONS.mid_boss).toContain('new_boss_marker.png');
+    expect(pit?.querySelector('mask')).toBeNull();
     expect(pit?.querySelector('circle')).toBeNull();
 
     const icon = pit?.querySelector('image');

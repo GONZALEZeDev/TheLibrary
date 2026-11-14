@@ -1,9 +1,9 @@
 /**
  * The map replay of the timeline tab, laid out around the souls chart (layout "A"): the players
- * strip spans the full width on top; below it, on wide screens, the map (45 %) with its buttons and
- * the objectives history stand on the left, and the chart, the live feed and the rules reminder
- * stack on the right; the playback bar spans the full width at the bottom. On narrow screens the
- * two columns stack.
+ * strip (its two groups centred) is on top, the playback bar directly under it so that the whole
+ * replay can be driven without scrolling; below them, on wide screens, the map (45 %) with its
+ * buttons and the objectives history stand on the left, and the chart, the live feed and the rules
+ * reminder stack on the right. On narrow screens the two columns stack.
  *
  * The chart is a slot (`chart`): the tab builds it, since it shares the picked death with the death
  * list, and this section only decides where it stands. What the section shows depends on the replay
@@ -181,8 +181,11 @@ export function ReplaySection({ matchId, playback, chart, trackedKills }: Replay
       onKeyDown={onKeyDown}
       className="space-y-4 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-bright"
     >
-      {/* The twelve players, full width. */}
+      {/* The twelve players, centred. */}
       <PlayersStrip view={view} timeS={playback.timeS} />
+      {/* The transport controls, full width, right under the strip so the whole replay can be driven
+          without scrolling. */}
+      <PlaybackBar view={view} playback={playback} stepTimes={stepTimes} />
       {/* Wide: the map and the history on the left (45 %), the chart, the feed and the reminder on
           the right (55 %); narrow: the columns stack. */}
       <div className="grid gap-4 lg:grid-cols-[45fr_55fr]">
@@ -196,8 +199,6 @@ export function ReplaySection({ matchId, playback, chart, trackedKills }: Replay
           <RulesReminder />
         </div>
       </div>
-      {/* The transport controls, full width. */}
-      <PlaybackBar view={view} playback={playback} stepTimes={stepTimes} />
     </section>
   );
 }

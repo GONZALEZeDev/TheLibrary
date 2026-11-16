@@ -2,11 +2,22 @@
  * The playback clock of the map replay: the one moment the whole replay is drawn at.
  *
  * It is the only state that changes at every animation frame, so the components read the moment
- * from here and derive everything else (positions, trails, panel) from it.
+ * from here and derive everything else (positions, trails, panel) from it. Only the icons of the
+ * map glide between two seconds: the rest of the replay reads the whole second, and is built again
+ * only when it changes.
  *
  * @packageDocumentation
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+
+/**
+ * The longest stretch of real time one frame may move the clock by, in milliseconds. The browser
+ * stops the frames while the window is hidden or minimised; without this bound, the first frame
+ * after it would add the whole hidden time (times the speed) and jump the replay ahead. It is a
+ * whole second, not less, because a page out of sight may still get one frame a second, which
+ * must keep the replay at its speed.
+ */
+const MAX_FRAME_GAP_MS = 1000;
 
 /** How fast the replay plays, as a multiple of the real time. */
 export type PlaybackSpeed = 1 | 4 | 10;
@@ -58,7 +69,8 @@ export function usePlayback(durationS: number): Playback {
     let frame = 0;
     const tick = () => {
       const now = performance.now();
-      moveTo(timeRef.current + ((now - last) / 1000) * speed);
+      const elapsedMs = Math.min(now - last, MAX_FRAME_GAP_MS);
+      moveTo(timeRef.current + (elapsedMs / 1000) * speed);
       last = now;
       if (timeRef.current >= durationS) {
         // The end of the match: stop on a whole second.

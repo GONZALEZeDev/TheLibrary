@@ -28,6 +28,7 @@ import {
   MATCHES_QUERY_KEY,
   useHeroAssets,
   useHeroNames,
+  useDetailSummary,
   useMatchSummary,
   useRefreshOnSync,
 } from '../matches/use-matches';
@@ -245,6 +246,32 @@ describe('the refresh of the breakdown', () => {
       expect(damage.mock.calls.length).toBeGreaterThan(1);
       expect(players.mock.calls.length).toBeGreaterThan(1);
     });
+  });
+
+  it('is not read again for each match the detail queue records', async () => {
+    const { services, matchId } = await setUp();
+    const damage = vi.spyOn(services.breakdown, 'getDamageTab');
+    const summary = vi.spyOn(services.details, 'getSummary');
+    // The listener the screen gives the queue, to call it as the queue would.
+    const subscribe = vi.spyOn(services.details, 'subscribe');
+    const { result } = renderWithServices(services, () => {
+      useRefreshOnSync();
+      return { damage: useDamageTab(matchId), summary: useDetailSummary() };
+    });
+    await waitFor(() => {
+      expect(result.current.damage.isSuccess).toBe(true);
+      expect(result.current.summary.isSuccess).toBe(true);
+    });
+    const summaryReads = summary.mock.calls.length;
+    const listener = subscribe.mock.calls[0]?.[0] ?? expect.unreachable('the screen subscribed');
+
+    listener();
+
+    // The counts of the details are read again; the tab, read from the archive, is not.
+    await waitFor(() => {
+      expect(summary.mock.calls.length).toBeGreaterThan(summaryReads);
+    });
+    expect(damage).toHaveBeenCalledTimes(1);
   });
 
   it('is forgotten with the other data of the account, even when no screen shows it', async () => {

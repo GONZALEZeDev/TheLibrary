@@ -107,6 +107,26 @@ export function ReplaySection({ matchId, playback, chart, trackedKills }: Replay
     () => (view?.kind === 'replay' ? stepEvents(view, trackedKills) : []),
     [view, trackedKills],
   );
+  // The strip, the history and the feed read the whole second: built once per second, the same
+  // elements are handed back on the other frames of the second, and React skips them.
+  const second = Math.floor(playback.timeS);
+  const { seek } = playback;
+  const replayView = view?.kind === 'replay' ? view : null;
+  const playersStrip = useMemo(
+    () => (replayView === null ? null : <PlayersStrip view={replayView} timeS={second} />),
+    [replayView, second],
+  );
+  const objectivesHistory = useMemo(
+    () =>
+      replayView === null ? null : (
+        <ObjectivesHistory view={replayView} timeS={second} onSeek={seek} />
+      ),
+    [replayView, second, seek],
+  );
+  const liveFeed = useMemo(
+    () => (replayView === null ? null : <LiveFeed view={replayView} timeS={second} />),
+    [replayView, second],
+  );
 
   if (view === undefined || view.kind === 'not_archived') {
     // Loading, a failed read or no detail: the tab looks as it did before the replay existed.
@@ -182,7 +202,7 @@ export function ReplaySection({ matchId, playback, chart, trackedKills }: Replay
       className="space-y-4 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-bright"
     >
       {/* The twelve players, centred. */}
-      <PlayersStrip view={view} timeS={playback.timeS} />
+      {playersStrip}
       {/* The transport controls, full width, right under the strip so the whole replay can be
           driven without scrolling. */}
       <PlaybackBar view={view} playback={playback} stepTimes={stepTimes} />
@@ -191,11 +211,11 @@ export function ReplaySection({ matchId, playback, chart, trackedKills }: Replay
       <div className="grid gap-4 lg:grid-cols-[45fr_55fr]">
         <div className="min-w-0 space-y-4">
           {mapArea}
-          <ObjectivesHistory view={view} timeS={playback.timeS} onSeek={playback.seek} />
+          {objectivesHistory}
         </div>
         <div className="min-w-0 space-y-4">
           {chart}
-          <LiveFeed view={view} timeS={playback.timeS} />
+          {liveFeed}
           <RulesReminder />
         </div>
       </div>

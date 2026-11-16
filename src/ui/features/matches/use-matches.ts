@@ -291,13 +291,26 @@ export function createThrottle(action: () => void, intervalMs: number): Throttle
 }
 
 /**
+ * Whether a query key is one of the tabs of a match that break it down: the keys built by
+ * `BREAKDOWN_QUERY_KEY_OF` (in `../match-detail/use-match-breakdown`), which sit under
+ * {@link DETAILS_QUERY_KEY} with `breakdown` next.
+ *
+ * @param queryKey - The key of a query.
+ * @returns `true` for the key of a breakdown tab.
+ */
+function isBreakdownKey(queryKey: readonly unknown[]): boolean {
+  return queryKey[0] === DETAILS_QUERY_KEY[0] && queryKey[1] === 'breakdown';
+}
+
+/**
  * Keep the screen up to date with what happens in the background, while the component that calls
  * it is shown:
  * - whenever a synchronisation starts or ends, whatever started it (the schedule, another
  *   screen…), the synchronisation status, the matches and the details are read again;
  * - while the detail queue runs, each match it records changes the counts of the details and the
  *   detail column of the list, so those are read again too, at most once a second
- *   ({@link DETAIL_REFRESH_INTERVAL_MS}). The last match of a burst is always taken into account.
+ *   ({@link DETAIL_REFRESH_INTERVAL_MS}), but not the tabs of an open match, which the queue does
+ *   not change. The last match of a burst is always taken into account.
  */
 export function useRefreshOnSync(): void {
   const { sync, details } = useServices();
@@ -313,7 +326,14 @@ export function useRefreshOnSync(): void {
   );
   useEffect(() => {
     const refresh = createThrottle(() => {
-      void queryClient.invalidateQueries({ queryKey: DETAILS_QUERY_KEY });
+      // Not the tabs of an open match (its breakdown: the replay, the timeline, the damage and the
+      // players): they are read from its archive and its projection, which the queue does not
+      // change while it runs. Read again each time, the archive would be decompressed and decoded
+      // up to once a second for nothing; the end of the synchronisation reads them again.
+      void queryClient.invalidateQueries({
+        queryKey: DETAILS_QUERY_KEY,
+        predicate: (query) => !isBreakdownKey(query.queryKey),
+      });
       void queryClient.invalidateQueries({ queryKey: MATCHES_QUERY_KEY });
     }, DETAIL_REFRESH_INTERVAL_MS);
     const unsubscribe = details.subscribe(refresh.trigger);

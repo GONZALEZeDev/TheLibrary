@@ -651,7 +651,11 @@ describe('SyncBanner', () => {
     recordMatch();
     recordMatch();
     expect(invalidate).toHaveBeenCalledTimes(2);
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['details'] });
+    // The details, but not the tabs of an open match, which the queue does not change.
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ['details'],
+      predicate: expect.any(Function) as unknown,
+    });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['matches'] });
     vi.advanceTimersByTime(999);
     expect(invalidate).toHaveBeenCalledTimes(2);

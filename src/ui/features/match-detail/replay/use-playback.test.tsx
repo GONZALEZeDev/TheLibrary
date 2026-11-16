@@ -44,6 +44,35 @@ describe('usePlayback', () => {
     expect(result.current.timeS).toBeLessThanOrEqual(4.1);
   });
 
+  it('does not jump ahead after the window was hidden', () => {
+    // The frames are played by hand: the browser sends none while the window is hidden.
+    let nextFrame: FrameRequestCallback | null = null;
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      nextFrame = callback;
+      return 1;
+    });
+    vi.stubGlobal('cancelAnimationFrame', () => undefined);
+    let now = 1_000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const { result } = renderHook(() => usePlayback(1_000));
+    act(() => {
+      result.current.setSpeed(10);
+    });
+    act(() => {
+      result.current.toggle();
+    });
+
+    // A minute minimised at ×10 would be ten minutes of the match; the frame after it counts one
+    // second at most.
+    now += 60_000;
+    act(() => {
+      (nextFrame ?? expect.unreachable('the clock asked for a frame'))(now);
+    });
+
+    expect(result.current.timeS).toBeCloseTo(10);
+    vi.unstubAllGlobals();
+  });
+
   it('rounds to the nearest second on pause', () => {
     const { result } = renderHook(() => usePlayback(100));
     act(() => {

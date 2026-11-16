@@ -396,8 +396,101 @@ const Legend = memo(function Legend() {
   );
 });
 
+/** What {@link Controls} needs: whole seconds and stable callbacks, so that it is memoised. */
+interface ControlsProps {
+  /** How long the match lasted, in seconds. */
+  readonly durationS: number;
+  /** The whole second the replay is at. */
+  readonly second: number;
+  /** Whether the clock is running. */
+  readonly playing: boolean;
+  /** The speed of the clock. */
+  readonly speed: PlaybackSpeed;
+  /** The moment of the event before the cursor, or `null` when there is none. */
+  readonly previous: number | null;
+  /** The moment of the event after the cursor, or `null` when there is none. */
+  readonly next: number | null;
+  /** Jump to a moment. */
+  readonly seek: Playback['seek'];
+  /** Play or pause. */
+  readonly toggle: Playback['toggle'];
+  /** Change the speed. */
+  readonly setSpeed: Playback['setSpeed'];
+}
+
 /**
- * The playback bar.
+ * The row of buttons and the time of the replay. It only changes with the whole second or a
+ * control, so it is not drawn again at the other frames while the replay plays.
+ *
+ * @returns The row.
+ */
+const Controls = memo(function Controls({
+  durationS,
+  second,
+  playing,
+  speed,
+  previous,
+  next,
+  seek,
+  toggle,
+  setSpeed,
+}: ControlsProps) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button
+        look="subtle"
+        disabled={previous === null}
+        aria-label={t('replay.controls.previousEvent')}
+        onClick={() => {
+          if (previous !== null) seek(previous);
+        }}
+      >
+        ⏮
+      </Button>
+      <Button
+        look="subtle"
+        aria-label={t(playing ? 'replay.controls.pause' : 'replay.controls.play')}
+        onClick={toggle}
+      >
+        {playing ? '⏸' : '▶'}
+      </Button>
+      <Button
+        look="subtle"
+        disabled={next === null}
+        aria-label={t('replay.controls.nextEvent')}
+        onClick={() => {
+          if (next !== null) seek(next);
+        }}
+      >
+        ⏭
+      </Button>
+      {SPEEDS.map((value) => (
+        <Button
+          key={value}
+          look="subtle"
+          aria-pressed={speed === value}
+          aria-label={t('replay.controls.speed', { n: value })}
+          onClick={() => {
+            setSpeed(value);
+          }}
+        >
+          ×{value}
+        </Button>
+      ))}
+      <span className="ml-auto text-sm tabular-nums text-fg-muted">
+        {t('replay.controls.time', {
+          current: formatGameTime(second),
+          total: formatGameTime(durationS),
+        })}
+      </span>
+    </div>
+  );
+});
+
+/**
+ * The playback bar. Only the cursor line glides between two seconds; the controls, the tracks and
+ * the legend are memoised, and the slider moves by whole seconds.
  *
  * @returns The controls, the slider, the three tracks with the cursor line across them and the
  * legend.
@@ -411,54 +504,17 @@ export function PlaybackBar({ view, playback, stepTimes }: PlaybackBarProps) {
 
   return (
     <div className="space-y-2" style={{ [TITLE_COLUMN_VAR]: TITLE_COLUMN_WIDTH } as CSSProperties}>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          look="subtle"
-          disabled={previous === null}
-          aria-label={t('replay.controls.previousEvent')}
-          onClick={() => {
-            if (previous !== null) seek(previous);
-          }}
-        >
-          ⏮
-        </Button>
-        <Button
-          look="subtle"
-          aria-label={t(playing ? 'replay.controls.pause' : 'replay.controls.play')}
-          onClick={toggle}
-        >
-          {playing ? '⏸' : '▶'}
-        </Button>
-        <Button
-          look="subtle"
-          disabled={next === null}
-          aria-label={t('replay.controls.nextEvent')}
-          onClick={() => {
-            if (next !== null) seek(next);
-          }}
-        >
-          ⏭
-        </Button>
-        {SPEEDS.map((value) => (
-          <Button
-            key={value}
-            look="subtle"
-            aria-pressed={speed === value}
-            aria-label={t('replay.controls.speed', { n: value })}
-            onClick={() => {
-              setSpeed(value);
-            }}
-          >
-            ×{value}
-          </Button>
-        ))}
-        <span className="ml-auto text-sm tabular-nums text-fg-muted">
-          {t('replay.controls.time', {
-            current: formatGameTime(second),
-            total: formatGameTime(view.durationS),
-          })}
-        </span>
-      </div>
+      <Controls
+        durationS={view.durationS}
+        second={second}
+        playing={playing}
+        speed={speed}
+        previous={previous}
+        next={next}
+        seek={seek}
+        toggle={toggle}
+        setSpeed={setSpeed}
+      />
 
       {/* The slider sits in the track column of the same grid as the tracks, so the thumb, the
           markers and the cursor line share one time scale; the title cell beside it stays

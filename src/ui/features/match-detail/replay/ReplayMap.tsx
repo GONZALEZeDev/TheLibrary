@@ -527,12 +527,59 @@ export function ReplayMap({ view, timeS, showTrails, onToggleTrails }: ReplayMap
     [view.players, timeS],
   );
 
+  // Only the icons glide between two seconds. The trails and the objectives hold one state per
+  // whole second, so they are built once per second, and React skips them on the other frames.
+  const second = Math.floor(timeS);
+  const { scale } = viewport;
+  const objectiveMarkers = useMemo(
+    () =>
+      view.objectives.map((objective) => (
+        <ObjectiveMarker
+          // An objective is told by its team and what it is (a lane or a side tells the rest).
+          key={`${objective.side}-${objective.identity.kind}-${String(objective.identity.lane)}-${String(objective.identity.index)}`}
+          objective={objective}
+          standing={objective.destroyedAtS === null || objective.destroyedAtS > second}
+          scale={scale}
+          label={titleOf(t(`replay.objective.${objective.identity.kind}`), objective.team, t)}
+        />
+      )),
+    [view.objectives, second, scale, t],
+  );
+  const trails = useMemo(
+    () =>
+      showTrails
+        ? // The tracked player's trail last, on top, as their icon.
+          view.players
+            .toSorted((first, other) => Number(first.isTracked) - Number(other.isTracked))
+            .map((player) => {
+              const trail = trailOf(player.positions, second, TRAIL_SECONDS);
+              // A single point draws nothing, and a player with no position now has no trail.
+              if (trail.length < 2 || (player.positions[second] ?? null) === null) return null;
+              return (
+                <polyline
+                  key={player.slot}
+                  data-trail=""
+                  points={trail
+                    .map(
+                      (point) => `${String(point.left * MAP_SIZE)},${String(point.top * MAP_SIZE)}`,
+                    )
+                    .join(' ')}
+                  className={`fill-none ${TEAM_STROKE[player.team]}`}
+                  strokeWidth={TRAIL_WIDTH_PX}
+                  strokeOpacity={0.7}
+                  strokeLinejoin="round"
+                  vectorEffect="non-scaling-stroke"
+                />
+              );
+            })
+        : null,
+    [view.players, second, showTrails],
+  );
+
   // The page says the map is unavailable instead of drawing it; this is only a guard.
   if (map === null) return null;
 
-  const { scale } = viewport;
   const boxSize = MAP_SIZE / scale;
-  const second = Math.floor(timeS);
   const mapTitle = t('replay.map.title');
 
   return (
@@ -557,16 +604,7 @@ export function ReplayMap({ view, timeS, showTrails, onToggleTrails }: ReplayMap
           </clipPath>
         </defs>
         <Backdrop map={map} />
-        {view.objectives.map((objective) => (
-          <ObjectiveMarker
-            // An objective is told by its team and what it is (a lane or a side tells the rest).
-            key={`${objective.side}-${objective.identity.kind}-${String(objective.identity.lane)}-${String(objective.identity.index)}`}
-            objective={objective}
-            standing={objective.destroyedAtS === null || objective.destroyedAtS > second}
-            scale={scale}
-            label={titleOf(t(`replay.objective.${objective.identity.kind}`), objective.team, t)}
-          />
-        ))}
+        {objectiveMarkers}
         {/* The mid boss pit, which stands apart from the objectives of the teams. */}
         <MidBossMarker
           x={frameOf(map.midBoss).x}
@@ -574,28 +612,7 @@ export function ReplayMap({ view, timeS, showTrails, onToggleTrails }: ReplayMap
           scale={scale}
           label={t('replay.schedule.mid_boss')}
         />
-        {showTrails &&
-          icons.map(({ player }) => {
-            const trail = trailOf(player.positions, timeS, TRAIL_SECONDS);
-            // A single point draws nothing.
-            if (trail.length < 2) return null;
-            return (
-              <polyline
-                key={player.slot}
-                data-trail=""
-                points={trail
-                  .map(
-                    (point) => `${String(point.left * MAP_SIZE)},${String(point.top * MAP_SIZE)}`,
-                  )
-                  .join(' ')}
-                className={`fill-none ${TEAM_STROKE[player.team]}`}
-                strokeWidth={TRAIL_WIDTH_PX}
-                strokeOpacity={0.7}
-                strokeLinejoin="round"
-                vectorEffect="non-scaling-stroke"
-              />
-            );
-          })}
+        {trails}
         {icons.map(({ player, point }) => {
           // `icons` holds only the players with a point; the filter above cannot tell the type.
           if (point === null) return null;

@@ -24,6 +24,13 @@ import type {
 import { createI18n } from '../../../i18n/i18n';
 import type { ReplayData } from './replay-model';
 import { ReplayMap } from './ReplayMap';
+import * as replayModel from './replay-model';
+
+// The trails are spied on, the real function behind: they must be built once per whole second.
+vi.mock('./replay-model', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./replay-model')>();
+  return { ...actual, trailOf: vi.fn(actual.trailOf) };
+});
 
 /** The map as the component needs it (never `null` here). */
 type Map = NonNullable<ReplayData['map']>;
@@ -476,6 +483,30 @@ describe('ReplayMap', () => {
     });
     fireEvent.pointerMove(picture('en'), { pointerId: 1, buttons: 0, clientX: 200, clientY: 300 });
     expect(viewBox('en')[0]).toBe(before);
+  });
+
+  it('builds the trails once per whole second while the icons glide', async () => {
+    const i18n = await createI18n('en');
+    const view = testView();
+    const draw = (timeS: number) => (
+      <I18nextProvider i18n={i18n}>
+        <ReplayMap view={view} timeS={timeS} showTrails onToggleTrails={() => undefined} />
+      </I18nextProvider>
+    );
+    const trailOf = vi.mocked(replayModel.trailOf);
+    const { rerender } = render(draw(3.2));
+    const built = trailOf.mock.calls.length;
+    expect(built).toBeGreaterThan(0);
+    const paige = marked('en', 'Paige')[0]?.getAttribute('transform');
+
+    // Another frame of the same second: the icon moves, the trails are not built again.
+    rerender(draw(3.7));
+    expect(marked('en', 'Paige')[0]?.getAttribute('transform')).not.toBe(paige);
+    expect(trailOf.mock.calls.length).toBe(built);
+
+    // The next second: they are.
+    rerender(draw(4.1));
+    expect(trailOf.mock.calls.length).toBeGreaterThan(built);
   });
 
   it('trails toggle', async () => {

@@ -10,10 +10,17 @@
  */
 @import 'tailwindcss';
 /* The fonts are bundled with the app (no font CDN at runtime): Alegreya Sans for the text and
-   Alegreya SC for the titles, open-licensed (OFL) fonts close to the game's own typefaces. */
-@import '@fontsource/alegreya-sans/500.css';
-@import '@fontsource/alegreya-sans/700.css';
-@import '@fontsource/alegreya-sc/800.css';
+   Alegreya SC for the titles, open-licensed (OFL) fonts close to the game's own typefaces.
+   Only the Latin alphabet is bundled (`latin` and `latin-ext`, which cover English, French and the
+   accented letters of the other European languages): the Cyrillic, Greek and Vietnamese letters of
+   a Steam name are drawn in the system font instead, which keeps about 300 KB out of the
+   installer. */
+@import '@fontsource/alegreya-sans/latin-500.css';
+@import '@fontsource/alegreya-sans/latin-ext-500.css';
+@import '@fontsource/alegreya-sans/latin-700.css';
+@import '@fontsource/alegreya-sans/latin-ext-700.css';
+@import '@fontsource/alegreya-sc/latin-800.css';
+@import '@fontsource/alegreya-sc/latin-ext-800.css';
 
 @theme {
   --font-sans: 'Alegreya Sans', ui-sans-serif, system-ui, sans-serif;

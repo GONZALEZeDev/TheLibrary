@@ -3,13 +3,14 @@
  * fallen) and every player as the icon of their hero, at the moment the shared cursor shows.
  *
  * The map is drawn by hand in SVG. Its `viewBox` is told in a fixed frame of {@link MAP_SIZE} units
- * (the relative positions of the data times that size) and follows a {@link MapViewport} held by
- * the component: the wheel zooms towards the pointer, dragging pans, and a button shows the whole
- * map again. Icons, rings, markers and strokes are divided by the zoom, so that they keep their
+ * (the relative positions of the data times that size) and follows the window of the map that
+ * `useMapPanZoom` (`./use-map-pan-zoom`) holds: the wheel zooms towards the pointer, dragging pans,
+ * and a button shows the whole map again. Icons, rings, markers and strokes are divided by the zoom, so that they keep their
  * size on the screen and nearby heroes separate instead of overlapping when the player zooms in.
  *
  * The picture and the lanes never change while the cursor moves, so they are a memoised layer of
- * their own; each frame only re-renders the objectives, the trails and the players. For assistive
+ * their own; the objectives and the trails are built once per whole second, and only the players
+ * glide at every frame. For assistive
  * technologies the map is one image named by its title; each icon and marker carries a title the
  * pointer shows over it ("Walker · Archmother"). Everything is coloured by the game's team
  * identity (Hidden King or Archmother), never by ally or enemy, and a team is never told by its
@@ -21,33 +22,17 @@
  * @packageDocumentation
  */
 import type { TFunction } from 'i18next';
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-} from 'react';
+import { memo, useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { GAME_ICONS, gameIconContentScale } from '../../../../core/match-map/game-icons';
 import type { RelativePoint } from '../../../../core/match-map/map-geometry';
 import type { TeamIdentity } from '../../../../core/match-map/team-identity';
 import type { ReplayViewObjective, ReplayViewPlayer } from '../../../../services/match-replay-view';
 import { Button } from '../../../components/Button';
-import {
-  FULL_MAP,
-  panBy,
-  positionBetween,
-  trailOf,
-  zoomAt,
-  type MapViewport,
-  type ReplayData,
-} from './replay-model';
+import { FULL_MAP, positionBetween, trailOf, type ReplayData } from './replay-model';
 import { ObjectiveGlyphPath, type GlyphKind } from './ObjectiveGlyphs';
 import { TEAM_FILL, TEAM_STROKE } from './team-style';
+import { useMapPanZoom } from './use-map-pan-zoom';
 
 /** The size of the frame the map is drawn in: the relative units (0 to 1) of the data times it. */
 const MAP_SIZE = 1000;
@@ -64,9 +49,6 @@ const TRACKED_RING_GAP = 4;
 /** The dash and the gap of the ring of an enemy player, in frame units at zoom 1. */
 const ENEMY_DASH = 7;
 const ENEMY_GAP = 4;
-
-/** How much one notch of the wheel changes the zoom: in when the wheel goes up, out when down. */
-const WHEEL_ZOOM_FACTOR = 1.2;
 
 /** How many seconds of path a trail shows. */
 const TRAIL_SECONDS = 10;
@@ -446,74 +428,8 @@ function titleOf(name: string, team: TeamIdentity, t: TFunction): string {
 export function ReplayMap({ view, timeS, showTrails, onToggleTrails }: ReplayMapProps) {
   const { t } = useTranslation();
   const clipId = useId();
-  const svgRef = useRef<SVGSVGElement>(null);
-  const [viewport, setViewport] = useState<MapViewport>(FULL_MAP);
-  // Where the pointer was at the last move of a drag, in screen pixels; `null` when not dragging.
-  const dragFrom = useRef<{ x: number; y: number } | null>(null);
+  const { svgRef, viewport, resetZoom, pointerHandlers } = useMapPanZoom();
   const { map } = view;
-
-  // The wheel is attached by hand: React listens to it passively and could not cancel it, so the
-  // page would scroll under the map while the player zooms.
-  useEffect(() => {
-    const svg = svgRef.current;
-    if (svg === null) return undefined;
-    const onWheel = (event: WheelEvent) => {
-      event.preventDefault();
-      const rect = svg.getBoundingClientRect();
-      // Where the pointer is in the picture, from 0 to 1 (the middle when nothing is laid out).
-      const fractionX = rect.width > 0 ? (event.clientX - rect.left) / rect.width : 0.5;
-      const fractionY = rect.height > 0 ? (event.clientY - rect.top) / rect.height : 0.5;
-      const factor = event.deltaY < 0 ? WHEEL_ZOOM_FACTOR : 1 / WHEEL_ZOOM_FACTOR;
-      setViewport((current) =>
-        zoomAt(
-          current,
-          {
-            left: current.left + fractionX / current.scale,
-            top: current.top + fractionY / current.scale,
-          },
-          factor,
-        ),
-      );
-    };
-    svg.addEventListener('wheel', onWheel, { passive: false });
-    return () => {
-      svg.removeEventListener('wheel', onWheel);
-    };
-  }, []);
-
-  const onPointerDown = useCallback((event: ReactPointerEvent<SVGSVGElement>) => {
-    // Only the main button drags: a right click must not start a pan.
-    if (event.button !== 0) return;
-    dragFrom.current = { x: event.clientX, y: event.clientY };
-    // Keep the drag when the pointer leaves the picture (jsdom, which the tests run in, has no
-    // capture).
-    if ('setPointerCapture' in event.currentTarget) {
-      event.currentTarget.setPointerCapture(event.pointerId);
-    }
-  }, []);
-
-  const onPointerMove = useCallback((event: ReactPointerEvent<SVGSVGElement>) => {
-    // No button down: the release happened elsewhere, so a stuck drag ends here.
-    if (event.buttons === 0) {
-      dragFrom.current = null;
-      return;
-    }
-    const from = dragFrom.current;
-    const rect = event.currentTarget.getBoundingClientRect();
-    if (from === null || rect.width <= 0 || rect.height <= 0) return;
-    const dx = event.clientX - from.x;
-    const dy = event.clientY - from.y;
-    dragFrom.current = { x: event.clientX, y: event.clientY };
-    // The picture follows the pointer: the window moves the other way, by the share of the window
-    // the pointer crossed.
-    setViewport((current) =>
-      panBy(current, -dx / rect.width / current.scale, -dy / rect.height / current.scale),
-    );
-  }, []);
-
-  const endDrag = useCallback(() => {
-    dragFrom.current = null;
-  }, []);
 
   // The icons of the players alive now; the tracked player last, so that they are drawn on top.
   const icons = useMemo(
@@ -591,11 +507,7 @@ export function ReplayMap({ view, timeS, showTrails, onToggleTrails }: ReplayMap
         viewBox={`${String(viewport.left * MAP_SIZE)} ${String(viewport.top * MAP_SIZE)} ${String(boxSize)} ${String(boxSize)}`}
         width="100%"
         className="aspect-square cursor-grab touch-none select-none rounded-md bg-surface active:cursor-grabbing"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-        onLostPointerCapture={endDrag}
+        {...pointerHandlers}
       >
         <defs>
           {/* One circle for every icon, in bounding-box units so it fits any icon size. */}
@@ -631,13 +543,7 @@ export function ReplayMap({ view, timeS, showTrails, onToggleTrails }: ReplayMap
         })}
       </svg>
       <div className="flex flex-wrap gap-2">
-        <Button
-          look="subtle"
-          disabled={scale === FULL_MAP.scale}
-          onClick={() => {
-            setViewport(FULL_MAP);
-          }}
-        >
+        <Button look="subtle" disabled={scale === FULL_MAP.scale} onClick={resetZoom}>
           {t('replay.map.resetZoom')}
         </Button>
         <Button look="subtle" aria-pressed={showTrails} onClick={onToggleTrails}>

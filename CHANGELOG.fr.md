@@ -10,6 +10,19 @@ Ajouts, Modifications, Corrections et Suppressions.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-16
+
+### Modifications
+
+- Le replay de la partie est plus fluide et sollicite moins le processeur : la carte et ses pistes sont redessinées une fois par seconde de partie au lieu de chaque image.
+- Une synchronisation n'enregistre que les parties qui ont changé, ce qui l'accélère sur un long historique, et la partie ouverte ne relit plus son archive chaque fois que le détail d'une partie arrive.
+- L'app et son installeur sont plus légers : le programme est optimisé d'un seul bloc et les polices ne gardent que les caractères latins.
+
+### Corrections
+
+- Une archive de partie que cette version de l'app ne sait pas lire est gardée sur le PC au-delà des 90 jours au lieu d'être supprimée au démarrage ; la page de la partie le signale, et une prochaine version pourra peut-être la relire.
+- Quand tu reviens sur une fenêtre réduite ou masquée pendant un replay, le replay reprend où il en était au lieu de sauter en avant.
+
 ## [0.1.4] - 2026-11-14
 
 ### Ajouts

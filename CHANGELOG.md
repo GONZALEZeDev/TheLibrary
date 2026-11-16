@@ -10,6 +10,19 @@ Fixed and Removed.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-16
+
+### Changed
+
+- The match replay is smoother and uses less of the processor: the map and its tracks are redrawn once per second of the match instead of at every frame.
+- A synchronisation saves only the matches that changed, so it is faster on a long history, and the open match no longer reads its archive again each time a match's details arrive.
+- The app and its installer are lighter: the program is optimised as one unit and the fonts keep only the Latin characters.
+
+### Fixed
+
+- A match archive this version of the app cannot read is kept on the PC past the 90 days instead of being deleted when the app starts; the match page says so, and a later version may read it again.
+- When you come back to a window that was minimised or hidden during a replay, the replay goes on from where it was instead of jumping ahead.
+
 ## [0.1.4] - 2026-11-14
 
 ### Added

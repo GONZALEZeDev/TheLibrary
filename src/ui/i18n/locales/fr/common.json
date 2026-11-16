@@ -180,6 +180,7 @@
     "missing": "L'archive de cette partie est introuvable : elle sera téléchargée à nouveau.",
     "evicted": "L'archive de cette partie a été supprimée pour faire de la place : elle est téléchargée à nouveau.",
     "evictedLost": "L'archive de cette partie n'est plus sur ce PC, et les parties de plus de 90 jours ne sont plus téléchargées.",
+    "damaged": "L'archive de cette partie est sur ce PC, mais cette version de l'application ne sait pas la lire. Elle est gardée : une prochaine version pourra peut-être la relire.",
     "retry": "Réessayer",
     "tabs": {
       "label": "Sections de la partie",

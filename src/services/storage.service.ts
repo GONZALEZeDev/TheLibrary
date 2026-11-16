@@ -11,7 +11,9 @@
  * Two kinds of archives are never removed, so the archive folder can stay over a limit they overrun
  * on their own: those of the matches of the last 90 days, which the detail queue would download
  * again as soon as their page opens, and those of the {@link PROTECTED_RECENT_ARCHIVES} newest Paige
- * matches, which the review reads.
+ * matches, which the review reads. A third kind is never removed in practice: an archive found
+ * damaged before its first projection of the current version, which is kept for a later version of
+ * the app to read, and is not a candidate since its metrics are not stored.
  *
  * An evicted match keeps its stored metrics: only its file goes, and only once its metrics of the
  * current version are stored. Its row is marked `evicted` before its file is removed, so a crash or a

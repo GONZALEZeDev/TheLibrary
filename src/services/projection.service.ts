@@ -45,9 +45,19 @@
  * - the archive is absent or damaged (`reset`): in the window of the last 90 days, the match goes
  *   back to `pending`, so that the next run of the detail queue downloads it again, and it has no
  *   projection until then. That cannot loop, since the queue only archives a detail it could read
- *   back. Past the window, where the queue never downloads a match, it is marked `evicted` instead,
- *   and keeps the metrics it has. A match that is not `ready` any more by then (evicted by the
- *   storage since the run listed it) is left as it is, and not counted;
+ *   back. Past the window, where the queue never downloads a match, an absent archive is marked
+ *   `evicted`, and the match keeps the metrics it has. A match that is not `ready` any more by then
+ *   (evicted by the storage since the run listed it) is left as it is, and not counted;
+ * - the archive is damaged and past the window (`kept`): nothing is recorded, so the match stays
+ *   `ready` and its file stays on disk. Marked `evicted`, its file would be deleted by the
+ *   reconciliation of the archives at the next start, and nothing could download it again; while
+ *   the cause may be the app itself (a bug of the decoding, an archive written by a later version),
+ *   which a later version reads again. The match is not tried again before the app restarts, unless
+ *   its file changes (a new download);
+ * - {@link MAX_CONSECUTIVE_DAMAGED} damaged archives in a row mean that the reading itself is
+ *   likely broken, not the archives: from then on, until the app restarts, no damaged archive is put
+ *   back to `pending` either (it is `kept`), so that a bug of the decoding cannot send every match
+ *   of the window back to the queue. It is told in the log, once, as an error;
  * - the failure says nothing about the match, so nothing is recorded and the match is left as it was
  *   (`skipped`): the file cannot be read, the compressor or the database fails, or the code has a
  *   bug on this archive. It is told in the log, once, and the run goes on with the next match, so
@@ -57,7 +67,7 @@
  *   window incomplete, and asks again);
  * - three failures in a row mean that the cause is not one archive but the disk, the compressor or
  *   the database, which would fail the same way on every match: the run stops (`stoppedBy:
- *   'storage'`). Any match that gets through (projected, failed or reset) ends the streak. The
+ *   'storage'`). Any match that gets through (projected, failed, reset or kept) ends the streak. The
  *   matches already projected stay so, and the next run that lists the others goes on from there
  *   (the next synchronisation, or the next opening of a page). The list of the matches to project
  *   failing stops the run at once, since there is nothing to go on with.
@@ -101,7 +111,8 @@ export interface ProjectionServiceDependencies {
   readonly metrics: MetricsRepository;
   /**
    * Where the detail state of the matches is kept: a match with no usable archive goes back to
-   * `pending`, or to `evicted` past the window of the last 90 days.
+   * `pending`, or past the window of the last 90 days to `evicted` (an absent file) or stays as it
+   * is (a damaged one).
    */
   readonly details: MatchDetailRepository;
   /** Structured logger. */
@@ -124,9 +135,16 @@ export interface ProjectionReport {
   readonly failed: number;
   /**
    * Matches whose archive is absent or damaged, put back to `pending` (in the window of the last 90
-   * days) or marked `evicted` (past it). A match that was not `ready` any more is not counted.
+   * days), or whose archive is absent and that were marked `evicted` (past it). A match that was not
+   * `ready` any more is not counted.
    */
   readonly reset: number;
+  /**
+   * Matches whose archive is damaged and that were left `ready`, file kept: past the window of the
+   * last 90 days, or once too many damaged archives in a row stopped the resets. Nothing was
+   * recorded for them.
+   */
+  readonly kept: number;
   /** Matches left as they were because a failure that is not about them hit them. */
   readonly skipped: number;
   /** Why the run ended early, or `null` when it went through every match. */
@@ -142,20 +160,43 @@ const LOG_SCOPE = 'projection';
  */
 const MAX_CONSECUTIVE_FAILURES = 3;
 
+/**
+ * How many damaged archives in a row stop the resets of damaged archives until the app restarts.
+ * One damaged archive is a damaged file; this many in a row is more likely the reading itself.
+ */
+const MAX_CONSECUTIVE_DAMAGED = 3;
+
 /** What a run reports when the list of its matches cannot be read: it stops before the first match. */
 const STOPPED_AT_ONCE: ProjectionReport = {
   projected: 0,
   failed: 0,
   reset: 0,
+  kept: 0,
   skipped: 0,
   stoppedBy: 'storage',
 };
+
+/** What {@link ProjectionService} did with a match whose archive it could read or not. */
+type MatchOutcome = 'done' | 'damaged';
+
+/**
+ * The key of a match among the archives kept damaged: the account and the match, since the same
+ * match can be archived for two accounts linked one after the other.
+ *
+ * @param accountId - The tracked account.
+ * @param matchId - The match.
+ * @returns The key.
+ */
+function keptArchiveKey(accountId: AccountId, matchId: MatchId): string {
+  return `${String(accountId)}/${String(matchId)}`;
+}
 
 /** What a run counts as it goes, and what it already told about. */
 interface RunState {
   projected: number;
   failed: number;
   reset: number;
+  kept: number;
   skipped: number;
   /** The keys of the metrics that were told as not computed in this run. */
   readonly toldKeys: Set<MetricKey>;
@@ -237,6 +278,20 @@ export class ProjectionService {
   #tail: Promise<void> = Promise.resolve();
 
   /**
+   * The matches whose archive was found damaged and kept (see {@link keptArchiveKey}), with the size
+   * of their file as the database recorded it: the runs leave them out until the app restarts, so
+   * that the same file is not read, and logged, at every synchronisation, but read again a match
+   * whose file changed. A restart tries them all again, possibly with a version that reads them.
+   */
+  readonly #keptArchives = new Map<string, number | null>();
+
+  /**
+   * Whether {@link MAX_CONSECUTIVE_DAMAGED} damaged archives in a row were met: from then on, until
+   * the app restarts, a damaged archive is kept instead of being put back to `pending`.
+   */
+  #damageResetsStopped = false;
+
+  /**
    * @param dependencies - See {@link ProjectionServiceDependencies}.
    */
   constructor(dependencies: ProjectionServiceDependencies) {
@@ -303,7 +358,11 @@ export class ProjectionService {
    *   to know, since the match keeps a projection made from the old file.
    */
   forgetProjection(accountId: AccountId, matchId: MatchId): Promise<void> {
-    return this.#inTurn(() => this.#metrics.forgetProjection(accountId, matchId));
+    return this.#inTurn(() => {
+      // A new file replaces the one that may have been kept damaged: it deserves a reading.
+      this.#keptArchives.delete(keptArchiveKey(accountId, matchId));
+      return this.#metrics.forgetProjection(accountId, matchId);
+    });
   }
 
   /**
@@ -387,10 +446,11 @@ export class ProjectionService {
   /**
    * Project the matches of a list, one after the other, with the rules both entry points share: a
    * match whose archive is absent or damaged goes back to `pending` in the window of the last 90
-   * days and to `evicted` past it, one the analysis cannot read is stored as failed, a failure that
-   * is not about a match leaves it as it was, and the run stops after
-   * {@link MAX_CONSECUTIVE_FAILURES} such failures in a row. It gives the event loop a turn between
-   * two matches.
+   * days, past it an absent archive is marked `evicted` and a damaged one is kept, one the analysis
+   * cannot read is stored as failed, a failure that is not about a match leaves it as it was, and
+   * the run stops after {@link MAX_CONSECUTIVE_FAILURES} such failures in a row. The matches kept
+   * damaged earlier in the life of the app are left out. It gives the event loop a turn between two
+   * matches.
    *
    * @param accountId - The tracked account.
    * @param matchIds - The matches to project, in the order to project them.
@@ -406,6 +466,7 @@ export class ProjectionService {
       projected: 0,
       failed: 0,
       reset: 0,
+      kept: 0,
       skipped: 0,
       toldKeys: new Set(),
       hasToldDamageNotRead: false,
@@ -414,15 +475,33 @@ export class ProjectionService {
     let stoppedBy: ProjectionReport['stoppedBy'] = null;
     // The matches that failed one after the other, up to the one being projected.
     let failuresInARow = 0;
-    for (const [index, matchId] of matchIds.entries()) {
+    // The archives found damaged one after the other, up to the one being projected.
+    let damagedInARow = 0;
+    const toProject = await this.#leaveOutKept(accountId, matchIds);
+    for (const [index, matchId] of toProject.entries()) {
       try {
         // Between two matches, never before the first one: a run with nothing to do is instant.
         if (index > 0) {
           await this.#yieldToEventLoop();
         }
-        await this.#projectOne(accountId, tags, matchId, run);
-        // Projected, failed, reset or left as it was found: the match got through, so the failures
-        // were not general.
+        const outcome = await this.#projectOne(accountId, tags, matchId, run);
+        if (outcome === 'damaged') {
+          damagedInARow += 1;
+          // Decided before this archive is recorded, so that it is kept too.
+          if (damagedInARow >= MAX_CONSECUTIVE_DAMAGED && !this.#damageResetsStopped) {
+            this.#damageResetsStopped = true;
+            this.#logger.log('error', LOG_SCOPE, 'Damaged archives in a row: kept from now on', {
+              ...tags,
+              matchId,
+              damagedInARow,
+            });
+          }
+          await this.#recordDamaged(accountId, matchId, run);
+        } else {
+          damagedInARow = 0;
+        }
+        // Projected, failed, reset, kept or left as it was found: the match got through, so the
+        // failures were not general.
         failuresInARow = 0;
       } catch (error) {
         // Nothing was recorded for this match: it stays as it was, and the next run that lists it
@@ -442,9 +521,78 @@ export class ProjectionService {
       projected: run.projected,
       failed: run.failed,
       reset: run.reset,
+      kept: run.kept,
       skipped: run.skipped,
       stoppedBy,
     };
+  }
+
+  /**
+   * Record a match whose archive is there but damaged: back to `pending` in the window of the last
+   * 90 days, so that the queue downloads it again; kept as it is past it, or in the window once the
+   * resets are stopped (see the module). A kept match is left out of the runs until the app
+   * restarts, or until its file changes.
+   *
+   * @param accountId - The tracked account.
+   * @param matchId - The match.
+   * @param run - What the run counts.
+   * @throws AppError of kind `storage` when the database fails: nothing was recorded.
+   */
+  async #recordDamaged(accountId: AccountId, matchId: MatchId, run: RunState): Promise<void> {
+    const outcome = this.#damageResetsStopped
+      ? 'kept'
+      : await this.#details.markArchiveDamaged(accountId, matchId, this.#now());
+    if (outcome === 'pending') {
+      run.reset += 1;
+      return;
+    }
+    // Kept, the match is remembered with the size of its file as the database holds it, so that a
+    // new file written for it later (a new download, a refresh) is read again. That read also
+    // checks the match is still `ready`: with the resets stopped, nothing else did.
+    const stored = outcome === 'kept' ? await this.#details.getDetail(accountId, matchId) : null;
+    if (stored?.status !== 'ready') {
+      // Not `ready` any more (evicted by the storage since the run listed it, or put back to
+      // `pending` by its page): it is left as it is, and not counted.
+      return;
+    }
+    run.kept += 1;
+    this.#keptArchives.set(keptArchiveKey(accountId, matchId), stored.archivedBytes);
+  }
+
+  /**
+   * Leave out of a list the matches kept damaged earlier in the life of the app, as long as their
+   * file is the one that was kept: still `ready`, with the same size recorded. A match whose row
+   * changed since (downloaded again, evicted) is forgotten and stays in the list. Only the kept
+   * matches cost a read of the database.
+   *
+   * @param accountId - The tracked account.
+   * @param matchIds - The matches to project.
+   * @returns The matches to project, in the same order.
+   */
+  async #leaveOutKept(
+    accountId: AccountId,
+    matchIds: readonly MatchId[],
+  ): Promise<readonly MatchId[]> {
+    const kept: MatchId[] = [];
+    for (const matchId of matchIds) {
+      const key = keptArchiveKey(accountId, matchId);
+      if (!this.#keptArchives.has(key)) {
+        continue;
+      }
+      try {
+        const stored = await this.#details.getDetail(accountId, matchId);
+        if (stored?.status === 'ready' && stored.archivedBytes === this.#keptArchives.get(key)) {
+          kept.push(matchId);
+          continue;
+        }
+      } catch {
+        // The database fails: the match stays in the list, where its projection meets the same
+        // failure and tells it, as for any other match.
+        continue;
+      }
+      this.#keptArchives.delete(key);
+    }
+    return kept.length === 0 ? matchIds : matchIds.filter((matchId) => !kept.includes(matchId));
   }
 
   /**
@@ -456,12 +604,13 @@ export class ProjectionService {
    * @param tags - What names the run in the line: its id, or the match it was asked for.
    */
   #logDone(report: ProjectionReport, startedAt: number, tags: LogContext): void {
-    const counted = report.projected + report.failed + report.reset + report.skipped;
+    const counted = report.projected + report.failed + report.reset + report.kept + report.skipped;
     this.#logger.log(counted > 0 ? 'info' : 'debug', LOG_SCOPE, 'Projection done', {
       ...tags,
       projected: report.projected,
       failed: report.failed,
       reset: report.reset,
+      kept: report.kept,
       skipped: report.skipped,
       durationMs: this.#now() - startedAt,
     });
@@ -474,6 +623,8 @@ export class ProjectionService {
    * @param tags - What every line about a match holds besides its own fields: the run it belongs to.
    * @param matchId - The match.
    * @param run - What the run counts.
+   * @returns `damaged` when the archive is there but damaged, which the caller records (see
+   *   {@link ProjectionService.#recordDamaged}); `done` when the match is dealt with (projected, failed, or its absent archive recorded).
    * @throws The error that keeps the match from being projected (the file, the compressor, the
    *   database, or a bug): nothing was recorded for the match.
    */
@@ -482,19 +633,22 @@ export class ProjectionService {
     tags: LogContext,
     matchId: MatchId,
     run: RunState,
-  ): Promise<void> {
+  ): Promise<MatchOutcome> {
     // The reader logs an archive that is absent or damaged. A file it cannot read, or a broken
     // compressor, rejects here: the archive may be fine, so the match is left as it is (skipped).
     const read = await this.#reader.readArchive(accountId, matchId);
     if (read.kind === 'unreadable') {
-      // Back to `pending` in the window, so that the queue downloads it again; `evicted` past it.
-      // A match that is not `ready` any more (evicted by the storage since it was listed) is left
-      // as it is, and is not counted: nothing was reset.
+      if (read.reason === 'damaged') {
+        return 'damaged';
+      }
+      // An absent file has nothing left to lose: back to `pending` in the window, so that the
+      // queue downloads it again, `evicted` past it. A match that is not `ready` any more (evicted
+      // by the storage since it was listed) is left as it is, and is not counted.
       const outcome = await this.#details.markArchiveMissing(accountId, matchId, this.#now());
       if (outcome !== 'unchanged') {
         run.reset += 1;
       }
-      return;
+      return 'done';
     }
 
     let context: MatchContext;
@@ -524,7 +678,7 @@ export class ProjectionService {
         matchId,
         issue: issueOf(error),
       });
-      return;
+      return 'done';
     }
 
     // The metrics, then the damage sources and the review values next to them: their keys never
@@ -555,6 +709,7 @@ export class ProjectionService {
       values,
     );
     run.projected += 1;
+    return 'done';
   }
 
   /**

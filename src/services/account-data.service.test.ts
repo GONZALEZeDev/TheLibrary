@@ -1345,6 +1345,30 @@ describe('AccountDataService.sweep, the archives of the linked account', () => {
     expect(reconcileFailures(logger)).toEqual([]);
   });
 
+  it('keeps the file of a match past the 90 days whose archive was found damaged', async () => {
+    const { service, populate, logger, archiveStore, detailRepository, clock } = setUp();
+    await populate('linked');
+    const damaged = await firstArchive(archiveStore);
+    const files = await archiveStore.list(LINKED);
+    await archiveStore.write(LINKED, damaged, Uint8Array.of(1, 2, 3, 4));
+    // A day past the window, the page or the projection finds the file damaged: the only copy left.
+    clock.now = START + DETAIL_WINDOW_MS + 86_400_000;
+    await expect(detailRepository.markArchiveDamaged(LINKED, damaged, clock.now)).resolves.toBe(
+      'kept',
+    );
+
+    await service.sweep(LINKED);
+
+    // The match is still ready, so the reconciliation keeps its file for a later version to read.
+    await expect(detailRepository.getDetail(LINKED, damaged)).resolves.toMatchObject({
+      status: 'ready',
+    });
+    await expect(archiveStore.list(LINKED)).resolves.toEqual(files);
+    await expect(archiveStore.read(LINKED, damaged)).resolves.toEqual(Uint8Array.of(1, 2, 3, 4));
+    expect(reconciliations(logger)).toEqual([]);
+    expect(reconcileFailures(logger)).toEqual([]);
+  });
+
   it('removes a file that has no ready match', async () => {
     const { service, populate, database, logger, archiveStore, detailRepository } = setUp();
     await populate('linked');

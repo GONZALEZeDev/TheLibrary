@@ -21,7 +21,7 @@ import {
  *
  * When the answer is `missing` or `evicted`, the service has just put the match back to `pending`
  * (its archive file was gone, damaged or removed to free space); when it is `evicted_lost`, it may
- * have just marked an archived match past the 90 days `evicted` (its file was gone or damaged).
+ * have just marked an archived match past the 90 days `evicted` (its file was gone).
  * That changes what the banner counts and what the list says of the match, so both are read again,
  * once per answer; for a match that was already `evicted`, that is two reads for nothing. The query
  * itself is not: its next answer is `waiting` (or `evicted_lost` again, for a match past the 90

@@ -351,6 +351,9 @@ function renderView(
     case 'evicted_lost':
       // Nothing to retry: the match is past the 90 days the queue downloads.
       return renderExplanation([t('matchDetail.evictedLost')]);
+    case 'damaged':
+      // Nothing to retry either: the file is kept for a later version of the app.
+      return renderExplanation([t('matchDetail.damaged')]);
   }
 }
 

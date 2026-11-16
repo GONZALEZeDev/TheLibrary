@@ -21,7 +21,7 @@ import { PAIGE_HERO_ID } from '../domain/hero';
  *   same answer, so the queue gives up at once.
  * - `evicted`: the detail was archived, but no archive file is left; the match keeps its archive
  *   size, its format and its stored metrics. Either the file was removed to keep the archive
- *   folder under its size limit, or it was found missing or unreadable past the 90-day window. The
+ *   folder under its size limit, or it was found missing past the 90-day window. The
  *   queue never takes it on its own.
  */
 export const DETAIL_STATUSES = [

@@ -180,6 +180,7 @@
     "missing": "The archive of this match is missing: it will be downloaded again.",
     "evicted": "This match's archive was removed to free space: it is being downloaded again.",
     "evictedLost": "This match's archive is no longer on this PC, and matches older than 90 days are not downloaded again.",
+    "damaged": "This match's archive is on this PC, but this version of the app cannot read it. It is kept: a later version may read it.",
     "retry": "Retry",
     "tabs": {
       "label": "Match sections",

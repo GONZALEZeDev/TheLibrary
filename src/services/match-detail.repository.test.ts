@@ -792,6 +792,59 @@ describe('MatchDetailRepository', () => {
     ).resolves.toEqual(others);
   });
 
+  it('puts a ready match with a damaged archive back to pending in the window and keeps it past it', async () => {
+    const { repository } = await createRepositories([
+      // Archives in the window and past it, by a second.
+      matchSummary({ matchId: 1, startTime: daysAgo(90) }),
+      matchSummary({ matchId: 2, startTime: daysAgo(90) - 1 }),
+      // Not archived any more: an evicted match past the window.
+      matchSummary({ matchId: 3, startTime: daysAgo(100) }),
+      // Another player's archive with the same id, past the window.
+      matchSummary({ matchId: 2, startTime: daysAgo(90) - 1, accountId: testAccountId(42) }),
+    ]);
+    for (const id of [1, 2, 3]) {
+      await repository.markReady(TEST_ACCOUNT_ID, testMatchId(id), 1_000 + id, ARCHIVE_FORMAT);
+    }
+    await repository.markEvicted(TEST_ACCOUNT_ID, testMatchId(3));
+    await repository.markReady(testAccountId(42), testMatchId(2), 9_002, ARCHIVE_FORMAT);
+    const keptBefore = await repository.getDetail(TEST_ACCOUNT_ID, testMatchId(2));
+    const evictedBefore = await repository.getDetail(TEST_ACCOUNT_ID, testMatchId(3));
+    const otherBefore = await repository.getDetail(testAccountId(42), testMatchId(2));
+
+    for (const [id, outcome] of [
+      [1, 'pending'],
+      [2, 'kept'],
+      [3, 'unchanged'],
+      [99, 'unchanged'],
+    ] as const) {
+      await expect(
+        repository.markArchiveDamaged(TEST_ACCOUNT_ID, testMatchId(id), NOW),
+      ).resolves.toBe(outcome);
+    }
+
+    // In the window, the match is back in the queue exactly as for a missing archive.
+    await expect(repository.getDetail(TEST_ACCOUNT_ID, testMatchId(1))).resolves.toMatchObject({
+      status: 'pending',
+      attempts: 0,
+      archivedBytes: null,
+      archiveFormat: null,
+    });
+    // Past the window nothing changes: the match stays ready, so the reconciliation keeps its file.
+    await expect(repository.getDetail(TEST_ACCOUNT_ID, testMatchId(2))).resolves.toEqual(
+      keptBefore,
+    );
+    await expect(repository.getDetail(TEST_ACCOUNT_ID, testMatchId(3))).resolves.toEqual(
+      evictedBefore,
+    );
+    await expect(repository.getDetail(testAccountId(42), testMatchId(2))).resolves.toEqual(
+      otherBefore,
+    );
+    // Asked again, a kept match is still kept: it never becomes evicted by this rule.
+    await expect(repository.markArchiveDamaged(TEST_ACCOUNT_ID, testMatchId(2), NOW)).resolves.toBe(
+      'kept',
+    );
+  });
+
   it('cuts the window of a missing archive to the millisecond, as isDetailEligible does', async () => {
     const { repository } = await createRepositories([
       matchSummary({ matchId: 1, startTime: daysAgo(90) }),

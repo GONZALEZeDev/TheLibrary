@@ -57,8 +57,12 @@ export type ArchiveReadStep = 'record' | 'read' | 'decompress' | 'decode' | 'sum
 export type ArchiveRead =
   /** The archive was read and decoded. */
   | { readonly kind: 'read'; readonly envelope: ArchiveEnvelope }
-  /** The archive cannot be used because of what it holds: it is absent or damaged (already logged). */
-  | { readonly kind: 'unreadable' };
+  /**
+   * The archive cannot be used because of what it holds (already logged): the file is `absent`, or
+   * it is there but `damaged` (it does not decompress, or does not decode as an envelope). The
+   * callers tell them apart because only an absent file has nothing left to lose.
+   */
+  | { readonly kind: 'unreadable'; readonly reason: 'absent' | 'damaged' };
 
 /** The scope of the log lines about the archives: the one of the detail queue, which writes them. */
 const LOG_SCOPE = 'detail';
@@ -93,7 +97,7 @@ export class ArchiveReaderService {
     const compressed = await this.#readFile(accountId, matchId);
     if (compressed === null) {
       this.#logger.log('info', LOG_SCOPE, 'Detail archive is missing', { matchId });
-      return { kind: 'unreadable' };
+      return { kind: 'unreadable', reason: 'absent' };
     }
     // Where the reading stands, for the log of a failure.
     let step: ArchiveReadStep = 'decompress';
@@ -112,7 +116,7 @@ export class ArchiveReaderService {
         throw error;
       }
       this.reportUnreadable(accountId, matchId, step, error);
-      return { kind: 'unreadable' };
+      return { kind: 'unreadable', reason: 'damaged' };
     }
   }
 

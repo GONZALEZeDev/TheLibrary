@@ -44,7 +44,7 @@ import {
 } from '../core/analysis/review/review-values';
 import type { MatchId } from '../core/domain/match';
 import { AppError } from '../core/errors/app-error';
-import type { ArchiveEnvelope } from '../core/match-detail/archive-envelope';
+import { ARCHIVE_FORMAT, type ArchiveEnvelope } from '../core/match-detail/archive-envelope';
 import { accountFolderName, archivePath } from '../core/match-detail/archive-layout';
 import { DETAIL_WINDOW_MS } from '../core/match-detail/detail-status';
 import * as scoreboardReader from '../core/match-detail/scoreboard';
@@ -125,6 +125,7 @@ const NOTHING: ProjectionReport = {
   projected: 0,
   failed: 0,
   reset: 0,
+  kept: 0,
   skipped: 0,
   stoppedBy: null,
 };
@@ -641,6 +642,7 @@ describe('ProjectionService.catchUp', () => {
           projected: archived.length,
           failed: 0,
           reset: 0,
+          kept: 0,
           skipped: 0,
           // One yield between two matches, and each one moved the clock.
           durationMs: (archived.length - 1) * YIELD_STEP_MS,
@@ -673,6 +675,7 @@ describe('ProjectionService.catchUp', () => {
           projected: 0,
           failed: 0,
           reset: 0,
+          kept: 0,
           skipped: 0,
           durationMs: 0,
         },
@@ -1651,6 +1654,123 @@ describe('ProjectionService.catchUp', () => {
     expectNoAccountId(logger);
   });
 
+  it('keeps a damaged archive past the 90 days, and does not read it again before a restart', async () => {
+    const context = await setUp();
+    const { reader, metrics, details, logger, archived, archiveStore } = context;
+    // Every match is past the window at this time, where the queue never downloads a match again.
+    const service = new ProjectionService({ reader, metrics, details, logger, now: () => LATER });
+    const damaged = archived[1] ?? expect.unreachable('the history holds several archived matches');
+    const stored = await details.getDetail(ACCOUNT, damaged);
+    const original = await archiveStore.read(ACCOUNT, damaged);
+    await archiveStore.write(ACCOUNT, damaged, Uint8Array.of(1, 2, 3, 4));
+
+    const report = await service.catchUp(ACCOUNT, RUN);
+
+    // Nothing is recorded: the match stays ready with its file, which nothing could download again.
+    expect(report).toEqual({ ...NOTHING, projected: archived.length - 1, kept: 1 });
+    await expect(details.getDetail(ACCOUNT, damaged)).resolves.toEqual(stored);
+    await expect(archiveStore.read(ACCOUNT, damaged)).resolves.toEqual(Uint8Array.of(1, 2, 3, 4));
+    await expect(metrics.getProjection(ACCOUNT, damaged)).resolves.toBeNull();
+    expect(linesOf(logger, 'Projection done')).toMatchObject([
+      { level: 'info', context: { projected: archived.length - 1, reset: 0, kept: 1 } },
+    ]);
+
+    // The next run leaves it out: the same file is not read, nor logged, at every synchronisation.
+    logger.entries.length = 0;
+    await expect(service.catchUp(ACCOUNT, 'run-0002')).resolves.toEqual(NOTHING);
+    expect(linesOf(logger, 'Detail archive is unreadable')).toEqual([]);
+
+    // A new file written for the match (the queue forgets the projection when it does) is read.
+    await archiveStore.write(
+      ACCOUNT,
+      damaged,
+      original ?? expect.unreachable('the match was archived'),
+    );
+    await service.forgetProjection(ACCOUNT, damaged);
+    await expect(service.catchUp(ACCOUNT, 'run-0003')).resolves.toEqual({
+      ...NOTHING,
+      projected: 1,
+    });
+    expectNoAccountId(logger);
+  });
+
+  it('goes on putting damaged archives back to pending while they are not three in a row', async () => {
+    const context = await setUp();
+    const { service, metrics, logger, archiveStore } = context;
+    const order = await metrics.listToProject(ACCOUNT, PROJECTION_VERSION);
+    expect(order.length).toBeGreaterThan(4);
+    // Damaged, damaged, readable, damaged, damaged: the readable one breaks the streak.
+    const damaged = [0, 1, 3, 4].map((index) => order[index] ?? expect.unreachable('listed'));
+    for (const matchId of damaged) {
+      await archiveStore.write(ACCOUNT, matchId, Uint8Array.of(1, 2, 3, 4));
+    }
+
+    await expect(service.catchUp(ACCOUNT, RUN)).resolves.toEqual({
+      ...NOTHING,
+      projected: order.length - damaged.length,
+      reset: damaged.length,
+    });
+    expect(linesOf(logger, 'Damaged archives in a row: kept from now on')).toEqual([]);
+  });
+
+  it('keeps the damaged archives once three in a row were damaged, until the app restarts', async () => {
+    const context = await setUp();
+    const { service, metrics, details, logger, archiveStore } = context;
+    const order = await metrics.listToProject(ACCOUNT, PROJECTION_VERSION);
+    const [first, second, third, fourth] = order;
+    if (
+      first === undefined ||
+      second === undefined ||
+      third === undefined ||
+      fourth === undefined
+    ) {
+      expect.unreachable('the history holds several archived matches');
+    }
+    const thirdFile = await archiveStore.read(ACCOUNT, third);
+    // The three most recent archives are damaged, as a bug of the decoding would make them look.
+    for (const matchId of [first, second, third]) {
+      await archiveStore.write(ACCOUNT, matchId, Uint8Array.of(1, 2, 3, 4));
+    }
+
+    const report = await service.catchUp(ACCOUNT, RUN);
+
+    // The first two go back to the queue; from the third, the reading itself is suspected: it is
+    // kept, though it is in the window, and the others are projected.
+    expect(report).toEqual({ ...NOTHING, projected: order.length - 3, reset: 2, kept: 1 });
+    for (const matchId of [first, second]) {
+      await expect(details.getDetail(ACCOUNT, matchId)).resolves.toMatchObject({
+        status: 'pending',
+      });
+    }
+    await expect(details.getDetail(ACCOUNT, third)).resolves.toMatchObject({ status: 'ready' });
+    expect(linesOf(logger, 'Damaged archives in a row: kept from now on')).toMatchObject([
+      { level: 'error', context: { syncRunId: RUN, matchId: third, damagedInARow: 3 } },
+    ]);
+
+    // The resets stay stopped: a damaged archive found later, alone, is kept too, and the line is
+    // not told again. The kept one is not read again.
+    logger.entries.length = 0;
+    await metrics.forgetProjection(ACCOUNT, fourth);
+    await archiveStore.write(ACCOUNT, fourth, Uint8Array.of(1, 2, 3, 4));
+    await expect(service.catchUp(ACCOUNT, 'run-0002')).resolves.toEqual({ ...NOTHING, kept: 1 });
+    await expect(details.getDetail(ACCOUNT, fourth)).resolves.toMatchObject({ status: 'ready' });
+    expect(linesOf(logger, 'Damaged archives in a row: kept from now on')).toEqual([]);
+    expect(linesOf(logger, 'Detail archive is unreadable')).toMatchObject([
+      { context: { matchId: fourth } },
+    ]);
+
+    // Its page puts the kept one back to the queue, which downloads it again: the new file is
+    // read, though nothing told the projection about it.
+    await details.resetToPending(ACCOUNT, third);
+    await archiveStore.write(ACCOUNT, third, thirdFile ?? expect.unreachable('it was archived'));
+    await details.markReady(ACCOUNT, third, 1, ARCHIVE_FORMAT);
+    await expect(service.catchUp(ACCOUNT, 'run-0003')).resolves.toEqual({
+      ...NOTHING,
+      projected: 1,
+    });
+    expectNoAccountId(logger);
+  });
+
   it('leaves a match evicted while its archive was being read evicted, and counts no reset', async () => {
     const context = await setUp();
     const { reader, metrics, details, logger, archived } = context;
@@ -1836,6 +1956,7 @@ describe('ProjectionService.catchUp', () => {
           projected: 0,
           failed: 0,
           reset: 0,
+          kept: 0,
           skipped: FAILURES_IN_A_ROW,
           durationMs: (FAILURES_IN_A_ROW - 1) * YIELD_STEP_MS,
         },
@@ -2163,6 +2284,7 @@ describe('ProjectionService.projectMatch', () => {
           projected: 1 + PERSONAL_WINDOW,
           failed: 0,
           reset: 0,
+          kept: 0,
           skipped: 0,
           durationMs: PERSONAL_WINDOW * YIELD_STEP_MS,
         },
@@ -2192,6 +2314,7 @@ describe('ProjectionService.projectMatch', () => {
           projected: 0,
           failed: 0,
           reset: 0,
+          kept: 0,
           skipped: 0,
           durationMs: 0,
         },
@@ -2403,6 +2526,7 @@ describe('ProjectionService.projectMatch', () => {
           projected: 0,
           failed: 0,
           reset: 0,
+          kept: 0,
           skipped: FAILURES_IN_A_ROW,
           durationMs: (FAILURES_IN_A_ROW - 1) * YIELD_STEP_MS,
         },

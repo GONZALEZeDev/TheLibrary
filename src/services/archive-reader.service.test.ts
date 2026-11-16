@@ -185,7 +185,10 @@ describe('ArchiveReaderService.readArchive', () => {
   it('says a file that is absent is unreadable, with an info line and no warning', async () => {
     const { reader, archive, logger } = setUp();
 
-    await expect(reader.readArchive(ACCOUNT, MATCH)).resolves.toEqual({ kind: 'unreadable' });
+    await expect(reader.readArchive(ACCOUNT, MATCH)).resolves.toEqual({
+      kind: 'unreadable',
+      reason: 'absent',
+    });
 
     expect(archive.files.size).toBe(0);
     // A file that is gone is not a failure of the app (the folder may have been emptied): `info`.
@@ -208,6 +211,7 @@ describe('ArchiveReaderService.readArchive', () => {
 
       await expect(context.reader.readArchive(ACCOUNT, MATCH), label).resolves.toEqual({
         kind: 'unreadable',
+        reason: 'damaged',
       });
 
       // The file is left alone: the next archive written replaces it.

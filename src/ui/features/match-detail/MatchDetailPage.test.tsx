@@ -120,18 +120,27 @@ const TAB_NAMES: Readonly<Record<MatchTab, string>> = {
   players: 'Players',
 };
 
-/** What the page says of an evicted match, by language (the shared strings of the tests lack them). */
-const EVICTED_STRINGS: Readonly<Record<Language, { evicted: string; evictedLost: string }>> = {
+/**
+ * What the page says of an evicted match, and of one whose archive is damaged past the 90 days, by
+ * language (the shared strings of the tests lack them).
+ */
+const EVICTED_STRINGS: Readonly<
+  Record<Language, { evicted: string; evictedLost: string; damaged: string }>
+> = {
   en: {
     evicted: "This match's archive was removed to free space: it is being downloaded again.",
     evictedLost:
       "This match's archive is no longer on this PC, and matches older than 90 days are not downloaded again.",
+    damaged:
+      "This match's archive is on this PC, but this version of the app cannot read it. It is kept: a later version may read it.",
   },
   fr: {
     evicted:
       "L'archive de cette partie a été supprimée pour faire de la place : elle est téléchargée à nouveau.",
     evictedLost:
       "L'archive de cette partie n'est plus sur ce PC, et les parties de plus de 90 jours ne sont plus téléchargées.",
+    damaged:
+      "L'archive de cette partie est sur ce PC, mais cette version de l'application ne sait pas la lire. Elle est gardée : une prochaine version pourra peut-être la relire.",
   },
 };
 
@@ -1327,6 +1336,13 @@ const EXPLAINED_VIEWS: readonly ExplainedView[] = [
     says: (_strings, language) => [EVICTED_STRINGS[language].evictedLost],
     offersRetry: false,
   },
+  {
+    // Nothing can be retried either: the file is kept for a later version of the app.
+    name: 'a match whose archive is damaged past the 90 days',
+    view: { kind: 'damaged' },
+    says: (_strings, language) => [EVICTED_STRINGS[language].damaged],
+    offersRetry: false,
+  },
 ];
 
 /** The kinds of view of a match the app stores and archives, whose detail the page cannot show. */
@@ -1336,6 +1352,7 @@ const NO_DETAIL_KINDS: readonly MatchDetailView['kind'][] = [
   'missing',
   'evicted',
   'evicted_lost',
+  'damaged',
 ];
 
 /** The explained views of {@link NO_DETAIL_KINDS}: the header must stay over their sentence. */

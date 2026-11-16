@@ -105,11 +105,18 @@ export interface EvictionCandidate {
 }
 
 /**
- * What became of a `ready` match whose archive file is missing or unreadable (see
+ * What became of a `ready` match whose archive file is missing (see
  * `MatchDetailRepository.markArchiveMissing`): back to `pending` in the window of the last 90 days,
  * `evicted` past it, or `unchanged` when the match was not `ready` any more.
  */
 export type MissingArchiveOutcome = 'pending' | 'evicted' | 'unchanged';
+
+/**
+ * What became of a `ready` match whose archive file is there but cannot be decoded (see
+ * `MatchDetailRepository.markArchiveDamaged`): back to `pending` in the window of the last 90 days,
+ * `kept` as it is past it, or `unchanged` when the match was not `ready` any more.
+ */
+export type DamagedArchiveOutcome = 'pending' | 'kept' | 'unchanged';
 
 /** Schema of a counter of attempts. */
 const attemptsSchema = z.int().nonnegative();
@@ -527,8 +534,10 @@ export class MatchDetailRepository {
   }
 
   /**
-   * Record that the archive file of a `ready` match is missing or unreadable, by the one rule the
-   * app has for it. In the window of the last 90 days, the match goes back to `pending` as
+   * Record that the archive file of a `ready` match is missing, by the one rule the app has for it
+   * (a file that is there but cannot be decoded follows
+   * {@link MatchDetailRepository.markArchiveDamaged} instead, which never gives it up). In the
+   * window of the last 90 days, the match goes back to `pending` as
    * {@link MatchDetailRepository.resetToPending} puts it, so that the queue downloads it again.
    * Past the window, where the queue never takes a match, it goes to `evicted` as
    * {@link MatchDetailRepository.markEvicted} puts it, its archive size and its format kept: it
@@ -551,20 +560,8 @@ export class MatchDetailRepository {
     const windowStart = windowStartSeconds(now);
     // Two statements, one for each side of the window, with the same start: a `ready` match is on
     // exactly one side, so at most one of them changes it. Each changes only a match still `ready`,
-    // so a row that someone else changes between the two is left alone. The placeholders are
-    // numbered as the text is read, so each part is written after the one that precedes it.
-    const pendingParams = new SqlParams();
-    const pendingSql = `UPDATE matches
-       SET ${pendingAssignments(pendingParams)}
-       WHERE ${matchCondition(pendingParams, accountId, matchId)}
-         AND detail_status = ${pendingParams.bind(READY)}
-         AND start_time >= ${pendingParams.bind(windowStart)}`;
-    // Each statement changes one row (the account and the match make the key) or none.
-    const reset = await this.#run(
-      () => this.#database.execute(pendingSql, pendingParams.values),
-      'Could not reset the detail state of a match',
-    );
-    if (reset > 0) {
+    // so a row that someone else changes between the two is left alone.
+    if (await this.#resetInWindow(accountId, matchId, windowStart)) {
       return 'pending';
     }
     const evictedParams = new SqlParams();
@@ -578,6 +575,77 @@ export class MatchDetailRepository {
       'Could not record an evicted archive',
     );
     return evicted > 0 ? 'evicted' : 'unchanged';
+  }
+
+  /**
+   * Record that the archive file of a `ready` match is there but cannot be decoded. In the window
+   * of the last 90 days, the match goes back to `pending` exactly as
+   * {@link MatchDetailRepository.markArchiveMissing} puts it, so that the queue downloads it again
+   * and replaces the file. Past the window, where the queue never downloads a match again, nothing
+   * changes: the match stays `ready`, so its file is kept on disk. Evicting it would let the
+   * reconciliation of the archives delete the only copy at the next start, while the cause may be
+   * the app itself (a bug of the decoding, or an archive written by a later version) that a later
+   * version reads again.
+   *
+   * @param accountId - The player.
+   * @param matchId - The match.
+   * @param now - The current time, in Unix milliseconds: the end of the window.
+   * @returns What became of the match: `pending`, `kept` when it is `ready` past the window, or
+   *   `unchanged` when it was not `ready` (or is not stored).
+   * @throws AppError of kind `storage` when the database fails.
+   */
+  async markArchiveDamaged(
+    accountId: AccountId,
+    matchId: MatchId,
+    now: number,
+  ): Promise<DamagedArchiveOutcome> {
+    const windowStart = windowStartSeconds(now);
+    if (await this.#resetInWindow(accountId, matchId, windowStart)) {
+      return 'pending';
+    }
+    // Past the window, only a read: a match still `ready` there is kept as it is.
+    const params = new SqlParams();
+    const sql = `SELECT 1 FROM matches
+       WHERE ${matchCondition(params, accountId, matchId)}
+         AND detail_status = ${params.bind(READY)}
+         AND start_time < ${params.bind(windowStart)}`;
+    const rows = await this.#run(
+      () => this.#database.select(sql, params.values),
+      'Could not read the detail state of a match',
+    );
+    return rows.length > 0 ? 'kept' : 'unchanged';
+  }
+
+  /**
+   * Put a `ready` match of the window of the last 90 days back to `pending`, as
+   * {@link MatchDetailRepository.resetToPending} puts it: the step both rules for an unusable
+   * archive share.
+   *
+   * @param accountId - The player.
+   * @param matchId - The match.
+   * @param windowStart - The first second of the window (Unix seconds).
+   * @returns Whether the match changed: `false` when it was not `ready`, or is past the window.
+   * @throws AppError of kind `storage` when the database fails.
+   */
+  async #resetInWindow(
+    accountId: AccountId,
+    matchId: MatchId,
+    windowStart: number,
+  ): Promise<boolean> {
+    // The placeholders are numbered as the text is read, so each part is written after the one
+    // that precedes it.
+    const params = new SqlParams();
+    const sql = `UPDATE matches
+       SET ${pendingAssignments(params)}
+       WHERE ${matchCondition(params, accountId, matchId)}
+         AND detail_status = ${params.bind(READY)}
+         AND start_time >= ${params.bind(windowStart)}`;
+    // The statement changes one row (the account and the match make the key) or none.
+    const reset = await this.#run(
+      () => this.#database.execute(sql, params.values),
+      'Could not reset the detail state of a match',
+    );
+    return reset > 0;
   }
 
   /**

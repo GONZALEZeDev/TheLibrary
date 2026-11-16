@@ -2448,8 +2448,8 @@ describe('MatchDetailService.getMatchDetail', () => {
     await expect(service.getMatchDetail(matchOf(SERVED))).resolves.toEqual({ kind: 'missing' });
 
     await expect(storedDetail(repository, SERVED)).resolves.toEqual(UNTOUCHED);
-    // The row is refused before the file is opened.
-    expect(read).not.toHaveBeenCalled();
+    // The row is refused; the file is only read to know whether it is there.
+    expect(read).toHaveBeenCalledOnce();
     expect(linesAt(logger, 'warn')).toMatchObject([
       {
         message: 'Detail archive is unreadable',
@@ -2458,15 +2458,46 @@ describe('MatchDetailService.getMatchDetail', () => {
     ]);
   });
 
-  it('marks the match evicted, and says its detail is gone, once it is past the 90 days', async () => {
-    /** The ways the archive of a ready match can be unusable: the damaged files, and the others. */
-    const unusable: readonly Pick<UnreadableArchive, 'label' | 'plant'>[] = [
+  it.each([
+    { label: 'a ready match', withoutSize: false },
+    { label: 'a ready match without an archive size', withoutSize: true },
+  ])(
+    'marks $label evicted, and says its detail is gone, when its file is gone past the 90 days',
+    async ({ withoutSize }) => {
+      const context = await setUp({ matches: summariesOf([SERVED]) });
+      // Recorded as archived, with no file in the folder.
+      await context.repository.markReady(ACCOUNT, matchOf(SERVED), 52_431, ARCHIVE_FORMAT);
+      if (withoutSize) {
+        await context.database.execute('UPDATE matches SET archived_bytes = NULL');
+      }
+      const before = await storedDetail(context.repository, SERVED);
+      // The match aged past the window while its archive was gone: it is not downloaded again.
+      context.clock.now = START + 91 * DAY;
+
+      await expect(context.service.getMatchDetail(matchOf(SERVED))).resolves.toEqual({
+        kind: 'evicted_lost',
+      });
+      // The row no longer claims an archive that is there: it is evicted, with the size of the file
+      // it lost, so that the match keeps its metrics.
+      await expect(storedDetail(context.repository, SERVED)).resolves.toEqual({
+        ...before,
+        status: 'evicted',
+      });
+      // The page says the same from now on, and leaves the row as it is.
+      await expect(context.service.getMatchDetail(matchOf(SERVED))).resolves.toEqual({
+        kind: 'evicted_lost',
+      });
+      await expect(storedDetail(context.repository, SERVED)).resolves.toEqual({
+        ...before,
+        status: 'evicted',
+      });
+    },
+  );
+
+  it('keeps the match archived, with its file, when its archive is damaged past the 90 days', async () => {
+    /** The ways the archive of a ready match can be damaged while its file is there. */
+    const damaged: readonly Pick<UnreadableArchive, 'label' | 'plant'>[] = [
       ...UNREADABLE_ARCHIVES,
-      {
-        label: 'a file that is gone',
-        plant: (context) =>
-          context.repository.markReady(ACCOUNT, matchOf(SERVED), 52_431, ARCHIVE_FORMAT),
-      },
       {
         label: 'a ready match without an archive size',
         plant: async (context) => {
@@ -2475,29 +2506,24 @@ describe('MatchDetailService.getMatchDetail', () => {
         },
       },
     ];
-    for (const { label, plant } of unusable) {
+    for (const { label, plant } of damaged) {
       const context = await setUp({ matches: summariesOf([SERVED]) });
       await plant(context);
       const before = await storedDetail(context.repository, SERVED);
-      // The match aged past the window while its archive was unusable: it is not downloaded again.
+      const file = await context.archive.read(ACCOUNT, matchOf(SERVED));
+      // The match is past the window: nothing would ever download it again, so the file is the
+      // only copy left, and a later version of the app may read it.
       context.clock.now = START + 91 * DAY;
 
-      const view = await context.service.getMatchDetail(matchOf(SERVED));
-
-      expect(view, label).toEqual({ kind: 'evicted_lost' });
-      // The row no longer claims an archive that is there: it is evicted, with the size of the file
-      // it lost, so that the match keeps its metrics.
-      await expect(storedDetail(context.repository, SERVED), label).resolves.toEqual({
-        ...before,
-        status: 'evicted',
-      });
-      // The page says the same from now on, and leaves the row as it is.
       await expect(context.service.getMatchDetail(matchOf(SERVED)), label).resolves.toEqual({
-        kind: 'evicted_lost',
+        kind: 'damaged',
       });
-      await expect(storedDetail(context.repository, SERVED), label).resolves.toEqual({
-        ...before,
-        status: 'evicted',
+      // Nothing changes: still `ready`, so the reconciliation of the archives keeps the file.
+      await expect(storedDetail(context.repository, SERVED), label).resolves.toEqual(before);
+      await expect(context.archive.read(ACCOUNT, matchOf(SERVED)), label).resolves.toEqual(file);
+      // The page says the same at the next visit.
+      await expect(context.service.getMatchDetail(matchOf(SERVED)), label).resolves.toEqual({
+        kind: 'damaged',
       });
     }
   });
@@ -2531,7 +2557,7 @@ describe('MatchDetailService.getMatchDetail', () => {
         } else {
           await context.repository.resetToPending(accountId, matchId);
         }
-        return { kind: 'unreadable' };
+        return { kind: 'unreadable', reason: 'absent' };
       });
 
       const view = await context.service.getMatchDetail(matchOf(SERVED));

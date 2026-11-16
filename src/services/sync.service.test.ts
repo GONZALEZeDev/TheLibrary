@@ -87,6 +87,7 @@ const NOTHING_PROJECTED: ProjectionReport = {
   projected: 0,
   failed: 0,
   reset: 0,
+  kept: 0,
   skipped: 0,
   stoppedBy: null,
 };

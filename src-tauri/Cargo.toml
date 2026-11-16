@@ -93,3 +93,14 @@ windows-sys = { version = "0.61.2", features = ["Win32_UI_WindowsAndMessaging"] 
 # unaffected.
 [profile.dev.package."*"]
 debug = false
+
+# Release builds (the installer): the whole program optimised as one unit (`lto`, one codegen
+# unit), so that unused code across crates is dropped and the binary is smaller, and the symbols
+# left out of the file (nobody debugs the shipped binary). This costs build time in the release
+# workflow, not on the player's machine. `panic` stays `unwind`, the default: with `abort`, a panic
+# in any thread (a plugin's worker, say) would end the whole app at once, where unwinding only ends
+# that thread.
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

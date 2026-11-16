@@ -271,13 +271,16 @@ describe('MetricsRepository', () => {
       const recorder = recordStatements(database);
       const repository = new MetricsRepository(recorder.database);
       const values = new Map<string, number | null>(
-        Array.from({ length: 123 }, (_, index) => [`metric_${String(index)}`, index / 4] as const),
+        Array.from(
+          { length: 1_234 },
+          (_, index) => [`metric_${String(index)}`, index / 4] as const,
+        ),
       );
 
       await repository.saveProjection(ACCOUNT_ID, matchId(0), projection(), values);
 
       await expect(repository.getValues(ACCOUNT_ID, matchId(0))).resolves.toEqual(values);
-      // 123 values in batches of 50: three inserts of metrics.
+      // 1,234 values in batches of 500: three inserts of metrics.
       expect(
         recorder.statements.filter((sql) => sql.includes('INSERT INTO match_metrics')),
       ).toHaveLength(3);

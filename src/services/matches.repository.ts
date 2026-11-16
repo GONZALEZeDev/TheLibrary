@@ -1,8 +1,10 @@
 /**
  * Storage of the match history in the `matches` table.
  *
- * Writes are idempotent upserts: synchronising the same history twice keeps the same matches (only
- * their `synced_at` time moves), and a synchronisation interrupted halfway is simply redone. Every
+ * Writes are idempotent upserts: synchronising the same history twice keeps the same matches, and
+ * a synchronisation interrupted halfway is simply redone. A match the history sends again unchanged
+ * is not written at all (its `synced_at` stays the time it was last written), since each
+ * synchronisation receives the whole history again and nearly all of it is already stored. Every
  * row read back is validated, so a damaged database is reported as an error instead of reaching
  * the screens.
  *
@@ -63,10 +65,19 @@ const COLUMNS = [
 ] as const;
 
 /**
- * Matches written per statement. 50 rows of 16 columns make 800 parameters, far below SQLite's
- * limit (32,766), while a history of a few hundred matches still takes only a few statements.
+ * Matches written per statement. 500 rows of 16 columns make 8,000 parameters, well below SQLite's
+ * limit (32,766), so a history of a few thousand matches takes a handful of statements, each its
+ * own commit.
  */
-const BATCH_SIZE = 50;
+const BATCH_SIZE = 500;
+
+/**
+ * The columns that tell whether a stored match changed: every written column but the key and
+ * `synced_at`. A row whose columns are all the same is left as it is by the upsert.
+ */
+const COMPARED_COLUMNS = COLUMNS.filter(
+  (column) => column !== 'account_id' && column !== 'match_id' && column !== 'synced_at',
+);
 
 /**
  * Columns read for the match list: every written column but `synced_at` (nothing shows it), and the
@@ -121,7 +132,8 @@ export class MatchesRepository {
   }
 
   /**
-   * Insert matches, or update them when they are already stored.
+   * Insert matches, or update them when they are already stored and something changed (the rank
+   * delta, which deadlock-api can fill in later, say). A match sent again unchanged is not written.
    *
    * @param matches - The matches to save.
    * @throws AppError of kind `storage` when the database fails.
@@ -138,11 +150,15 @@ export class MatchesRepository {
       const updates = COLUMNS.filter((column) => column !== 'account_id' && column !== 'match_id')
         .map((column) => `${column} = excluded.${column}`)
         .join(', ');
+      // `IS NOT` compares a null rank delta as a value, where `<>` would say nothing.
+      const changed = COMPARED_COLUMNS.map(
+        (column) => `matches.${column} IS NOT excluded.${column}`,
+      ).join(' OR ');
       await this.#run(
         () =>
           this.#database.execute(
             `INSERT INTO matches (${COLUMNS.join(', ')}) VALUES ${groups.join(', ')}
-             ON CONFLICT (account_id, match_id) DO UPDATE SET ${updates}`,
+             ON CONFLICT (account_id, match_id) DO UPDATE SET ${updates} WHERE ${changed}`,
             batch.flatMap((match) => toParams(match, syncedAt)),
           ),
         'Could not save the matches',

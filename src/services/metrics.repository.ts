@@ -87,11 +87,11 @@ const READY: DetailStatus = 'ready';
 const METRIC_COLUMNS = ['account_id', 'match_id', 'metric_key', 'value'] as const;
 
 /**
- * Rows written per statement. 50 rows of 4 columns make 200 parameters, far below SQLite's limit
- * (32,766), while the metrics and the damage sources of a match take one or two statements (the
- * same size as the batch of the match history).
+ * Rows written per statement. 500 rows of 4 columns make 2,000 parameters, well below SQLite's
+ * limit (32,766), so the metrics, the damage sources and the review values of a match (about a
+ * hundred rows) take one statement, which is one commit instead of several for each match.
  */
-const BATCH_SIZE = 50;
+const BATCH_SIZE = 500;
 
 /** Schema of a boolean column: 0 or 1, as SQLite has no boolean type. */
 const flagSchema = z.union([z.literal(0), z.literal(1)]);

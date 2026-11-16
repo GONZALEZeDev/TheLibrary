@@ -3,7 +3,7 @@
  *
  * @packageDocumentation
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PAIGE_HERO_ID } from '../core/domain/hero';
 import type { Database } from '../ports/database.port';
 import {
@@ -140,6 +140,30 @@ describe('MatchesRepository', () => {
 
     await expect(database.select('SELECT synced_at FROM matches')).resolves.toEqual([
       { synced_at: 42 },
+    ]);
+  });
+
+  it('writes again only the matches that changed', async () => {
+    const database = createTestDatabase();
+    let now = 42;
+    const repository = new MatchesRepository(database, () => now);
+    const unchanged = matchSummary({ matchId: 1, rankDelta: null });
+    const filledLater = matchSummary({ matchId: 2, rankDelta: null });
+    await repository.upsertMany([unchanged, filledLater]);
+
+    // The whole history comes again, with the rank delta of one match filled in meanwhile.
+    now = 43;
+    const execute = vi.spyOn(database, 'execute');
+    await repository.upsertMany([unchanged, { ...filledLater, rankDelta: 12 }]);
+
+    // One statement for the two matches, which writes only the one that changed.
+    expect(execute).toHaveBeenCalledOnce();
+    await expect(execute.mock.results[0]?.value).resolves.toBe(1);
+    await expect(
+      database.select('SELECT match_id, rank_delta, synced_at FROM matches ORDER BY match_id'),
+    ).resolves.toEqual([
+      { match_id: 1, rank_delta: null, synced_at: 42 },
+      { match_id: 2, rank_delta: 12, synced_at: 43 },
     ]);
   });
 

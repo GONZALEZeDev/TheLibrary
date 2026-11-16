@@ -3,7 +3,7 @@
  *
  * @packageDocumentation
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AppError } from '../errors/app-error';
 import {
   ASSET_IMAGE_ORIGIN,
@@ -318,6 +318,31 @@ describe('parseItemCatalogue', () => {
     ]);
 
     expect(items.map((item) => item.kind)).toEqual(['ability', 'upgrade']);
+  });
+
+  it('tells how many entries it skipped, and why the first one was, once', () => {
+    const onSkips = vi.fn();
+
+    parseItemCatalogue(
+      [rawAbility(), rawAbility({ id: 11, type: 'misc' }), rawAbility({ id: 12, type: 'hero' })],
+      onSkips,
+    );
+
+    // The issue names the field and the code, never the value the entry held.
+    expect(onSkips).toHaveBeenCalledExactlyOnceWith({
+      entries: 3,
+      skipped: 2,
+      firstIssue: expect.stringMatching(/^type: \w+$/) as unknown,
+    });
+    expect(JSON.stringify(onSkips.mock.calls)).not.toContain('misc');
+  });
+
+  it('tells nothing when every entry is read', () => {
+    const onSkips = vi.fn();
+
+    parseItemCatalogue([rawAbility(), rawUpgrade()], onSkips);
+
+    expect(onSkips).not.toHaveBeenCalled();
   });
 
   it('skips an entry without an id or a class name, or that is not an object', () => {

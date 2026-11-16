@@ -6,7 +6,10 @@
  * with tooltips and properties); the rank catalogue names the twelve tiers and links their badges.
  * The app names and illustrates the damage sources and the final build of a match with them, and
  * keeps only the few fields it shows. Both catalogues are decoration: an entry that cannot be read
- * is skipped, never reported, so one odd entry hides nothing else.
+ * is skipped, so one odd entry hides nothing else. Some are skipped on purpose (the item catalogue
+ * holds kinds of entries the app does not show), so how many were skipped, and the first reason, is
+ * handed to the caller (see {@link CatalogueSkips}): when a game patch moves that count, the log
+ * shows it instead of entries vanishing silently.
  *
  * Every image link is checked against the asset bucket (see {@link assetImageUrl}): the release
  * Content Security Policy only lets the app load images from there.
@@ -189,12 +192,46 @@ function toCatalogueItem(entry: ItemEntry): CatalogueItem {
 /** The body of a catalogue: a list of anything, each entry being validated on its own. */
 const catalogueBodySchema = z.array(z.unknown());
 
+/** The entries of a catalogue that could not be read, told to the caller when there are some. */
+export interface CatalogueSkips {
+  /** How many entries the body holds. */
+  readonly entries: number;
+  /** How many of them were skipped. */
+  readonly skipped: number;
+  /** `<path>: <code>` of the first problem of the first skipped entry, never a value of it. */
+  readonly firstIssue: string;
+}
+
+/** Told the entries of a catalogue that were skipped, when there are some. */
+export type OnCatalogueSkips = (skips: CatalogueSkips) => void;
+
+/** What reading one entry gave: the value to keep, or the reason it is skipped. */
+type EntryRead<Value> = { readonly value: Value } | { readonly error: z.ZodError };
+
+/**
+ * Read one entry with a schema.
+ *
+ * @param schema - The schema of an entry.
+ * @param entry - The entry.
+ * @param toValue - Map the parsed entry to the value kept.
+ * @returns The value, or the error of the schema.
+ */
+function readWith<Parsed, Value>(
+  schema: z.ZodType<Parsed>,
+  entry: unknown,
+  toValue: (parsed: Parsed) => Value,
+): EntryRead<Value> {
+  const parsed = schema.safeParse(entry);
+  return parsed.success ? { value: toValue(parsed.data) } : { error: parsed.error };
+}
+
 /**
  * Read a catalogue entry by entry, skipping the entries that cannot be read.
  *
  * @param body - The parsed JSON body of the response.
  * @param catalogue - What the catalogue is, for the error messages (e.g. `item`).
- * @param readEntry - Read one entry: the value to keep, or `null` for an entry to skip.
+ * @param readEntry - Read one entry: the value to keep, or the reason to skip it.
+ * @param onSkips - Told the skipped entries, once, when there are some.
  * @returns The values of the entries kept, in the order of the body.
  * @throws AppError of kind `invalid_payload` when the body is not an array (the context `issue` is
  *   `<path>: <code>` of the first problem, never a value of the payload), or when no entry can be
@@ -203,7 +240,8 @@ const catalogueBodySchema = z.array(z.unknown());
 function readCatalogue<Value>(
   body: unknown,
   catalogue: string,
-  readEntry: (entry: unknown) => Value | null,
+  readEntry: (entry: unknown) => EntryRead<Value>,
+  onSkips: OnCatalogueSkips | undefined,
 ): Value[] {
   const entries = catalogueBodySchema.safeParse(body);
   if (!entries.success) {
@@ -211,10 +249,21 @@ function readCatalogue<Value>(
       context: { issue: describeFirstIssue(entries.error) },
     });
   }
-  const values = entries.data.flatMap((entry) => {
-    const value = readEntry(entry);
-    return value === null ? [] : [value];
-  });
+  const values: Value[] = [];
+  let skipped = 0;
+  let firstIssue: string | null = null;
+  for (const entry of entries.data) {
+    const read = readEntry(entry);
+    if ('value' in read) {
+      values.push(read.value);
+    } else {
+      skipped += 1;
+      firstIssue ??= describeFirstIssue(read.error);
+    }
+  }
+  if (firstIssue !== null) {
+    onSkips?.({ entries: entries.data.length, skipped, firstIssue });
+  }
   if (values.length === 0) {
     throw new AppError('invalid_payload', `The ${catalogue} catalogue holds no readable entry`, {
       context: { entries: entries.data.length },
@@ -231,15 +280,18 @@ function readCatalogue<Value>(
  * `upgrade`, is skipped.
  *
  * @param body - The parsed JSON body of the response.
+ * @param onSkips - Told the skipped entries, once, when there are some.
  * @returns The readable entries, in the order of the body.
  * @throws AppError of kind `invalid_payload` when the body is not an array or holds no readable
  *   entry.
  */
-export function parseItemCatalogue(body: unknown): CatalogueItem[] {
-  return readCatalogue(body, 'item', (entry) => {
-    const parsed = itemEntrySchema.safeParse(entry);
-    return parsed.success ? toCatalogueItem(parsed.data) : null;
-  });
+export function parseItemCatalogue(body: unknown, onSkips?: OnCatalogueSkips): CatalogueItem[] {
+  return readCatalogue(
+    body,
+    'item',
+    (entry) => readWith(itemEntrySchema, entry, toCatalogueItem),
+    onSkips,
+  );
 }
 
 /**
@@ -275,22 +327,22 @@ export interface CatalogueRank {
  * without a whole number `tier` or a name is skipped.
  *
  * @param body - The parsed JSON body of the response.
+ * @param onSkips - Told the skipped entries, once, when there are some.
  * @returns The readable tiers, sorted by tier.
  * @throws AppError of kind `invalid_payload` when the body is not an array or holds no readable
  *   tier.
  */
-export function parseRankCatalogue(body: unknown): CatalogueRank[] {
-  const ranks = readCatalogue(body, 'rank', (entry) => {
-    const parsed = rankEntrySchema.safeParse(entry);
-    if (!parsed.success) {
-      return null;
-    }
-    const { tier, name, images } = parsed.data;
-    return {
-      tier,
-      name,
-      imageUrl: firstAssetImageUrl([images?.large_webp, images?.large]),
-    };
-  });
+export function parseRankCatalogue(body: unknown, onSkips?: OnCatalogueSkips): CatalogueRank[] {
+  const ranks = readCatalogue(
+    body,
+    'rank',
+    (entry) =>
+      readWith(rankEntrySchema, entry, ({ tier, name, images }) => ({
+        tier,
+        name,
+        imageUrl: firstAssetImageUrl([images?.large_webp, images?.large]),
+      })),
+    onSkips,
+  );
   return ranks.toSorted((first, second) => first.tier - second.tier);
 }

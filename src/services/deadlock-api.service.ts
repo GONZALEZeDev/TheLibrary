@@ -22,6 +22,7 @@ import {
   parseItemCatalogue,
   parseRankCatalogue,
   type CatalogueItem,
+  type CatalogueSkips,
   type CatalogueRank,
 } from '../core/deadlock-api/assets.schema';
 import {
@@ -364,7 +365,11 @@ export class DeadlockApiService {
    *   {@link DeadlockApiService.fetchMatchHistory}.
    */
   fetchItemCatalogue(): Promise<CatalogueItem[]> {
-    return this.#fetchAsset(itemsRequest(), parseItemCatalogue);
+    return this.#fetchAsset(itemsRequest(), (json) =>
+      parseItemCatalogue(json, (skips) => {
+        this.#logSkippedEntries('item', skips);
+      }),
+    );
   }
 
   /**
@@ -376,7 +381,11 @@ export class DeadlockApiService {
    * @throws AppError, as {@link DeadlockApiService.fetchItemCatalogue}.
    */
   fetchRankCatalogue(): Promise<CatalogueRank[]> {
-    return this.#fetchAsset(ranksRequest(), parseRankCatalogue);
+    return this.#fetchAsset(ranksRequest(), (json) =>
+      parseRankCatalogue(json, (skips) => {
+        this.#logSkippedEntries('rank', skips);
+      }),
+    );
   }
 
   /**
@@ -484,6 +493,24 @@ export class DeadlockApiService {
       throw outcome.error;
     }
     return parse(outcome.json);
+  }
+
+  /**
+   * Tell the entries of a catalogue that could not be read, at the `info` level: some are skipped
+   * on purpose (kinds of items the app does not show), and the catalogue is used all the same, but
+   * a game patch that changes how many shows here. The line holds the counts and the first issue as
+   * a field path and a code, never a value.
+   *
+   * @param catalogue - Which catalogue.
+   * @param skips - The skipped entries.
+   */
+  #logSkippedEntries(catalogue: 'item' | 'rank', skips: CatalogueSkips): void {
+    this.#logger.log('info', 'api', 'Skipped unreadable catalogue entries', {
+      catalogue,
+      entries: skips.entries,
+      skipped: skips.skipped,
+      firstIssue: skips.firstIssue,
+    });
   }
 
   /**

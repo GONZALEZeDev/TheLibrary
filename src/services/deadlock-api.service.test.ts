@@ -473,6 +473,26 @@ describe('DeadlockApiService.fetchMapLayout', () => {
 });
 
 describe('DeadlockApiService asset requests', () => {
+  it('tells how many catalogue entries it skipped, at the info level', async () => {
+    const entry = { id: 1, class_name: 'citadel_weapon_bookworm_set2', type: 'weapon', name: 'A' };
+    const { api, logger } = setUp(() =>
+      jsonResponse([entry, { ...entry, id: 2, type: 'misc' }, { ...entry, id: 3, type: 'hero' }]),
+    );
+
+    await expect(api.fetchItemCatalogue()).resolves.toHaveLength(1);
+
+    expect(
+      logger.entries.filter((line) => line.message === 'Skipped unreadable catalogue entries'),
+    ).toEqual([
+      {
+        level: 'info',
+        scope: 'api',
+        message: 'Skipped unreadable catalogue entries',
+        context: { catalogue: 'item', entries: 3, skipped: 2, firstIssue: 'type: invalid_value' },
+      },
+    ]);
+  });
+
   it('fetches the item and rank catalogues through the asset budget', async () => {
     const { api, http } = setUp();
 

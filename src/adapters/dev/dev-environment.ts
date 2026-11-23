@@ -35,6 +35,15 @@ import { SqlJsDatabase } from './sql-js-database.adapter';
 export const DEV_ONLY_MARKER = 'thelibrary-dev-only';
 
 /**
+ * Options of sql.js in the browser: it fetches its WebAssembly file from the URL Vite serves it
+ * at, and keeps the math functions it has always had. `useOldExtensionFunctions: true` is the
+ * library's default, written out because recent typings of sql.js declare the option as required.
+ * The options are a constant rather than an inline object so that older typings, which do not know
+ * the option, accept them too.
+ */
+const SQL_JS_CONFIG = { locateFile: () => sqlWasmUrl, useOldExtensionFunctions: true };
+
+/**
  * The adapters of the browser dev mode, one per port except the compressor: the zstd Web Worker
  * runs in the browser as well as in the desktop app, so `src/main.tsx` creates it once for both.
  */
@@ -75,8 +84,7 @@ export function createBrowserDevAdapters(appVersion = '0.0.0-dev'): BrowserDevAd
     logger,
     settingsStore: new LocalStorageSettingsStore(window.localStorage),
     http: new FixtureHttpClient(createFixtureApi({ now: Date.now() }), { delayMs: 400 }),
-    // In the browser, sql.js fetches its WebAssembly file from the URL Vite serves it at.
-    database: new SqlJsDatabase(() => initSqlJs({ locateFile: () => sqlWasmUrl })),
+    database: new SqlJsDatabase(() => initSqlJs(SQL_JS_CONFIG)),
     signInGateway: new FixtureSignInGateway({ delayMs: 800 }),
     // Like the database, it is empty at every reload of the page.
     archiveStore: new MemoryArchiveStore(),

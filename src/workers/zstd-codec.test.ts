@@ -122,7 +122,9 @@ describe('describeFailure', () => {
     });
   });
 
-  it.each([
+  // The table is typed: inferred alone, its type would be the one of its first row, and the plain
+  // errors of the other rows would pass for instances of `ZstdLoadError`.
+  it.each<[string, () => Error]>([
     ['a codec that cannot be loaded', () => new ZstdLoadError(new Error('blocked'))],
     ['an operation the worker does not know', () => new Error('Unknown operation: reverse')],
     ['a request without bytes', () => new TypeError('The request holds no bytes')],

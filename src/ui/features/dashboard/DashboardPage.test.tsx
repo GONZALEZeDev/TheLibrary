@@ -568,7 +568,7 @@ describe('DashboardPage', () => {
       ] as const;
       expected.forEach(([word, spec], index) => {
         expect(links[index]).toHaveAccessibleName(
-          expect.stringContaining(`${word}, ${startOf(spec ?? expect.unreachable())}`),
+          `${word}, ${startOf(spec ?? expect.unreachable())}`,
         );
       });
 

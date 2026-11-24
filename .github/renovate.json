@@ -25,6 +25,12 @@
       "allowedVersions": "<6.1"
     },
     {
+      "description": "react-query-devtools stays below 5.108.2, which needs solid-js 1.9.20: pnpm refuses it (trustPolicy in pnpm-workspace.yaml), since it was published without provenance after solid-js 2.0 had some. That policy exempts releases older than 30 days: remove this rule after 2026-12-19, or sooner if a solid-js 1.9 release with provenance replaces it.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["@tanstack/react-query-devtools"],
+      "allowedVersions": "<5.108.2"
+    },
+    {
       "matchManagers": ["npm"],
       "matchUpdateTypes": ["minor", "patch"],
       "groupName": "npm minor and patch updates"

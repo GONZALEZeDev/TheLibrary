@@ -10,6 +10,10 @@ Ajouts, Modifications, Corrections et Suppressions.
 
 ## [Unreleased]
 
+### Modifications
+
+- Les icônes des objectifs et du Mid Boss sont plus grandes sur la carte du replay de la partie.
+
 ## [0.1.5] - 2026-11-16
 
 ### Modifications

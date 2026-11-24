@@ -62,18 +62,24 @@ const TRAIL_WIDTH_PX = 2;
 /** Between the parts of the title of an icon or a marker: "Walker · Archmother". */
 const TITLE_SEPARATOR = ' · ';
 
-/** The half size of the marker of each kind of objective, in frame units at zoom 1. */
+/**
+ * The half size of the marker of each kind of objective, in frame units at zoom 1.
+ *
+ * A titan and its shrines are the closest neighbours of the map, about 40 units apart: their sizes
+ * are as large as they can be without their halos overlapping (each halo has a radius of the half
+ * size times half of {@link OBJECTIVE_ICON_RATIO}, plus {@link HALO_WIDTH}).
+ */
 const OBJECTIVE_RADIUS = {
-  core: 16,
-  titan: 16,
-  guardian: 9,
-  walker: 11,
-  shrine: 8,
-  base_guardian: 9,
+  core: 20,
+  titan: 17,
+  guardian: 12,
+  walker: 14,
+  shrine: 10,
+  base_guardian: 12,
 } as const satisfies Record<ReplayViewObjective['identity']['kind'], number>;
 
 /** The half size of the marker of the mid boss pit, in frame units at zoom 1. */
-const MID_BOSS_RADIUS = 14;
+const MID_BOSS_RADIUS = 18;
 
 /** The API icon of the objectives that are told by one: tinted in the colour of their team. */
 const OBJECTIVE_ICON = {

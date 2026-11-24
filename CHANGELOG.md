@@ -10,6 +10,10 @@ Fixed and Removed.
 
 ## [Unreleased]
 
+### Changed
+
+- The icons of the objectives and of the Mid Boss are larger on the map of the match replay.
+
 ## [0.1.5] - 2026-11-16
 
 ### Changed

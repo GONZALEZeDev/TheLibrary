@@ -70,7 +70,6 @@ import { formatDuration } from '../../format/duration';
 import { createI18n } from '../../i18n/i18n';
 import { DETAILS_QUERY_KEY } from '../matches/use-matches';
 import { formatPhaseTotal, metricLabel } from './analysis-format';
-import { MAX_TABS_WAIT_MS } from './use-match-tabs-ready';
 
 /**
  * Size of the synthetic history of the test that opens a match inside the window of the habits of
@@ -430,7 +429,7 @@ describe('MatchDetailPage analysis', () => {
     expect(loadingShown).toBe(false);
   });
 
-  it('stops waiting for a slow download, and the analysis says the comparison is loading', async () => {
+  it('keeps the gate for a slow download, however long it takes', async () => {
     const { handler, release } = holdCommunityBack();
     const testServices = await synchronised({ handler });
     // The timers of the page are the test's, and the real time goes on for everything else.
@@ -441,13 +440,34 @@ describe('MatchDetailPage analysis', () => {
       await waitFor(() => {
         expect(communityRequestCount(testServices)).toBeGreaterThan(0);
       });
-      expect(screen.getByText('Analysing the match…')).toBeInTheDocument();
-      await act(() => vi.advanceTimersByTimeAsync(MAX_TABS_WAIT_MS));
 
-      // Past the limit, the local analysis is on the page while the community data is still on
-      // its way.
+      // A minute later, the data is still on its way: still the gate, and nothing of the match.
+      await act(() => vi.advanceTimersByTimeAsync(60_000));
+      expect(screen.getByText('Analysing the match…')).toBeInTheDocument();
+      expect(screen.queryByRole('table', { name: 'By phase' })).not.toBeInTheDocument();
+    } finally {
+      // Whatever the assertions said, the data comes: a failing test leaves no download blocked.
+      release();
+      vi.useRealTimers();
+    }
+
+    await findComparison();
+    expect(screen.queryByText('Loading the comparison with your rank…')).not.toBeInTheDocument();
+  });
+
+  it('says the comparison is loading while it downloads for a match analysed after the gate opened', async () => {
+    const { handler, release: releaseCommunity } = holdCommunityBack();
+    const testServices = await archived({ handler });
+    const { release: releaseAnalysis } = holdAnalysisBack(testServices.services);
+
+    try {
+      await renderMatchDetail(ARCHIVED_ID, testServices);
+      // The match is not analysed yet: the page opens, and the run analyses it above the tabs.
+      await screen.findByRole('dialog', { name: ANALYSING_STRINGS.en.dialog });
+      releaseAnalysis();
+
+      // The analysis is on the page, and only now is its community data asked for.
       expect(await screen.findByRole('table', { name: 'By phase' })).toBeInTheDocument();
-      expect(screen.getAllByRole('heading', { level: 3 }).length).toBeGreaterThan(0);
       // The line above the families says so, once; the metrics that have a reference in the
       // community wait with a dash.
       const waiting = await screen.findAllByText('Loading the comparison with your rank…');
@@ -456,9 +476,8 @@ describe('MatchDetailPage analysis', () => {
       expect(screen.queryAllByRole('img', { name: GAUGE_NAME })).toEqual([]);
       expect(screen.queryByText('No comparison with your rank for now')).not.toBeInTheDocument();
     } finally {
-      // Whatever the assertions said, the data comes: a failing test leaves no download blocked.
-      release();
-      vi.useRealTimers();
+      releaseAnalysis();
+      releaseCommunity();
     }
 
     await findComparison();

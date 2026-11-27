@@ -6,9 +6,10 @@
  * The section reads the analysis from the local database (`useMatchAnalysis`), which is quick, and
  * shows it at once. The comparison with the community is asked for by the page, behind its loading
  * gate (`useCommunityRefresh`, from `useMatchTabsReady`), and the analysis is read again when the
- * data is in (or when the cache already held it): the section usually opens with it. When the gate
- * stopped waiting for a slow download, the section watches it (`useCommunityFetching`), and until it
- * ends the line above the metrics says that the comparison is loading. When the data cannot come
+ * data is in (or when the cache already held it): the section opens with it. A match analysed after
+ * the gate opened (the run above the tabs, for a match not analysed yet) has its data asked for then:
+ * the section watches that download (`useCommunityFetching`), and until it ends the line above the
+ * metrics says that the comparison is loading. When the data cannot come
  * (no network, a cohort too small, a refresh that failed) that line says there is no comparison
  * with the rank for now; the section never turns that into an error, since the comparison with the
  * habits stands by itself.
@@ -72,8 +73,8 @@ export function AnalysisSection({ matchId }: AnalysisSectionProps) {
   const view =
     read?.kind === 'pending' && analysedReady && lastAnalysis !== null ? lastAnalysis : read;
 
-  // The page asks for the community data behind its loading gate (`useMatchTabsReady`); the section
-  // only watches the download, which still runs when the gate stopped waiting for it.
+  // The page asks for the community data (`useMatchTabsReady`): behind its loading gate, or once the
+  // run above the tabs has analysed a match that was not analysed yet. The section only watches.
   const communityFetching = useCommunityFetching(matchId);
 
   if (view === undefined) {

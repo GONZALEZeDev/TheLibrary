@@ -13,7 +13,7 @@ Ajouts, Modifications, Corrections et Suppressions.
 ### Modifications
 
 - Les icônes des objectifs et du Mid Boss sont plus grandes sur la carte du replay de la partie.
-- Une partie s'ouvre une fois tous ses onglets prêts (son replay construit, la comparaison avec ton rang téléchargée), pour que rien ne se remplisse après le panneau de chargement ; le panneau attend un téléchargement cinq secondes au plus.
+- Une partie s'ouvre une fois tous ses onglets prêts (son replay construit, la comparaison avec ton rang téléchargée), pour que rien ne se remplisse après le panneau de chargement, quel que soit le temps de ses téléchargements.
 - Les catalogues du jeu (héros, objets, rangs, carte) attendent une place libre dans le budget de requêtes de deadlock-api au lieu d'être refusés : la première ouverture d'une partie n'affiche plus les noms comme indisponibles.
 
 ## [0.1.5] - 2026-11-16

@@ -12,27 +12,20 @@
  * must not stay closed for it. The analysis itself is read by the page (`useMatchAnalysis`), which
  * passes its view here.
  *
- * Some of these reads may download (a catalogue a week old, the community data of the day), and a
- * download may last up to the timeout of a request, several times over. The page waits for them
- * {@link MAX_TABS_WAIT_MS} at most: past that, the gate opens and a tab still loading shows its own
- * loading state, as it does when it is opened alone.
+ * Some of these reads download (a catalogue a week old, the community data of the day), at most two
+ * requests a second for the catalogues (they wait for their turn, see `DeadlockApiService`). The
+ * page waits for every one of them, however long they take: the player sees the match only once all
+ * its data is there. Each wait has an end: every request has a timeout (`REQUEST_TIMEOUT_MS`), a
+ * catalogue waits for its turn a bounded number of times, and a download that fails is an answer.
  *
  * @packageDocumentation
  */
-import { useEffect, useState } from 'react';
 import type { MatchId } from '../../../core/domain/match';
 import type { MatchAnalysisView } from '../../../services/analysis-view';
 import { useMatchReplay } from './replay/use-match-replay';
 import { needsCommunityData, useCommunityRefresh } from './use-match-analysis';
 import { useDamageTab, usePlayersTab } from './use-match-breakdown';
 import { useTimelineTab } from './use-match-timeline';
-
-/**
- * The longest the page waits for the tabs of a match, in milliseconds, from the moment it knows the
- * match is archived: long enough for the local reads and a usual download, short enough that a
- * network that does not answer never holds the page for the timeout of its requests.
- */
-export const MAX_TABS_WAIT_MS = 5_000;
 
 /** The part of a TanStack Query result that says whether a read has ended. */
 interface ReadState {
@@ -59,8 +52,7 @@ function answered(query: ReadState): boolean {
  * @param analysis - The analysis of the match as the page read it, `undefined` while it is read. The
  *   community data is asked for only once an analysis is there to compare, and only when it is not
  *   fresh, as the analysis tab asks for it.
- * @returns `true` once every tab of the match is read (or failed to be), or once
- *   {@link MAX_TABS_WAIT_MS} has passed since the match was known to be archived.
+ * @returns `true` once every tab of the match is read (or failed to be).
  */
 export function useMatchTabsReady(
   matchId: MatchId,
@@ -75,23 +67,9 @@ export function useMatchTabsReady(
   const community = analysis?.kind === 'ready' ? analysis.analysis.community : null;
   const refreshNeeded = archived && community !== null && needsCommunityData(community);
   const refresh = useCommunityRefresh(matchId, refreshNeeded);
-  const allRead =
+  return (
     archived &&
     [timeline, replay, damage, players].every(answered) &&
-    (!refreshNeeded || answered(refresh));
-
-  // The match whose wait has run out. Keyed by the match, so that another match waits again.
-  const [waitOverFor, setWaitOverFor] = useState<MatchId | null>(null);
-  useEffect(() => {
-    if (!archived || allRead) {
-      return;
-    }
-    const timer = setTimeout(() => {
-      setWaitOverFor(matchId);
-    }, MAX_TABS_WAIT_MS);
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [matchId, archived, allRead]);
-  return allRead || (archived && waitOverFor === matchId);
+    (!refreshNeeded || answered(refresh))
+  );
 }

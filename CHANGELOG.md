@@ -13,7 +13,7 @@ Fixed and Removed.
 ### Changed
 
 - The icons of the objectives and of the Mid Boss are larger on the map of the match replay.
-- A match opens once all its tabs are ready (its replay built, the comparison with your rank downloaded), so that nothing fills in after the loading panel; the panel waits five seconds at most for a download.
+- A match opens once all its tabs are ready (its replay built, the comparison with your rank downloaded), so that nothing fills in after the loading panel, however long its downloads take.
 - The game catalogues (heroes, items, ranks, map) wait for a free slot of deadlock-api's request budget instead of being refused, so that a first opening of a match no longer shows names as unavailable.
 
 ## [0.1.5] - 2026-11-16

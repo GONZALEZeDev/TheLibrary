@@ -5,7 +5,7 @@
  * @packageDocumentation
  */
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createFixtureApi, jsonResponse } from '../../../adapters/dev/fixture-http-client.adapter';
 import type { Language } from '../../../core/settings/language';
 import {
@@ -54,6 +54,50 @@ describe('PaigePage', () => {
     for (const name of ['Bookwyrm', 'Plot Armor', 'Captivating Read', 'Rallying Charge']) {
       expect(screen.getByRole('button', { name })).toBeInTheDocument();
     }
+  });
+
+  it('shows the page kept from an earlier launch at once, then the values of this launch', async () => {
+    const test = createTestServices({ now: () => NOW });
+    const { paige } = test.services;
+    const current = (await paige.getPaigePage('en')) ?? expect.unreachable();
+    // The page kept before a game patch: other health values.
+    const kept = {
+      ...current,
+      stats: {
+        ...current.stats,
+        vitality: current.stats.vitality.map((row) =>
+          row.key === 'health' ? { ...row, value: 680, perLevel: 31 } : row,
+        ),
+      },
+    };
+    vi.spyOn(paige, 'getPaigePage').mockResolvedValue(kept);
+    // The download of this launch waits for the test.
+    let release = (): void => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const refresh = vi.spyOn(paige, 'refreshPaigePage').mockImplementation(async () => {
+      await released;
+      return current;
+    });
+
+    await renderPaige(test);
+
+    // The kept page shows at once, and the page asks for the one of this launch.
+    const health = (await screen.findByText('Health')).closest('li') as HTMLElement;
+    expect(within(health).getByText('680')).toBeInTheDocument();
+    expect(within(health).getByText('+31')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(refresh).toHaveBeenCalledWith('en');
+    });
+
+    // The new values replace the old ones as soon as they are in, once.
+    release();
+    await waitFor(() => {
+      expect(within(health).getByText('625')).toBeInTheDocument();
+    });
+    expect(within(health).getByText('+33')).toBeInTheDocument();
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 
   it('shows the deadlock.wiki artwork, and the bust of the API when it fails to load', async () => {

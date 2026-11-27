@@ -10,6 +10,10 @@ Ajouts, Modifications, Corrections et Suppressions.
 
 ## [Unreleased]
 
+### Corrections
+
+- L'onglet Paige pouvait afficher ses valeurs d'avant un patch du jeu pendant une semaine. Il les télécharge maintenant une fois à chaque lancement de l'app, et affiche les nouvelles dès qu'elles arrivent.
+
 ## [0.1.6] - 2026-11-27
 
 ### Modifications

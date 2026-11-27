@@ -11,6 +11,7 @@ import {
   jsonResponse,
   type FixtureHandler,
 } from '../adapters/dev/fixture-http-client.adapter';
+import { FIXTURE_PAIGE_HERO } from '../adapters/dev/fixtures/paige.fixture';
 import { MemoryLogger } from '../adapters/dev/memory-logger.adapter';
 import type { AccountId } from '../core/domain/account';
 import { AppError } from '../core/errors/app-error';
@@ -51,7 +52,9 @@ function setUp() {
   });
   const cache = new ApiCacheRepository(database);
   const paige = new PaigePageService({ accountSource, api, cache, logger, now });
-  return { paige, http, clock, answer, fixtures, link };
+  /** The service of a new launch of the app, on the same database: the app makes it at startup. */
+  const relaunch = () => new PaigePageService({ accountSource, api, cache, logger, now });
+  return { paige, relaunch, http, clock, answer, fixtures, link, logger };
 }
 
 describe('PaigePageService.getPaigePage', () => {
@@ -94,12 +97,13 @@ describe('PaigePageService.getPaigePage', () => {
     expect(page?.abilities[0]?.localised.properties.Damage?.label).toBe('Dégâts');
   });
 
-  it('reads the cache within the week', async () => {
-    const { paige, http, clock } = setUp();
+  it('gives the page kept in the cache at once, however old', async () => {
+    const { paige, relaunch, http, clock } = setUp();
     await paige.getPaigePage('en');
-    clock.now += DAY;
+    clock.now += 30 * DAY;
 
     await paige.getPaigePage('en');
+    await relaunch().getPaigePage('en');
 
     expect(http.requests).toHaveLength(6);
   });
@@ -114,15 +118,18 @@ describe('PaigePageService.getPaigePage', () => {
     await expect(paige.getPaigePage('en')).rejects.toBeInstanceOf(AppError);
   });
 
-  it('keeps the cached page when a refresh fails', async () => {
-    const { paige, answer, clock } = setUp();
+  it('keeps the cached page when the download of a launch fails', async () => {
+    const { paige, relaunch, answer, clock, logger } = setUp();
     await paige.getPaigePage('en');
-    clock.now += 8 * DAY;
+    clock.now += DAY;
     answer.handler = () => jsonResponse({ error: 'boom' }, 500);
 
-    const page = await paige.getPaigePage('en');
+    const page = await relaunch().refreshPaigePage('en');
 
     expect(page?.hero.tags[0]).toBe('Helpful');
+    expect(logger.entries.filter((entry) => entry.level === 'warn')).toMatchObject([
+      { scope: 'paige', message: 'Could not refresh the Paige page, using the cached one' },
+    ]);
   });
 
   it('keeps each language apart: French is downloaded even when English is cached', async () => {
@@ -133,6 +140,33 @@ describe('PaigePageService.getPaigePage', () => {
 
     expect(http.requests).toHaveLength(16);
     expect(page?.hero.tags[0]).toBe('Utile');
+  });
+
+  it('downloads the page again once per launch of the app, not more', async () => {
+    const { paige, relaunch, http, clock, answer, fixtures } = setUp();
+    await paige.getPaigePage('en');
+    // The page downloaded because none was kept is of this launch already.
+    await paige.refreshPaigePage('en');
+    expect(http.requests).toHaveLength(6);
+
+    // A game patch, then a new launch the next day: the kept page shows first, then the new one is
+    // downloaded once, however often the page asks.
+    const patched = structuredClone(FIXTURE_PAIGE_HERO.english) as {
+      starting_stats: { max_health: { value: number } };
+    };
+    patched.starting_stats.max_health.value = 700;
+    answer.handler = (request) =>
+      request.url.includes('/v1/assets/heroes/67') ? jsonResponse(patched) : fixtures(request);
+    clock.now += DAY;
+    const launch = relaunch();
+    const kept = await launch.getPaigePage('en');
+    const fresh = await launch.refreshPaigePage('en');
+    await launch.refreshPaigePage('en');
+    await launch.getPaigePage('en');
+
+    expect(kept?.stats.vitality[0]).toMatchObject({ key: 'health', value: 625 });
+    expect(fresh?.stats.vitality[0]).toMatchObject({ key: 'health', value: 700 });
+    expect(http.requests).toHaveLength(12);
   });
 
   it('reads the cache without an account once a page was downloaded', async () => {

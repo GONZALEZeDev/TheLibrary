@@ -2,8 +2,10 @@
  * The rules every catalogue of deadlock-api is kept by: the heroes, the items and the ranks.
  *
  * A catalogue changes with game patches only, so it is downloaded at most once a week and kept in
- * the database. When it cannot be refreshed (offline, deadlock-api unavailable or asked to pause,
- * asset budget spent), the last catalogue downloaded is used, however old.
+ * the database, unless its source decides otherwise (`CatalogueSource.isFresh`: the Paige page is
+ * downloaded again at each launch of the app). When it cannot be refreshed (offline, deadlock-api
+ * unavailable or asked to pause, asset budget spent), the last catalogue downloaded is used, however
+ * old.
  *
  * Until an account is linked, a catalogue is only read from the cache, whatever its age: the app
  * downloads nothing for a player who has not linked one. The reader enforces it itself, so no
@@ -28,6 +30,23 @@ import type { ApiCacheRepository } from './api-cache.repository';
 
 /** Time after which a cached catalogue is refreshed: one week. */
 const CACHE_TTL_MS = 7 * 24 * 60 * 60_000;
+
+/** When a cached catalogue was downloaded, and when the week of its freshness ends (Unix ms). */
+export interface CacheTimes {
+  readonly fetchedAt: number;
+  readonly expiresAt: number;
+}
+
+/**
+ * The rule of freshness of the catalogues that set none: fresh until its week ends.
+ *
+ * @param cached - When the cached catalogue was downloaded and when its week ends.
+ * @param now - The current time.
+ * @returns Whether the cached catalogue is served without a download.
+ */
+function freshForAWeek(cached: CacheTimes, now: number): boolean {
+  return cached.expiresAt > now;
+}
 
 /**
  * Schema of the image link of a cached entry: a link on the asset bucket, or none.
@@ -73,13 +92,17 @@ export interface CatalogueSource<Entry> {
    * account, and is downloaded whether one is linked or not.
    */
   readonly requiresAccount?: boolean;
+  /**
+   * Whether a cached catalogue is served as it is, without a download; by default until the week of
+   * its freshness ends. A catalogue downloaded after the current time is never served as fresh,
+   * whatever this says: the system clock moved backwards since.
+   */
+  readonly isFresh?: (cached: CacheTimes, now: number) => boolean;
 }
 
 /** The cached catalogue, with the times of its download and of the end of its freshness. */
-interface CachedEntries<Entry> {
+interface CachedEntries<Entry> extends CacheTimes {
   readonly entries: Entry[];
-  readonly fetchedAt: number;
-  readonly expiresAt: number;
 }
 
 /**
@@ -87,12 +110,12 @@ interface CachedEntries<Entry> {
  *
  * @param dependencies - The account, the cache, the logger and the clock.
  * @param source - The catalogue: where it is kept, how it is called and downloaded.
- * @returns A function that gives the catalogue: the cached one when fresh, the downloaded one
- *   otherwise (and cached), the stale cached one when the download fails. Without a linked account,
- *   nothing is downloaded (unless the catalogue does not require one): the cached one whatever its
- *   age, or an empty list. It throws AppError
- *   when the linked account cannot be read (an unreadable link is not "no account"), or when the
- *   download fails (a pause or a spent budget included) and nothing valid is cached. A call made
+ * @returns A function that gives the catalogue: the cached one when fresh (see
+ *   `CatalogueSource.isFresh`), the downloaded one otherwise (and cached), the stale cached one when
+ *   the download fails. Without a linked account, nothing is downloaded (unless the catalogue does
+ *   not require one): the cached one whatever its age, or an empty list. It throws AppError when the
+ *   linked account cannot be read (an unreadable link is not "no account"), or when the download
+ *   fails (a pause or a spent budget included) and nothing valid is cached. A call made
  *   while another one is running gets the answer of that run: the account, the cache and the
  *   download are read once, and a failed refresh is logged once. Once a run has settled, however it
  *   ended, the next call starts a new one.
@@ -151,7 +174,8 @@ async function readCatalogue<Entry>(
   const now = dependencies.now();
   // A catalogue downloaded after `now` means that the system clock moved backwards since: it would
   // stay fresh until the clock catches up, so it is downloaded again instead.
-  if (cached !== null && cached.fetchedAt <= now && cached.expiresAt > now) {
+  const isFresh = source.isFresh ?? freshForAWeek;
+  if (cached !== null && cached.fetchedAt <= now && isFresh(cached, now)) {
     return cached.entries;
   }
   let entries: Entry[];

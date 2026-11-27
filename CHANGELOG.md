@@ -10,6 +10,10 @@ Fixed and Removed.
 
 ## [Unreleased]
 
+### Fixed
+
+- The Paige tab could show her values from before a game patch for up to a week. It now downloads them again once at each launch of the app, and shows the new ones as soon as they are in.
+
 ## [0.1.6] - 2026-11-27
 
 ### Changed

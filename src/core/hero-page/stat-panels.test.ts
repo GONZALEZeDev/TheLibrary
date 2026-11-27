@@ -46,7 +46,7 @@ describe('buildStatPanels', () => {
     const rows = buildStatPanels(PAIGE, WEAPON).weapon.rows;
 
     expect(row(rows, 'dps')).toMatchObject({ value: 64, unit: null, perLevel: null });
-    expect(row(rows, 'bulletDamage')).toMatchObject({ value: 32, perLevel: 0.61 });
+    expect(row(rows, 'bulletDamage')).toMatchObject({ value: 32, perLevel: 0.641 });
     expect(row(rows, 'ammo').value).toBe(14);
     expect(row(rows, 'bulletsPerSecond').value).toBe(2);
     expect(row(rows, 'reloadTime')).toMatchObject({ value: 2.5, unit: 'seconds' });
@@ -71,7 +71,7 @@ describe('buildStatPanels', () => {
       'stamina',
       'staminaCooldown',
     ]);
-    expect(row(vitality, 'health')).toMatchObject({ value: 680, perLevel: 31 });
+    expect(row(vitality, 'health')).toMatchObject({ value: 625, perLevel: 33 });
     expect(row(vitality, 'healthRegen').value).toBe(2);
     expect(row(vitality, 'moveSpeed')).toMatchObject({ value: 6.9, unit: 'metresPerSecond' });
     expect(row(vitality, 'sprintSpeed').value).toBe(3.5);

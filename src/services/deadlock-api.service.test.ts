@@ -43,6 +43,7 @@ import type { HttpRequest, HttpResponse } from '../ports/http-client.port';
 import { createTestDatabase, testAccountId, testMatchId } from '../test/test-data';
 import {
   DeadlockApiService,
+  MAX_ASSET_BUDGET_WAITS,
   type AnalyticsFetch,
   type MetadataFetch,
 } from './deadlock-api.service';
@@ -405,14 +406,17 @@ describe('DeadlockApiService.fetchHeroes', () => {
     }
   });
 
-  it('allows 2 requests per second', async () => {
-    const { api, clock } = setUp();
+  it('allows 2 requests per second, and sends a third once the second is over', async () => {
+    const { api, http, sleeper } = setUp();
 
     await api.fetchHeroes();
     await api.fetchHeroes();
-    await expect(api.fetchHeroes()).rejects.toMatchObject({ kind: 'rate_limited' });
-    clock.now += 1_000;
     await expect(api.fetchHeroes()).resolves.not.toHaveLength(0);
+
+    // The third request waited for the window to move instead of being refused, and was sent then.
+    expect(sleeper.calls).toEqual([1_000]);
+    expect(sleeper.sentWhileSleeping).toEqual([2]);
+    expect(http.requests).toHaveLength(3);
   });
 
   it('respects a pause asked for on another endpoint', async () => {
@@ -454,8 +458,8 @@ describe('DeadlockApiService.fetchMapLayout', () => {
     expect(layout.lanes[0]?.color).toBe('#29b1cc');
   });
 
-  it('fetchMapLayout is refused when the asset budget is spent', async () => {
-    const { api, http } = setUp((request) =>
+  it('fetchMapLayout waits for the asset budget when it is spent', async () => {
+    const { api, http, sleeper } = setUp((request) =>
       request.url === mapRequest().url
         ? jsonResponse(MAP_BODY)
         : createFixtureApi({ now: START, matchCount: 5 })(request),
@@ -463,12 +467,12 @@ describe('DeadlockApiService.fetchMapLayout', () => {
     await api.fetchHeroes();
     await api.fetchItemCatalogue();
 
-    await expect(api.fetchMapLayout()).rejects.toMatchObject({
-      kind: 'rate_limited',
-      context: { nextAllowedAt: START + 1_000 },
-    });
-    // Refused before it was sent.
-    expect(http.requests).toHaveLength(2);
+    await expect(api.fetchMapLayout()).resolves.toMatchObject({ radius: 10_752 });
+
+    // Sent once the second of the two catalogues was over, not before.
+    expect(sleeper.calls).toEqual([1_000]);
+    expect(sleeper.sentWhileSleeping).toEqual([2]);
+    expect(http.requests.map((request) => request.url)).toContain(mapRequest().url);
   });
 });
 
@@ -494,7 +498,7 @@ describe('DeadlockApiService asset requests', () => {
   });
 
   it('fetches the item and rank catalogues through the asset budget', async () => {
-    const { api, http } = setUp();
+    const { api, http, sleeper } = setUp();
 
     const items = await api.fetchItemCatalogue();
     const ranks = await api.fetchRankCatalogue();
@@ -525,18 +529,23 @@ describe('DeadlockApiService asset requests', () => {
     for (const rank of ranks) {
       expect(rank.imageUrl?.startsWith(ASSET_IMAGE_ORIGIN)).toBe(true);
     }
-    // The three requests share one budget: the hero catalogue is refused in the same second.
-    await expect(api.fetchHeroes()).rejects.toMatchObject({ kind: 'rate_limited' });
-    expect(http.requests).toHaveLength(2);
+    // The three requests share one budget: the hero catalogue waits for the next second.
+    await expect(api.fetchHeroes()).resolves.not.toHaveLength(0);
+    expect(sleeper.calls).toEqual([1_000]);
+    expect(http.requests).toHaveLength(3);
   });
 
-  it('refuses the third asset request of a second without sending it', async () => {
-    const { api, http, clock } = setUp();
+  it('refuses an asset request whose budget is still spent after its waits, without sending it', async () => {
+    const { api, http, clock, sleeper } = setUp();
     await api.fetchHeroes();
     await api.fetchItemCatalogue();
+    // Time stands still while the service waits: the budget of this second stays spent.
+    sleeper.during = () => {
+      clock.now -= sleeper.calls.at(-1) ?? 0;
+    };
 
-    // Whichever catalogue asks, the third request of the second is refused with the time it may
-    // be sent, and none of them reaches the network.
+    // Whichever catalogue asks, the third request of the second waits as long as it may, then is
+    // refused with the time it may be sent, and none of them reaches the network.
     for (const refused of [
       () => api.fetchHeroes(),
       () => api.fetchItemCatalogue(),
@@ -547,9 +556,11 @@ describe('DeadlockApiService asset requests', () => {
         context: { nextAllowedAt: START + 1_000 },
       });
     }
+    expect(sleeper.calls).toHaveLength(3 * MAX_ASSET_BUDGET_WAITS);
     expect(http.requests).toHaveLength(2);
 
     // A refused request is not counted: a second later, the budget is whole again.
+    sleeper.during = undefined;
     clock.now += 1_000;
     await expect(api.fetchRankCatalogue()).resolves.toHaveLength(12);
     await expect(api.fetchItemCatalogue()).resolves.not.toHaveLength(0);

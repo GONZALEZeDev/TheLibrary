@@ -5,16 +5,18 @@
  *
  * All three go through `AnalysisService`. Reading the analysis never projects or downloads anything:
  * a page asks for the projection of its match with {@link useAnalyseMatch} when the analysis says it
- * is `pending`, and for the community data with {@link useCommunityRefresh} when its analysis tab
- * opens; the analysis is read again once the data is in the cache. Query keys never contain an
+ * is `pending`, and for the community data with {@link useCommunityRefresh} behind its loading gate,
+ * which its analysis tab watches ({@link useCommunityFetching}); the analysis is read again once the
+ * data is in the cache. Query keys never contain an
  * account id: the service resolves the account itself, and keys are logged when a query or a mutation
  * fails.
  *
  * @packageDocumentation
  */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useIsFetching, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { MatchId } from '../../../core/domain/match';
 import type { MatchAnalysisView } from '../../../services/analysis-view';
+import type { CommunityState } from '../../../services/community-placement';
 import { isSuspensionRefusal } from '../../../services/sync.service';
 import { useServices } from '../../app/ServicesContext';
 import { DETAILS_QUERY_KEY, DETAILS_SUMMARY_QUERY_KEY } from '../matches/use-matches';
@@ -28,8 +30,8 @@ import { BREAKDOWN_QUERY_KEY_OF } from './use-match-breakdown';
  * these queries (see `resetAccountData`), or a page would keep the answer given for the previous
  * account. They are deliberately not refreshed by `useRefreshOnSync`: the detail queue reports every
  * match it records, up to once a second, and the community data does not change with them. It is
- * downloaded when the analysis tab of a match opens and kept for a day by the service, which says
- * `fresh` until then.
+ * downloaded when the page of a match opens (behind its loading gate) and kept for a day by the
+ * service, which says `fresh` until then.
  */
 export const ANALYSIS_COMMUNITY_QUERY_KEY = ['analysis-community'] as const;
 
@@ -55,6 +57,33 @@ const ANALYSIS_STALE_TIME_MS = 5_000;
  */
 function analysisKey(matchId: MatchId) {
   return [...DETAILS_QUERY_KEY, 'analysis', matchId] as const;
+}
+
+/**
+ * The key of the download of the community data of a match, under
+ * {@link ANALYSIS_COMMUNITY_QUERY_KEY}.
+ *
+ * @param matchId - The match.
+ * @returns The query key.
+ */
+function communityKey(matchId: MatchId) {
+  return [...ANALYSIS_COMMUNITY_QUERY_KEY, matchId] as const;
+}
+
+/**
+ * Tell whether the community data of an analysed match has to be asked for
+ * ({@link useCommunityRefresh}): by the analysis tab that shows it, and by the match page behind its
+ * loading gate.
+ *
+ * It is when the match is not compared with a fresh cohort: the data was never downloaded
+ * (`missing`), it could not be used (`unavailable`: asking again costs a read of the cache, and the
+ * service downloads only when something is due), or it is a day old or more (`stale`).
+ *
+ * @param community - Where the comparison with the community stands.
+ * @returns Whether to ask the service for the community data.
+ */
+export function needsCommunityData(community: CommunityState): boolean {
+  return community.kind !== 'available' || community.stale;
 }
 
 /**
@@ -157,12 +186,13 @@ export function useAnalyseMatch(matchId: MatchId) {
  * query asks again for neither, since its key does not change, it does not retry and the window focus
  * does not refetch it. Only `unavailable` leaves the analysis alone: nothing new is in the cache.
  *
- * The query has no `staleTime` of its own: every time the analysis tab opens it asks again (the
- * tabs unmount the panels they do not show, so coming back to the tab opens it again), which costs
- * nothing while the data is fresh (the service answers `fresh` without a request), and is how an
- * `unavailable` answer is tried again at the next opening. For the same reason it does not retry a
- * failure by itself: the failure of a tab that is open is not going away, and the next opening asks
- * again.
+ * The match page is the one that asks, behind its loading gate (see `useMatchTabsReady`), and the
+ * analysis tab only watches the query ({@link useCommunityFetching}): one ask per opening of the
+ * page. The query has no `staleTime` of its own: every time a page of the match opens it asks
+ * again, which costs nothing while the data is fresh (the service answers `fresh` without a
+ * request), and is how an `unavailable` answer is tried again at the next opening. For the same
+ * reason it does not retry a failure by itself: the failure of a page that is open is not going
+ * away, and the next opening asks again.
  *
  * A rejection (the database could not store the data) stays a query error: the page shows it as "no
  * comparison with your rank for now", never as an error page, since the analysis itself, compared
@@ -182,7 +212,7 @@ export function useCommunityRefresh(matchId: MatchId, enabled: boolean) {
   const { analysis } = useServices();
   const queryClient = useQueryClient();
   return useQuery({
-    queryKey: [...ANALYSIS_COMMUNITY_QUERY_KEY, matchId],
+    queryKey: communityKey(matchId),
     queryFn: async () => {
       const outcome = await analysis.refreshCommunity(matchId);
       if (outcome !== 'unavailable') {
@@ -193,4 +223,16 @@ export function useCommunityRefresh(matchId: MatchId, enabled: boolean) {
     enabled,
     retry: false,
   });
+}
+
+/**
+ * Whether the community data of a match is being downloaded right now, by the page of the match
+ * ({@link useCommunityRefresh}). The analysis tab says that the comparison is loading while it is: it
+ * only watches, and never asks for the data itself, so an opening of the page asks once.
+ *
+ * @param matchId - The match.
+ * @returns `true` while the download of the community data of the match runs.
+ */
+export function useCommunityFetching(matchId: MatchId): boolean {
+  return useIsFetching({ queryKey: communityKey(matchId) }) > 0;
 }

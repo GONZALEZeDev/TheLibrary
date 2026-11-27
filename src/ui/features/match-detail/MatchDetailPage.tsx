@@ -35,10 +35,13 @@
  * when it is.
  *
  * Under the header, the page first shows a loading gate ("Analysing the match…"): until the view of
- * the match is read, and its analysis too for an archived match, and for a short minimum every time
- * another match opens, even one already read, so that the player sees the app look at the match they
- * picked. Opening another tab of the same match shows no gate, and a match returned to through the
- * browser history (back, forward) skips the minimum, so that it comes back where the player left it.
+ * the match is read, and for an archived match its analysis and the data of all its tabs too
+ * (`useMatchTabsReady`: the timeline and its replay, the damage, the players, the comparison with the
+ * community when it is due), so that no tab fills in after the gate opens; and for a short minimum
+ * every time another match opens, even one already read, so that the player sees the app look at the
+ * match they picked. Opening another tab of the same match shows no gate (its data is read already),
+ * and a match returned to through the browser history (back, forward) skips the minimum, so that it
+ * comes back where the player left it.
  *
  * Above the title of every state of the page is a link back to the match list: a step back in the
  * browser history when the match was opened from the list (the filters and the scroll of the list
@@ -79,6 +82,7 @@ import { PlayersTab } from './PlayersTab';
 import { TimelineTab } from './TimelineTab';
 import { useMatchAnalysis } from './use-match-analysis';
 import { useMatchDetail, useRetryDetail } from './use-match-detail';
+import { useMatchTabsReady } from './use-match-tabs-ready';
 
 /**
  * Typed access to the parameters and the search parameters of the `/matches/$matchId` route (see
@@ -379,19 +383,23 @@ export function MatchDetailPage() {
   const viewKind = detail.data?.kind;
   // The loading gate: the page shows it until it knows what to show of the match, and for a short
   // minimum each time another match opens, even from the cache (see `components/LoadingGate`). For
-  // an archived match, that is once its analysis is read too: the tabs never open on an analysis
-  // still loading. The analysis is read here for that, the same query as the run of the analysis
-  // and the analysis tab read under the gate.
+  // an archived match, that is once its analysis and every one of its tabs are read too (the replay
+  // of the timeline built, the community data downloaded when it is due): no tab ever opens on data
+  // still loading. They are read here for that, the same queries as the run of the analysis and the
+  // tabs read under the gate.
   const archived = viewKind === 'ready';
   const analysis = useMatchAnalysis(matchId, { enabled: archived });
+  const tabsReady = useMatchTabsReady(matchId, archived, analysis.data);
   const detailAnswered = detail.data !== undefined || detail.isError;
   const analysisAnswered = analysis.data !== undefined || analysis.isError;
   // A match returned to through the browser history shows as soon as it is read, so that the router
   // finds it whole when it gives its scroll back.
   const returned = useReturnedThroughHistory();
-  const gated = useMinimumLoading(detailAnswered && (!archived || analysisAnswered), matchId, {
-    skipMinimum: returned,
-  });
+  const gated = useMinimumLoading(
+    detailAnswered && (!archived || (analysisAnswered && tabsReady)),
+    matchId,
+    { skipMinimum: returned },
+  );
   // An evicted match (its archive file was removed to free space, and the match is inside the 90
   // days) was put back in the queue when the service read it, but nothing starts the queue for it:
   // the next scheduled synchronisation would take it, which can be a long wait for a page the player

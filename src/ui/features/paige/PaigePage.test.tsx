@@ -49,8 +49,8 @@ describe('PaigePage', () => {
     expect(screen.getByText('Booksmart')).toBeInTheDocument();
     const health = screen.getByText('Health').closest('li');
     expect(health).not.toBeNull();
-    expect(within(health as HTMLElement).getByText('680')).toBeInTheDocument();
-    expect(within(health as HTMLElement).getByText('+31')).toBeInTheDocument();
+    expect(within(health as HTMLElement).getByText('625')).toBeInTheDocument();
+    expect(within(health as HTMLElement).getByText('+33')).toBeInTheDocument();
     for (const name of ['Bookwyrm', 'Plot Armor', 'Captivating Read', 'Rallying Charge']) {
       expect(screen.getByRole('button', { name })).toBeInTheDocument();
     }
@@ -76,7 +76,7 @@ describe('PaigePage', () => {
     expect(await screen.findByText('Utile')).toBeInTheDocument();
     const bulletDamage = screen.getByText('Dégâts par balle').closest('li');
     expect(within(bulletDamage as HTMLElement).getByText('32')).toBeInTheDocument();
-    expect(within(bulletDamage as HTMLElement).getByText('+0,61')).toBeInTheDocument();
+    expect(within(bulletDamage as HTMLElement).getByText('+0,64')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Bookwyrm' })).toBeInTheDocument();
   });
 

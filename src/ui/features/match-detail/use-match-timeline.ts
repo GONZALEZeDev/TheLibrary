@@ -12,20 +12,25 @@
 import { useQuery } from '@tanstack/react-query';
 import type { MatchId } from '../../../core/domain/match';
 import { useServices } from '../../app/ServicesContext';
-import { BREAKDOWN_QUERY_KEY_OF } from './use-match-breakdown';
+import { BREAKDOWN_QUERY_KEY_OF, TAB_STALE_TIME_MS } from './use-match-breakdown';
 
 /**
  * The timeline tab of one match: the souls of the player against their lane opponents, their kills,
  * purchases and deaths, and which deaths were avoidable; or why there is nothing to show.
  *
  * @param matchId - The match.
+ * @param options - How the tab is asked for.
+ * @param options.enabled - Whether to read it now; `true` by default. The match page reads it
+ *   behind its loading gate only for an archived match (see `useMatchTabsReady`).
  * @returns The TanStack Query result holding the view of the tab: `timeline`, `not_archived` or
  *   `unreadable`.
  */
-export function useTimelineTab(matchId: MatchId) {
+export function useTimelineTab(matchId: MatchId, options: { readonly enabled?: boolean } = {}) {
   const { timeline } = useServices();
   return useQuery({
     queryKey: [...BREAKDOWN_QUERY_KEY_OF(matchId), 'timeline'],
     queryFn: () => timeline.getTimelineTab(matchId),
+    enabled: options.enabled ?? true,
+    staleTime: TAB_STALE_TIME_MS,
   });
 }

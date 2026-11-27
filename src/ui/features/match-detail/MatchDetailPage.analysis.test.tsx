@@ -70,6 +70,7 @@ import { formatDuration } from '../../format/duration';
 import { createI18n } from '../../i18n/i18n';
 import { DETAILS_QUERY_KEY } from '../matches/use-matches';
 import { formatPhaseTotal, metricLabel } from './analysis-format';
+import { MAX_TABS_WAIT_MS } from './use-match-tabs-ready';
 
 /**
  * Size of the synthetic history of the test that opens a match inside the window of the habits of
@@ -394,14 +395,57 @@ describe('MatchDetailPage analysis', () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 
-  it('the community part loads after the local analysis', async () => {
+  it('waits behind the gate for the community data, then shows the analysis compared with it', async () => {
     const { handler, release } = holdCommunityBack();
     const testServices = await synchronised({ handler });
+    // Whether the page says at any moment that the comparison is loading.
+    let loadingShown = false;
+    const observer = new MutationObserver(() => {
+      loadingShown ||= screen.queryByText('Loading the comparison with your rank…') !== null;
+    });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
 
     try {
       await renderMatchDetail(ARCHIVED_ID, testServices);
 
-      // The local analysis is on the page while the community data is still on its way.
+      // The data is on its way, and every other read of the page has ended: still the gate.
+      await waitFor(() => {
+        expect(communityRequestCount(testServices)).toBeGreaterThan(0);
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
+      });
+      expect(screen.getByText('Analysing the match…')).toBeInTheDocument();
+      expect(screen.queryByRole('table', { name: 'By phase' })).not.toBeInTheDocument();
+    } finally {
+      // Whatever the assertions said, the data comes: a failing test leaves no download blocked.
+      release();
+    }
+
+    // The analysis opens compared with the community at once: it never says it is loading.
+    await findComparison();
+    observer.disconnect();
+    expect(screen.getByRole('table', { name: 'By phase' })).toBeInTheDocument();
+    expect(screen.getByText(/^Compared with Paige players/)).toBeInTheDocument();
+    expect(loadingShown).toBe(false);
+  });
+
+  it('stops waiting for a slow download, and the analysis says the comparison is loading', async () => {
+    const { handler, release } = holdCommunityBack();
+    const testServices = await synchronised({ handler });
+    // The timers of the page are the test's, and the real time goes on for everything else.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
+    try {
+      await renderMatchDetail(ARCHIVED_ID, testServices);
+      await waitFor(() => {
+        expect(communityRequestCount(testServices)).toBeGreaterThan(0);
+      });
+      expect(screen.getByText('Analysing the match…')).toBeInTheDocument();
+      await act(() => vi.advanceTimersByTimeAsync(MAX_TABS_WAIT_MS));
+
+      // Past the limit, the local analysis is on the page while the community data is still on
+      // its way.
       expect(await screen.findByRole('table', { name: 'By phase' })).toBeInTheDocument();
       expect(screen.getAllByRole('heading', { level: 3 }).length).toBeGreaterThan(0);
       // The line above the families says so, once; the metrics that have a reference in the
@@ -414,15 +458,15 @@ describe('MatchDetailPage analysis', () => {
     } finally {
       // Whatever the assertions said, the data comes: a failing test leaves no download blocked.
       release();
+      vi.useRealTimers();
     }
 
     await findComparison();
-    expect(communityRequestCount(testServices)).toBeGreaterThan(0);
     expect(screen.queryByText('Loading the comparison with your rank…')).not.toBeInTheDocument();
     expect(screen.getByText(/^Compared with Paige players/)).toBeInTheDocument();
   });
 
-  it('does not say the comparison is loading while it asks again about a cohort that is too small', async () => {
+  it('asks again behind the gate about a cohort that is too small, then never says the comparison is loading', async () => {
     const testServices = await synchronised();
     const analysis = await readyAnalysis(testServices.services, ARCHIVED_ID);
     // The cache holds no data here: play a service whose data was downloaded and holds too few
@@ -445,26 +489,24 @@ describe('MatchDetailPage analysis', () => {
     try {
       await renderMatchDetail(ARCHIVED_ID, testServices);
 
-      // The page asks again, as it does at every opening, and the answer is on its way...
-      expect(await screen.findByRole('table', { name: 'By phase' })).toBeInTheDocument();
+      // The page asks again behind its gate, as it does at every opening, and the answer is on its
+      // way.
       await waitFor(() => {
         expect(refresh).toHaveBeenCalledTimes(1);
       });
-      // ... but it is not data that is coming, so nothing says it is loading. The line above the
-      // families says there is no comparison, once; the metrics are a dash.
-      expect(screen.getByText('No comparison with your rank for now')).toBeInTheDocument();
-      expect(screen.queryByText('Loading the comparison with your rank…')).not.toBeInTheDocument();
+      expect(screen.getByText('Analysing the match…')).toBeInTheDocument();
       expect(read).toHaveBeenCalledTimes(1);
     } finally {
       release();
     }
 
     // The answer is `fresh`, which may mean that another page stored the data meanwhile: the
-    // analysis is read again, once. The view is still without data here, and the page does not ask
-    // again for it: no loop.
-    await waitFor(() => {
-      expect(read).toHaveBeenCalledTimes(2);
-    });
+    // analysis is read again, once, and the page opens. It is not data that came, so nothing says it
+    // is loading: the line above the families says there is no comparison, once.
+    expect(await screen.findByText('No comparison with your rank for now')).toBeInTheDocument();
+    expect(screen.queryByText('Loading the comparison with your rank…')).not.toBeInTheDocument();
+    expect(read).toHaveBeenCalledTimes(2);
+    // The view is still without data here, and the page does not ask again for it: no loop.
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
     });
@@ -507,12 +549,8 @@ describe('MatchDetailPage analysis', () => {
 
     await renderMatchDetail(ARCHIVED_ID, testServices);
 
-    // The copy of the cache is shown at once, dated since it is stale...
-    expect(await screen.findByText(/^Compared with Paige players.*\(from /)).toBeInTheDocument();
-    // ... and the page downloads a new one, which is not dated.
-    await waitFor(() => {
-      expect(screen.getByText(/^Compared with Paige players/)).not.toHaveTextContent('(from ');
-    });
+    // The page downloads a new copy behind its gate, and opens on it: not dated, since it is fresh.
+    expect(await screen.findByText(/^Compared with Paige players/)).not.toHaveTextContent('(from ');
     expect(communityRequestCount(testServices)).toBeGreaterThan(requestsBefore);
   });
 

@@ -33,10 +33,10 @@ describe('parseHeroDetail', () => {
     expect(hero.id).toBe(67);
     expect(hero.name).toBe('Paige');
     expect(hero.styleColor).toBe('#258F63');
-    expect(hero.startingStats.max_health).toBe(680);
+    expect(hero.startingStats.max_health).toBe(625);
     expect(hero.startingStats.stamina_regen_per_second).toBeCloseTo(0.222222, 6);
-    expect(hero.levelUpgrades.MODIFIER_VALUE_BASE_HEALTH_FROM_LEVEL).toBe(31);
-    expect(hero.levelUpgrades.MODIFIER_VALUE_BASE_BULLET_DAMAGE_FROM_LEVEL).toBe(0.61);
+    expect(hero.levelUpgrades.MODIFIER_VALUE_BASE_HEALTH_FROM_LEVEL).toBe(33);
+    expect(hero.levelUpgrades.MODIFIER_VALUE_BASE_BULLET_DAMAGE_FROM_LEVEL).toBe(0.641);
     expect(hero.spiritScaling).toEqual({ EHeavyMeleeDamage: 0.45 });
   });
 

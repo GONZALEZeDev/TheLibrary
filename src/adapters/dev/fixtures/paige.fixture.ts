@@ -1,6 +1,7 @@
 /**
  * Paige as deadlock-api describes her: her hero entry, her weapon and her four abilities, in English
- * and in French, as the per-entry asset endpoints answered on 2026-11-02.
+ * and in French, as the per-entry asset endpoints answered on 2026-11-02, with the health and bullet
+ * damage of the patch of 2026-11-26 (checked against the API on 2026-11-27).
  *
  * The answers are trimmed to the fields the app reads; the values are the real ones, so that the
  * tests check the stats and the upgrade tiers against the game. One inline icon of the descriptions
@@ -52,7 +53,7 @@ export const FIXTURE_PAIGE_HERO: Readonly<Record<ApiLanguage, unknown>> = {
         value: 120,
       },
       max_health: {
-        value: 680,
+        value: 625,
       },
       weapon_power: {
         value: 0,
@@ -107,9 +108,9 @@ export const FIXTURE_PAIGE_HERO: Readonly<Record<ApiLanguage, unknown>> = {
       },
     },
     standard_level_up_upgrades: {
-      MODIFIER_VALUE_BASE_BULLET_DAMAGE_FROM_LEVEL: 0.61,
+      MODIFIER_VALUE_BASE_BULLET_DAMAGE_FROM_LEVEL: 0.641,
       MODIFIER_VALUE_BASE_BULLET_DAMAGE_FROM_LEVEL_ALT_FIRE: 0,
-      MODIFIER_VALUE_BASE_HEALTH_FROM_LEVEL: 31,
+      MODIFIER_VALUE_BASE_HEALTH_FROM_LEVEL: 33,
       MODIFIER_VALUE_BASE_MELEE_DAMAGE_FROM_LEVEL: 1.2,
       MODIFIER_VALUE_BONUS_ATTACK_RANGE: 0,
       MODIFIER_VALUE_BOON_COUNT: 1,
@@ -180,7 +181,7 @@ export const FIXTURE_PAIGE_HERO: Readonly<Record<ApiLanguage, unknown>> = {
         value: 120,
       },
       max_health: {
-        value: 680,
+        value: 625,
       },
       weapon_power: {
         value: 0,
@@ -235,9 +236,9 @@ export const FIXTURE_PAIGE_HERO: Readonly<Record<ApiLanguage, unknown>> = {
       },
     },
     standard_level_up_upgrades: {
-      MODIFIER_VALUE_BASE_BULLET_DAMAGE_FROM_LEVEL: 0.61,
+      MODIFIER_VALUE_BASE_BULLET_DAMAGE_FROM_LEVEL: 0.641,
       MODIFIER_VALUE_BASE_BULLET_DAMAGE_FROM_LEVEL_ALT_FIRE: 0,
-      MODIFIER_VALUE_BASE_HEALTH_FROM_LEVEL: 31,
+      MODIFIER_VALUE_BASE_HEALTH_FROM_LEVEL: 33,
       MODIFIER_VALUE_BASE_MELEE_DAMAGE_FROM_LEVEL: 1.2,
       MODIFIER_VALUE_BONUS_ATTACK_RANGE: 0,
       MODIFIER_VALUE_BOON_COUNT: 1,

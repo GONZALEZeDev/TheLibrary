@@ -4,12 +4,14 @@
  * player.
  *
  * The section reads the analysis from the local database (`useMatchAnalysis`), which is quick, and
- * shows it at once. The comparison with the community comes after: the section asks for the community
- * data when it shows the analysis (`useCommunityRefresh`), the analysis is read again when the data is
- * in (or when the cache already held it), and until then the line above the metrics says that the
- * comparison is loading. When the data cannot come (no network, a cohort too small, a refresh that
- * failed) that line says there is no comparison with the rank for now; the section never turns that
- * into an error, since the comparison with the habits stands by itself.
+ * shows it at once. The comparison with the community is asked for by the page, behind its loading
+ * gate (`useCommunityRefresh`, from `useMatchTabsReady`), and the analysis is read again when the
+ * data is in (or when the cache already held it): the section usually opens with it. When the gate
+ * stopped waiting for a slow download, the section watches it (`useCommunityFetching`), and until it
+ * ends the line above the metrics says that the comparison is loading. When the data cannot come
+ * (no network, a cohort too small, a refresh that failed) that line says there is no comparison
+ * with the rank for now; the section never turns that into an error, since the comparison with the
+ * habits stands by itself.
  *
  * What the section shows depends on the state of the analysis:
  * - `ready`: the summary, the phase table and the families, in a section whose title (hidden, for
@@ -31,13 +33,12 @@
 import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { MatchId } from '../../../core/domain/match';
-import type { CommunityState } from '../../../services/community-placement';
 import { StatusLine } from '../../components/StatusLine';
 import { useAnalysisRun } from './AnalysisRun';
 import { InsightSummary } from './InsightSummary';
 import { MetricFamilies } from './MetricFamilies';
 import { PhaseTable } from './PhaseTable';
-import { useCommunityRefresh, useMatchAnalysis } from './use-match-analysis';
+import { useCommunityFetching, useMatchAnalysis } from './use-match-analysis';
 
 /** Props of {@link AnalysisSection}. */
 export interface AnalysisSectionProps {
@@ -47,20 +48,6 @@ export interface AnalysisSectionProps {
    * mounts both again, without what they kept of the first one.
    */
   readonly matchId: MatchId;
-}
-
-/**
- * Tell whether the community data has to be asked for.
- *
- * It is when the match is not compared with a fresh cohort: the data was never downloaded
- * (`missing`), it could not be used (`unavailable`: asking again costs a read of the cache, and the
- * service downloads only when something is due), or it is a day old or more (`stale`).
- *
- * @param community - Where the comparison with the community stands.
- * @returns Whether to ask the service for the community data.
- */
-function needsCommunityData(community: CommunityState): boolean {
-  return community.kind !== 'available' || community.stale;
 }
 
 /**
@@ -85,10 +72,9 @@ export function AnalysisSection({ matchId }: AnalysisSectionProps) {
   const view =
     read?.kind === 'pending' && analysedReady && lastAnalysis !== null ? lastAnalysis : read;
 
-  // The data is asked for only once there is an analysis to compare: for any other state the
-  // service would download nothing anyway.
-  const community = view?.kind === 'ready' ? view.analysis.community : null;
-  const refresh = useCommunityRefresh(matchId, community !== null && needsCommunityData(community));
+  // The page asks for the community data behind its loading gate (`useMatchTabsReady`); the section
+  // only watches the download, which still runs when the gate stopped waiting for it.
+  const communityFetching = useCommunityFetching(matchId);
 
   if (view === undefined) {
     // While the analysis is read (from the local database, so in a blink) nothing is shown. A failed
@@ -124,7 +110,7 @@ export function AnalysisSection({ matchId }: AnalysisSectionProps) {
               // A download under way makes the missing comparisons "loading", when the data was
               // never downloaded: a cohort that is known to be too small is not coming. A refresh
               // that failed is no longer fetching: the line says there is no comparison for now.
-              communityLoading={view.analysis.community.kind === 'missing' && refresh.isFetching}
+              communityLoading={view.analysis.community.kind === 'missing' && communityFetching}
             />
           </div>
         </section>

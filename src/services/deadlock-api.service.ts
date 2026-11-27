@@ -91,8 +91,9 @@ import type { Logger } from '../ports/logger.port';
 import type { SyncStateRepository } from './sync-state.repository';
 
 /**
- * How many times a request of the hero page waits for the asset budget before it is refused: a
- * page needs up to ten entries, two a second, and the catalogues may be downloading too.
+ * How many times an asset request waits for the asset budget before it is refused: the hero page
+ * needs up to ten entries, two a second, and the match page reads up to four catalogues at once (the
+ * heroes, the items, the ranks and the map, behind its loading gate).
  */
 export const MAX_ASSET_BUDGET_WAITS = 10;
 
@@ -343,7 +344,7 @@ export class DeadlockApiService {
    *
    * @returns The playable heroes, with their English names, small portraits and loadouts.
    * @throws AppError of kind `rate_limited` when deadlock-api asked to pause or the budget is
-   *   exhausted, or any kind of {@link DeadlockApiService.fetchMatchHistory}.
+   *   still exhausted after the waits, or any kind of {@link DeadlockApiService.fetchMatchHistory}.
    */
   fetchHeroes(): Promise<HeroAsset[]> {
     return this.#fetchAsset(heroesRequest(), parseHeroAssets);
@@ -360,7 +361,7 @@ export class DeadlockApiService {
    *
    * @returns The readable entries.
    * @throws AppError of kind `rate_limited` when deadlock-api asked to pause or the budget is
-   *   exhausted, `invalid_payload` when the answer holds no readable entry (an empty catalogue is
+   *   still exhausted after the waits, `invalid_payload` when the answer holds no readable entry (an empty catalogue is
    *   no catalogue: the caller treats it as a failed download), or any kind of
    *   {@link DeadlockApiService.fetchMatchHistory}.
    */
@@ -406,9 +407,8 @@ export class DeadlockApiService {
    * Download and validate one hero entry, for the hero page.
    *
    * The hero page downloads several entries in a row (the hero, its weapon, its four abilities, in
-   * one or two languages), more than the asset budget lets through in a second: unlike the
-   * catalogues, these requests wait for the budget instead of being refused (see
-   * `#fetchAssetWhenAllowed`).
+   * one or two languages), more than the asset budget lets through in a second: like every asset
+   * request, these wait for the budget instead of being refused (see `#fetchAsset`).
    *
    * @param heroId - The hero.
    * @param language - The language of the texts.
@@ -417,7 +417,7 @@ export class DeadlockApiService {
    *   the answer is not a hero with its loadout, or any kind of a failed request.
    */
   fetchHeroDetail(heroId: HeroId, language: ApiLanguage): Promise<HeroDetail> {
-    return this.#fetchAssetWhenAllowed(heroDetailRequest(heroId, language), parseHeroDetail);
+    return this.#fetchAsset(heroDetailRequest(heroId, language), parseHeroDetail);
   }
 
   /**
@@ -431,7 +431,7 @@ export class DeadlockApiService {
    * @throws AppError, as {@link DeadlockApiService.fetchHeroDetail}.
    */
   fetchAbilityDetail(className: string, language: ApiLanguage): Promise<AbilityDetail> {
-    return this.#fetchAssetWhenAllowed(itemDetailRequest(className, language), parseAbilityDetail);
+    return this.#fetchAsset(itemDetailRequest(className, language), parseAbilityDetail);
   }
 
   /**
@@ -444,24 +444,7 @@ export class DeadlockApiService {
    * @throws AppError, as {@link DeadlockApiService.fetchHeroDetail}.
    */
   fetchWeaponDetail(className: string): Promise<WeaponDetail> {
-    return this.#fetchAssetWhenAllowed(itemDetailRequest(className, 'english'), parseWeaponDetail);
-  }
-
-  /**
-   * Send a request for static game data once the asset budget allows it.
-   *
-   * It is `#fetchAsset`, except that a spent budget is waited for, up to
-   * {@link MAX_ASSET_BUDGET_WAITS} times, instead of refused (see `#admitAssetRequest`). A pause
-   * asked by deadlock-api is still an error at once: the app does not wait minutes for a page.
-   *
-   * @param request - The request.
-   * @param parse - Validates the JSON of the answer.
-   * @returns The validated data.
-   * @throws AppError, as `#fetchAsset`; `rate_limited` too when the budget is still spent after the
-   *   waits (other catalogues downloading at the same moment).
-   */
-  #fetchAssetWhenAllowed<T>(request: ApiRequest, parse: (json: unknown) => T): Promise<T> {
-    return this.#fetchAsset(request, parse, MAX_ASSET_BUDGET_WAITS);
+    return this.#fetchAsset(itemDetailRequest(className, 'english'), parseWeaponDetail);
   }
 
   /**
@@ -469,25 +452,21 @@ export class DeadlockApiService {
    *
    * Unlike the community requests, a refusal is an error and not a result: the callers are caches,
    * which treat any failure as a download that did not happen and keep what they hold. The pause
-   * comes first: while deadlock-api asked to wait, nothing is sent and nothing is counted. Then
-   * {@link ASSETS_RATE_LIMIT} applies, one window for every asset request (see
-   * `#admitAssetRequest`).
+   * comes first: while deadlock-api asked to wait, nothing is sent and nothing is counted, and the
+   * app does not wait minutes for a page. Then {@link ASSETS_RATE_LIMIT} applies, one window for
+   * every asset request: a spent budget is waited for, up to {@link MAX_ASSET_BUDGET_WAITS} times,
+   * instead of refused (see `#admitAssetRequest`). A catalogue that holds nothing yet has nothing to
+   * keep, and the pages ask for several at once (the match page reads its four behind its gate).
    *
    * @param request - The request.
    * @param parse - Validates the JSON of the answer.
-   * @param budgetWaits - How many times a spent budget is waited for before the request is refused:
-   *   none for the catalogues, which keep what they hold.
    * @returns The validated data.
    * @throws AppError of kind `rate_limited` when deadlock-api asked to pause (also when it asks for
-   *   it in this very answer) or the budget is exhausted, any kind of a failed request, or the one
-   *   `parse` throws for an answer it refuses.
+   *   it in this very answer) or the budget is still spent after the waits, any kind of a failed
+   *   request, or the one `parse` throws for an answer it refuses.
    */
-  async #fetchAsset<T>(
-    request: ApiRequest,
-    parse: (json: unknown) => T,
-    budgetWaits = 0,
-  ): Promise<T> {
-    await this.#admitAssetRequest(budgetWaits);
+  async #fetchAsset<T>(request: ApiRequest, parse: (json: unknown) => T): Promise<T> {
+    await this.#admitAssetRequest(MAX_ASSET_BUDGET_WAITS);
     const outcome = await this.#send(request);
     if (outcome.kind === 'pause') {
       throw outcome.error;

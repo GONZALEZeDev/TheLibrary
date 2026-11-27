@@ -88,7 +88,7 @@ import { AppProviders } from '../../app/AppProviders';
 import { createAppRouter, type MatchTab } from '../../app/router';
 import { MINIMUM_LOADING_MS } from '../../components/LoadingGate';
 import { createI18n } from '../../i18n/i18n';
-import { DETAILS_QUERY_KEY } from '../matches/use-matches';
+import { DETAILS_QUERY_KEY, HEROES_QUERY_KEY } from '../matches/use-matches';
 
 /** The URL of a match detail request. */
 const METADATA_URL = /\/v1\/matches\/\d+\/metadata/;
@@ -500,9 +500,9 @@ describe('MatchDetailPage', () => {
     vi.spyOn(testServices.services.matches, 'getMatch').mockRejectedValue(
       new AppError('storage', 'The match cannot be read'),
     );
-    const getHeroAssets = vi.spyOn(testServices.services.heroes, 'getHeroAssets');
+    const queryClient = createTestQueryClient(testServices.logger);
 
-    await renderMatchDetail(ARCHIVED_ID, testServices);
+    await renderMatchDetail(ARCHIVED_ID, testServices, { queryClient });
 
     // The detail does not depend on the row: the page shows the match as usual, without a header.
     expect(await findArchiveLine('en', view)).toBeInTheDocument();
@@ -514,8 +514,13 @@ describe('MatchDetailPage', () => {
     await settle();
     expect(findHeader()).toBeNull();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    // With no row there is no hero to name: the catalogue is not even asked for.
-    expect(getHeroAssets).not.toHaveBeenCalled();
+    // With no row there is no hero to name: the header does not even ask for the catalogue (the
+    // tabs read it through their services, for the heroes of the match).
+    expect(queryClient.getQueryState([...HEROES_QUERY_KEY, 'assets'])).toMatchObject({
+      dataUpdateCount: 0,
+      errorUpdateCount: 0,
+      fetchStatus: 'idle',
+    });
     expect(testServices.logger.entries.filter((entry) => entry.scope === 'query')).toMatchObject([
       { level: 'error', context: { kind: 'storage', query: 'matches.one' } },
     ]);
@@ -1703,6 +1708,47 @@ describe('MatchDetailPage loading gate', () => {
     ).toBeInTheDocument();
     expect(screen.getByText(LOADING).closest('[role="status"]')).not.toBeNull();
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    await findTabs();
+    expect(screen.queryByText(LOADING)).not.toBeInTheDocument();
+  });
+
+  it('keeps the gate until every tab of the match is read, the replay of the timeline built', async () => {
+    const testServices = await synchronised();
+    const { replay } = testServices.services;
+    // The replay waits for the test: every other read of the page ends meanwhile.
+    let release = (): void => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const buildReplay = replay.getReplay.bind(replay);
+    const getReplay = vi.spyOn(replay, 'getReplay').mockImplementation(async (matchId) => {
+      await released;
+      return buildReplay(matchId);
+    });
+
+    // No minimum: only the data holds the gate.
+    await renderMatchDetail(ARCHIVED_ID, testServices);
+    await waitFor(() => {
+      expect(getReplay).toHaveBeenCalledWith(ARCHIVED_ID);
+    });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 100)));
+
+    // The analysis tab is open, but the timeline of the match is not built yet: still the gate.
+    expect(screen.getByText(LOADING)).toBeInTheDocument();
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    release();
+    await findTabs();
+    expect(screen.queryByText(LOADING)).not.toBeInTheDocument();
+  });
+
+  it('opens the gate on a tab that failed to be read: the tab shows its error', async () => {
+    const testServices = await synchronised();
+    vi.spyOn(testServices.services.replay, 'getReplay').mockRejectedValue(
+      new AppError('storage', 'The replay cannot be read'),
+    );
+
+    await renderMatchDetail(ARCHIVED_ID, testServices);
+
     await findTabs();
     expect(screen.queryByText(LOADING)).not.toBeInTheDocument();
   });

@@ -72,7 +72,7 @@ describe('PaigePageService.getPaigePage', () => {
 
     expect(http.requests).toHaveLength(6);
     expect(page?.hero.tags).toEqual(['Helpful', 'Protector', 'Booksmart']);
-    expect(page?.stats.vitality[0]).toMatchObject({ key: 'health', value: 680, perLevel: 31 });
+    expect(page?.stats.vitality[0]).toMatchObject({ key: 'health', value: 625, perLevel: 33 });
     expect(page?.abilities.map((ability) => ability.english.name)).toEqual([
       'Bookwyrm',
       'Plot Armor',

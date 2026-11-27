@@ -70,6 +70,9 @@ function setUp() {
   const api = new DeadlockApiService(http, new SyncStateRepository(database, logger, now), logger, {
     appVersion: '0.1.0',
     now,
+    // The clock does not move while the service waits for the asset budget: a budget spent in a
+    // test stays spent, and the waits end at once.
+    sleep: () => Promise.resolve(),
   });
   const cache = new ApiCacheRepository(database);
   const assets = new GameAssetService({ accountSource, api, cache, logger, now });
@@ -511,7 +514,8 @@ describe('GameAssetService', () => {
 
       await expect(catalogue.read(assets)).resolves.toEqual(downloaded);
 
-      // Refused before it was sent: the catalogue was asked for once, the heroes twice.
+      // Refused after its waits, before it was sent: the catalogue was asked for once, the heroes
+      // twice.
       expect(http.requests).toHaveLength(3);
       expect(logger.entries.filter((entry) => entry.level !== 'debug')).toMatchObject([
         { level: 'warn', scope: 'assets', context: { kind: 'rate_limited' } },

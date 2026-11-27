@@ -10,11 +10,17 @@ Ajouts, Modifications, Corrections et Suppressions.
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-11-27
+
 ### Modifications
 
 - Les icônes des objectifs et du Mid Boss sont plus grandes sur la carte du replay de la partie.
 - Une partie s'ouvre une fois tous ses onglets prêts (son replay construit, la comparaison avec ton rang téléchargée), pour que rien ne se remplisse après le panneau de chargement, quel que soit le temps de ses téléchargements.
-- Les catalogues du jeu (héros, objets, rangs, carte) attendent une place libre dans le budget de requêtes de deadlock-api au lieu d'être refusés : la première ouverture d'une partie n'affiche plus les noms comme indisponibles.
+- Quand l'app télécharge plusieurs catalogues du jeu à la fois (héros, objets, rangs, carte), chacun attend son tour dans le budget de requêtes de deadlock-api au lieu d'être abandonné.
+
+### Corrections
+
+- Les bibliothèques avec lesquelles l'app est construite sont à jour, dont deux (`url` et `cookie`) avec un correctif de sécurité.
 
 ## [0.1.5] - 2026-11-16
 
